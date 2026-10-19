@@ -15,12 +15,16 @@ Each ADR should include:
 
 Create an ADR before making a substantial change to public APIs, tenant isolation, transports, persistence, or runtime architecture.
 
-Initial decisions to document:
+## Records
 
-1. TypeScript and pnpm monorepo.
-2. Shared runtime for generated and dynamic execution.
-3. Mandatory tenant and authorization cache partitioning.
-4. MCP transport and authentication strategy.
-5. Versioned, hashed cache keys.
+| ADR                                         | Title                                  | Status   |
+| ------------------------------------------- | -------------------------------------- | -------- |
+| [0001](0001-typescript-monorepo.md)         | TypeScript and pnpm monorepo           | accepted |
+| [0002](0002-shared-runtime.md)              | Shared runtime for both delivery modes | accepted |
+| [0003](0003-cache-isolation.md)             | Mandatory cache isolation              | accepted |
+| [0004](0004-transport-strategy.md)          | MCP transport strategy                 | proposed |
+| [0005](0005-versioned-hashed-cache-keys.md) | Versioned, hashed cache keys           | proposed |
 
-Do not invent historical decisions. Mark new decisions as proposed until reviewed.
+ADRs 0001–0003 were recorded retroactively from existing documentation and
+implementation. They describe decisions already reflected in the project, not
+new commitments. Mark new decisions as proposed until reviewed.

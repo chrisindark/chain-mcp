@@ -15,6 +15,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Establish coding-agent workflow and roadmap milestones.
 - Add explicit production logging requirements to Milestone 6.
 - Document timeout and cancellation as cooperative `AbortSignal` propagation, with executor responsibility for resource release.
+- Record ADRs 0001–0004 and add an ADR index with statuses.
 
 ### Implementation
 
