@@ -1,0 +1,206 @@
+# Architecture
+
+## 1. Overview
+
+The target architecture consists of a contract compiler, shared runtime, MCP adapters, optional infrastructure adapters, and two deployment modes. The current implementation contains only `@chainmcp/core` and `@chainmcp/config`; other components shown below are planned.
+
+```text
+                    API contract
+                         |
+                  Contract compiler
+                         |
+                   Tool definitions
+                         |
+             +-----------+-----------+
+             |                       |
+       Generated server        Dynamic gateway
+             |                       |
+             +-----------+-----------+
+                         |
+                   Shared runtime
+                         |
+      +------------------+------------------+
+      |          |          |        |      |
+     Auth       Cache    Rate limit Metrics JSON
+      |          |          |        |    navigation
+      +------------------+------------------+
+                         |
+                  Upstream HTTP API
+```
+
+## 2. Design goals
+
+- Keep policy logic independent of transport.
+- Use one runtime for generated and dynamic execution.
+- Make infrastructure dependencies optional and replaceable.
+- Ensure contract compilation is deterministic.
+- Isolate tenants, principals, credentials, and cached data.
+- Make failures observable without exposing sensitive information.
+
+## 3. Monorepo package boundaries
+
+Currently implemented workspace packages are `@chainmcp/core` and `@chainmcp/config`. Remaining rows describe planned boundaries; no empty packages are created for them.
+
+| Package                     | Responsibility                                           |
+| --------------------------- | -------------------------------------------------------- |
+| `@chainmcp/core`            | Runtime interfaces, registry, execution pipeline, errors |
+| `@chainmcp/compiler`        | OpenAPI parsing, validation, tool generation             |
+| `@chainmcp/server`          | MCP SDK integration and transports                       |
+| `@chainmcp/cache`           | Cache interfaces and adapters                            |
+| `@chainmcp/auth`            | Identity, authorization, and credential abstractions     |
+| `@chainmcp/rate-limit`      | Quotas and concurrency limits                            |
+| `@chainmcp/analytics`       | Events, metrics, tracing                                 |
+| `@chainmcp/token-metrics`   | Token measurement and estimates                          |
+| `@chainmcp/json-navigation` | Bounded JSON exploration                                 |
+| `@chainmcp/config`          | Configuration schema and loading                         |
+| `@chainmcp/cli`             | Developer commands                                       |
+| `apps/gateway`              | Dynamic multi-contract gateway                           |
+
+Use workspace dependencies. Core packages must not directly depend on concrete Redis, PostgreSQL, or cloud SDKs unless the package specifically implements that adapter.
+
+## 4. Runtime execution sequence
+
+Each tool invocation follows this logical sequence:
+
+1. Resolve the contract revision and tool.
+2. Authenticate the inbound MCP caller.
+3. Resolve tenant and principal identity.
+4. Authorize tool access and required scopes.
+5. Validate arguments.
+6. Enforce rate and concurrency limits.
+7. Compute a safe cache key when caching is permitted.
+8. Read from cache if eligible.
+9. Execute the upstream operation on a miss.
+10. Validate and bound the upstream response.
+11. Apply approved response projection.
+12. Cache only eligible, correctly partitioned results.
+13. Measure token usage or a clearly labeled estimate.
+14. Emit redacted metrics and trace events.
+15. Return the result through the MCP adapter.
+
+Implementations may optimize this sequence only if security and correctness guarantees remain intact.
+
+## 5. Generated server mode
+
+The compiler produces a project containing:
+
+- A contract snapshot or reference with an integrity hash.
+- Generated tool definitions.
+- Runtime configuration and examples.
+- Dependencies pinned through a lockfile.
+- A generation manifest containing compiler and contract versions.
+- No embedded production credentials.
+
+Generated servers use the shared runtime package. Generated source must be deterministic for the same contract and compiler version.
+
+## 6. Dynamic gateway mode
+
+The gateway serves multiple registered API contracts through a shared process.
+
+Each contract revision has:
+
+- An immutable identifier.
+- A tenant or explicit owner.
+- A validated tool registry.
+- An upstream destination policy.
+- An authorization policy.
+- Cache and rate-limit settings.
+
+Load new revisions into an isolated candidate registry. Validate completely, then atomically activate. Support rollback and disabling without mutating active registries in place.
+
+## 7. Core interfaces
+
+```ts
+export interface ToolContext {
+  requestId: string;
+  tenantId: string;
+  principal: Principal;
+  signal?: AbortSignal;
+}
+
+export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
+  name: string;
+  description: string;
+  inputSchema: JsonSchema;
+  operation: OperationPolicy;
+  execute(input: TInput, context: ToolContext): Promise<TOutput>;
+}
+
+export interface CacheStore {
+  get<T>(key: string): Promise<T | undefined>;
+  set<T>(key: string, value: T, ttlSeconds: number): Promise<void>;
+  delete(key: string): Promise<void>;
+}
+
+export interface MetricsSink {
+  record(event: RuntimeEvent): void | Promise<void>;
+}
+```
+
+The final public interfaces are governed by `API_REFERENCE.md`.
+
+## 8. Caching invariants
+
+A cache key must incorporate:
+
+- Contract revision.
+- Tool identity.
+- Canonicalized arguments.
+- Tenant identity.
+- Principal or authorization partition.
+- Relevant scopes and response-varying inputs.
+
+Never use raw bearer tokens as keys. If a safe authorization partition cannot be computed, bypass shared caching.
+
+Writes are not cached by default. Cache failures must never result in serving data from another tenant or authorization context.
+
+## 9. Token accounting
+
+Token accounting measures the serialized result presented to the model, not merely the raw upstream response.
+
+The implementation must record:
+
+- Measurement mode.
+- Tokenizer identifier, when known.
+- Count or estimate.
+- Serialized payload size.
+- Whether the response was cached.
+- Whether response projection was applied.
+
+Do not describe estimated counts as exact. Do not promise savings without a documented baseline.
+
+## 10. JSON navigation
+
+Navigation tools must operate on bounded JSON data and enforce limits for:
+
+- Input and output bytes.
+- Traversal depth.
+- Array items.
+- Execution time.
+- Filter complexity.
+
+Navigation must not bypass upstream authorization or grant access to fields the caller is not allowed to see.
+
+## 11. Error model
+
+Use stable internal error codes, including:
+
+- `CONFIG_INVALID`
+- `CONTRACT_INVALID`
+- `TOOL_NOT_FOUND`
+- `INPUT_INVALID`
+- `AUTH_REQUIRED`
+- `AUTH_FORBIDDEN`
+- `RATE_LIMITED`
+- `UPSTREAM_TIMEOUT`
+- `UPSTREAM_FAILURE`
+- `RESPONSE_TOO_LARGE`
+- `POLICY_DENIED`
+
+Expose safe messages to clients. Keep stack traces and sensitive diagnostics in protected logs.
+
+## 12. Architecture decision records
+
+Changes to the runtime model, public API, transport strategy, or security boundaries require an ADR under `docs/adr/`.
+
+Each ADR records context, decision, alternatives, consequences, and status.
