@@ -80,6 +80,8 @@ Each tool invocation follows this logical sequence:
 
 Implementations may optimize this sequence only if security and correctness guarantees remain intact.
 
+Timeout and cancellation are cooperative. The runtime creates a per-call `AbortController`, aborts it when the caller cancels or the timeout elapses, and rejects the caller with `CANCELLED` or `UPSTREAM_TIMEOUT`. This does not forcibly terminate `execute` or release resources it has acquired. Tool and executor implementations must observe `context.signal`, bind it to abortable I/O, and release resources in `finally`. A tool that ignores the signal may continue running after the caller has been rejected.
+
 ## 5. Generated server mode
 
 The compiler produces a project containing:

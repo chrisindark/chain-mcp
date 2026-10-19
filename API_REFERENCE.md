@@ -29,6 +29,18 @@ export interface ToolContext {
 
 Context is established by trusted runtime adapters, not accepted wholesale from tool arguments.
 
+#### Timeout and cancellation semantics
+
+The runtime creates a per-call `AbortController`. It aborts that controller when `context.signal` aborts or the per-tool/default timeout elapses, and rejects the call with `CANCELLED` or `UPSTREAM_TIMEOUT` respectively. This is cooperative: aborting the signal stops the runtime waiting, but it does not forcibly terminate `execute`, cancel work inside the tool, or release resources the tool has acquired.
+
+`execute` implementations and upstream executor adapters are responsible for:
+
+- Observing `context.signal` and binding it to abortable operations, such as `fetch` or an HTTP client.
+- Cancelling timers, streams, database work, and other resources in `finally`.
+- Tolerating late settlement after the runtime has already rejected the call.
+
+A tool that ignores the signal may continue running after the caller has been rejected. Callers must not treat `CANCELLED` or `UPSTREAM_TIMEOUT` as proof that upstream work has stopped or resources have been released.
+
 ### Tool definition
 
 ```ts
@@ -41,11 +53,58 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
 }
 ```
 
-`@chainmcp/core` currently provides `InMemoryToolRuntime`, which validates a documented JSON Schema subset, invokes an optional `Authorizer`, then an optional `RateLimiter`, and executes the tool. Cancellation is passed through an `AbortSignal`; calls have a 15-second default timeout, configurable through `RuntimeOptions.defaultTimeoutMs` or per tool. Cache and metrics interfaces are defined, but cache reads/writes are not integrated into invocation. Metrics failures are ignored so they do not change tool results.
+`@chainmcp/core` currently provides `InMemoryToolRuntime`, which validates a documented JSON Schema subset, invokes an optional `Authorizer`, then an optional `RateLimiter`, and executes the tool. Cancellation is cooperative: the runtime aborts a per-call signal and stops waiting on caller cancellation or timeout, but executors must bind that signal to their own abortable I/O and release resources. Calls have a 15-second default timeout, configurable through `RuntimeOptions.defaultTimeoutMs` or per tool. Cache and metrics interfaces are defined, but cache reads/writes are not integrated into invocation. Metrics failures are ignored so they do not change tool results.
 
 The validator supports `type` (a string or non-empty array of strings), primitive `enum`, `required`, `properties`, boolean `additionalProperties`, and object-form `items`. Object keywords (`required`, `properties`, `additionalProperties`) and array `items` are enforced whenever the value has the corresponding JSON kind, including schemas that omit `type`. `additionalProperties` defaults to `true`, so unknown object keys are passed to `execute` untouched; tool implementations must treat them as untrusted input.
 
 Unsupported validation constructs are rejected at registration with `CONTRACT_INVALID` rather than silently ignored. This includes `$ref`, `anyOf`/`oneOf`/`allOf`, `const`, `not`, numeric/length/array bounds, `pattern`, `format`, `patternProperties`, `propertyNames`, boolean schemas, and tuple or boolean `items`. Schemas are limited to 32 levels of nesting and may not contain cycles. Annotation keywords (`title`, `description`, `default`, `examples`, `deprecated`, `readOnly`, `writeOnly`, `$comment`) are accepted and ignored. Other JSON Schema keywords are not enforced and must not be relied on.
+
+### Schema audit
+
+The audit used at registration is exported so the compiler can reject the same constructs before generating tools:
+
+```ts
+export type SchemaDiagnosticCode =
+  | "SCHEMA_NOT_OBJECT"
+  | "SCHEMA_UNSUPPORTED_KEYWORD"
+  | "SCHEMA_INVALID_TYPE"
+  | "SCHEMA_INVALID_ENUM"
+  | "SCHEMA_INVALID_REQUIRED"
+  | "SCHEMA_INVALID_PROPERTIES"
+  | "SCHEMA_INVALID_ADDITIONAL_PROPERTIES"
+  | "SCHEMA_INVALID_ITEMS"
+  | "SCHEMA_CYCLE"
+  | "SCHEMA_TOO_DEEP";
+
+export interface SchemaDiagnostic {
+  code: SchemaDiagnosticCode;
+  path: string;
+  message: string;
+}
+
+export interface SchemaAuditResult {
+  supported: boolean;
+  diagnostics: readonly SchemaDiagnostic[];
+}
+
+export const MAX_SCHEMA_DEPTH = 32;
+
+export function auditInputSchema(schema: unknown): SchemaAuditResult;
+```
+
+`auditInputSchema` does not throw for schema content; it collects every finding with a stable code, JSON-path-like `path`, and message. `InMemoryToolRuntime.register` throws `RuntimeError("CONTRACT_INVALID", diagnostics[0].message)` when the result is unsupported, so runtime and compiler diagnostics share the same messages.
+
+Compilers must map each diagnostic to a compile diagnostic and refuse to emit tools when any error-level diagnostic remains:
+
+```ts
+const audit = auditInputSchema(schema);
+const diagnostics = audit.diagnostics.map((diagnostic) => ({
+  severity: "error" as const,
+  code: diagnostic.code,
+  message: diagnostic.message,
+  location: diagnostic.path,
+}));
+```
 
 ### Tool runtime
 

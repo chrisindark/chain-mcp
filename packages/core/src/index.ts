@@ -1,4 +1,17 @@
-export type JsonSchema = Readonly<Record<string, unknown>>;
+import {
+  auditInputSchema,
+  isJsonObject,
+  MAX_SCHEMA_DEPTH,
+  type JsonSchema,
+} from "./schema.js";
+
+export type {
+  JsonSchema,
+  SchemaAuditResult,
+  SchemaDiagnostic,
+  SchemaDiagnosticCode,
+} from "./schema.js";
+export { auditInputSchema, MAX_SCHEMA_DEPTH } from "./schema.js";
 
 export interface Principal {
   id: string;
@@ -118,7 +131,7 @@ export class InMemoryToolRuntime implements ToolRuntime {
         `Tool '${tool.name}' is already registered`,
       );
     }
-    assertSupportedSchema(tool.inputSchema, "$");
+    assertSupportedInputSchema(tool.inputSchema);
     this.tools.set(tool.name, tool);
   }
 
@@ -194,168 +207,10 @@ export class InMemoryToolRuntime implements ToolRuntime {
   }
 }
 
-const SUPPORTED_SCHEMA_KEYWORDS = new Set([
-  "type",
-  "enum",
-  "required",
-  "properties",
-  "additionalProperties",
-  "items",
-  "title",
-  "description",
-  "default",
-  "examples",
-  "deprecated",
-  "readOnly",
-  "writeOnly",
-  "$comment",
-]);
-
-const SUPPORTED_SCHEMA_TYPES = new Set([
-  "object",
-  "array",
-  "string",
-  "number",
-  "integer",
-  "boolean",
-  "null",
-]);
-
-const MAX_SCHEMA_DEPTH = 32;
-
-function assertSupportedSchema(
-  schema: unknown,
-  path: string,
-  depth = 0,
-  ancestors: Set<object> = new Set(),
-): void {
-  if (!isRecord(schema)) {
-    throw new RuntimeError(
-      "CONTRACT_INVALID",
-      `Schema at ${path} must be an object`,
-    );
-  }
-  if (depth > MAX_SCHEMA_DEPTH) {
-    throw new RuntimeError(
-      "CONTRACT_INVALID",
-      `Schema at ${path} exceeds the maximum depth of ${MAX_SCHEMA_DEPTH}`,
-    );
-  }
-  if (ancestors.has(schema)) {
-    throw new RuntimeError(
-      "CONTRACT_INVALID",
-      `Schema at ${path} contains a cycle`,
-    );
-  }
-  ancestors.add(schema);
-  try {
-    for (const keyword of Object.keys(schema)) {
-      if (!SUPPORTED_SCHEMA_KEYWORDS.has(keyword)) {
-        throw new RuntimeError(
-          "CONTRACT_INVALID",
-          `Schema keyword '${keyword}' at ${path} is not supported`,
-        );
-      }
-    }
-
-    assertSupportedTypeDeclaration(schema.type, path);
-
-    if ("enum" in schema) {
-      if (!Array.isArray(schema.enum) || schema.enum.length === 0) {
-        throw new RuntimeError(
-          "CONTRACT_INVALID",
-          `Schema 'enum' at ${path} must be a non-empty array`,
-        );
-      }
-      for (const entry of schema.enum) {
-        if (
-          entry !== null &&
-          typeof entry !== "string" &&
-          typeof entry !== "number" &&
-          typeof entry !== "boolean"
-        ) {
-          throw new RuntimeError(
-            "CONTRACT_INVALID",
-            `Schema 'enum' at ${path} must contain only primitive JSON values`,
-          );
-        }
-      }
-    }
-
-    if ("required" in schema) {
-      if (
-        !Array.isArray(schema.required) ||
-        !schema.required.every((key) => typeof key === "string")
-      ) {
-        throw new RuntimeError(
-          "CONTRACT_INVALID",
-          `Schema 'required' at ${path} must be an array of strings`,
-        );
-      }
-    }
-
-    if ("properties" in schema) {
-      if (!isRecord(schema.properties)) {
-        throw new RuntimeError(
-          "CONTRACT_INVALID",
-          `Schema 'properties' at ${path} must be an object`,
-        );
-      }
-      for (const [key, propertySchema] of Object.entries(schema.properties)) {
-        assertSupportedSchema(
-          propertySchema,
-          `${path}.properties.${key}`,
-          depth + 1,
-          ancestors,
-        );
-      }
-    }
-
-    if (
-      "additionalProperties" in schema &&
-      typeof schema.additionalProperties !== "boolean"
-    ) {
-      throw new RuntimeError(
-        "CONTRACT_INVALID",
-        `Schema 'additionalProperties' at ${path} must be a boolean`,
-      );
-    }
-
-    if ("items" in schema) {
-      if (!isRecord(schema.items)) {
-        throw new RuntimeError(
-          "CONTRACT_INVALID",
-          `Schema 'items' at ${path} must be an object schema; tuple and boolean forms are not supported`,
-        );
-      }
-      assertSupportedSchema(
-        schema.items,
-        `${path}.items`,
-        depth + 1,
-        ancestors,
-      );
-    }
-  } finally {
-    ancestors.delete(schema);
-  }
-}
-
-function assertSupportedTypeDeclaration(type: unknown, path: string): void {
-  if (type === undefined) return;
-  const types = typeof type === "string" ? [type] : type;
-  if (!Array.isArray(types) || types.length === 0) {
-    throw new RuntimeError(
-      "CONTRACT_INVALID",
-      `Schema 'type' at ${path} must be a string or a non-empty array of strings`,
-    );
-  }
-  for (const entry of types) {
-    if (typeof entry !== "string" || !SUPPORTED_SCHEMA_TYPES.has(entry)) {
-      throw new RuntimeError(
-        "CONTRACT_INVALID",
-        `Schema type '${String(entry)}' at ${path} is not supported`,
-      );
-    }
+function assertSupportedInputSchema(schema: unknown): void {
+  const [diagnostic] = auditInputSchema(schema).diagnostics;
+  if (diagnostic) {
+    throw new RuntimeError("CONTRACT_INVALID", diagnostic.message);
   }
 }
 
@@ -394,15 +249,15 @@ function validateValue(
   ) {
     issues.push(`${path} must be one of the allowed values`);
   }
-  if (isRecord(value)) {
-    const properties = isRecord(schema.properties) ? schema.properties : {};
+  if (isJsonObject(value)) {
+    const properties = isJsonObject(schema.properties) ? schema.properties : {};
     const required = Array.isArray(schema.required) ? schema.required : [];
     for (const key of required) {
       if (typeof key === "string" && !(key in value))
         issues.push(`${path}.${key} is required`);
     }
     for (const [key, propertySchema] of Object.entries(properties)) {
-      if (key in value && isRecord(propertySchema)) {
+      if (key in value && isJsonObject(propertySchema)) {
         validateValue(
           propertySchema,
           value[key],
@@ -418,7 +273,7 @@ function validateValue(
       }
     }
   }
-  if (Array.isArray(value) && isRecord(schema.items)) {
+  if (Array.isArray(value) && isJsonObject(schema.items)) {
     value.forEach((item, index) =>
       validateValue(
         schema.items as JsonSchema,
@@ -460,7 +315,7 @@ function describeTypeDeclaration(type: unknown): string {
 function matchesType(type: string, value: unknown): boolean {
   switch (type) {
     case "object":
-      return isRecord(value);
+      return isJsonObject(value);
     case "array":
       return Array.isArray(value);
     case "string":
@@ -478,14 +333,10 @@ function matchesType(type: string, value: unknown): boolean {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
+// Timeout and cancellation are cooperative: aborting the per-call signal
+// rejects the caller, but cannot stop a tool that ignores the signal or
+// release resources on its behalf. Executors must bind context.signal to
+// abortable I/O and clean up in finally.
 async function executeWithTimeout(
   tool: ToolDefinition,
   input: unknown,
@@ -596,7 +447,10 @@ function canonicalize(value: unknown, ancestors: Set<object>): unknown {
       if (Array.isArray(value)) {
         return value.map((item) => canonicalize(item, ancestors));
       }
-      if (!isRecord(value) || Object.getOwnPropertySymbols(value).length > 0) {
+      if (
+        !isJsonObject(value) ||
+        Object.getOwnPropertySymbols(value).length > 0
+      ) {
         throw new TypeError(
           "Cache key arguments must be plain JSON-compatible data",
         );
