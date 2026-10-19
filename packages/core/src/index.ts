@@ -57,8 +57,19 @@ export interface CacheStore {
   delete(key: string): Promise<void>;
 }
 
+export interface RateLimitDecision {
+  /**
+   * `false` means the limiter denied this invocation. Throwing is reserved for
+   * limiter failures; only an explicit denial produces a `rate_limited` event.
+   */
+  allowed: boolean;
+}
+
 export interface RateLimiter {
-  check(context: ToolContext, toolName: string): Promise<void>;
+  check(
+    context: ToolContext,
+    toolName: string,
+  ): RateLimitDecision | Promise<RateLimitDecision>;
 }
 
 export interface MetricsSink {
@@ -163,12 +174,35 @@ export class InMemoryToolRuntime implements ToolRuntime {
     const startedAt = this.now();
     let outcome: RuntimeEvent["outcome"] = "success";
     let errorCode: RuntimeErrorCode | undefined;
+    let stage: InvocationStage = "authorization";
+    let rateLimitDenied = false;
     try {
       // Authorization must precede validation: validation errors reveal the
       // tool's schema, which unauthorized callers must not be able to probe.
       await this.options.authorizer?.authorize(tool, context);
+      stage = "validation";
       validateInput(tool.inputSchema, input);
-      await this.options.rateLimiter?.check(context, name);
+      stage = "rate_limit";
+      const decision = this.options.rateLimiter
+        ? await this.options.rateLimiter.check(context, name)
+        : undefined;
+      if (this.options.rateLimiter) {
+        if (
+          decision === undefined ||
+          decision === null ||
+          typeof decision.allowed !== "boolean"
+        ) {
+          throw new RuntimeError(
+            "UPSTREAM_FAILURE",
+            `Rate limiter for tool '${name}' returned an invalid decision`,
+          );
+        }
+        if (!decision.allowed) {
+          rateLimitDenied = true;
+          throw new RuntimeError("RATE_LIMITED", "Rate limit exceeded");
+        }
+      }
+      stage = "execution";
       return await executeWithTimeout(
         tool,
         input,
@@ -176,16 +210,10 @@ export class InMemoryToolRuntime implements ToolRuntime {
         this.options.defaultTimeoutMs ?? 15_000,
       );
     } catch (error) {
-      outcome =
-        error instanceof RuntimeError && error.code === "RATE_LIMITED"
-          ? "rate_limited"
-          : "error";
-      errorCode =
-        error instanceof RuntimeError ? error.code : "UPSTREAM_FAILURE";
-      if (error instanceof RuntimeError) throw error;
-      throw new RuntimeError("UPSTREAM_FAILURE", `Tool '${name}' failed`, {
-        cause: error,
-      });
+      const failure = classifyFailure(name, stage, error, rateLimitDenied);
+      outcome = failure.outcome;
+      errorCode = failure.error.code;
+      throw failure.error;
     } finally {
       if (this.options.metrics) {
         const event: RuntimeEvent = {
@@ -207,6 +235,64 @@ export class InMemoryToolRuntime implements ToolRuntime {
       }
     }
   }
+}
+
+type InvocationStage =
+  "authorization" | "validation" | "rate_limit" | "execution";
+
+function classifyFailure(
+  toolName: string,
+  stage: InvocationStage,
+  error: unknown,
+  rateLimitDenied: boolean,
+): { error: RuntimeError; outcome: RuntimeEvent["outcome"] } {
+  if (rateLimitDenied) {
+    return {
+      error:
+        error instanceof RuntimeError
+          ? error
+          : new RuntimeError("RATE_LIMITED", "Rate limit exceeded", {
+              cause: error,
+            }),
+      outcome: "rate_limited",
+    };
+  }
+  if (stage === "rate_limit") {
+    // Denial is expressed by a decision, not by an exception. A thrown
+    // RATE_LIMITED would make the metric depend on adapter error-code
+    // conventions, so treat every thrown error from the limiter as a failure.
+    if (error instanceof RuntimeError && error.code !== "RATE_LIMITED") {
+      return { error, outcome: "error" };
+    }
+    return {
+      error: new RuntimeError(
+        "UPSTREAM_FAILURE",
+        `Rate limiter for tool '${toolName}' failed`,
+        { cause: error },
+      ),
+      outcome: "error",
+    };
+  }
+  if (error instanceof RuntimeError) {
+    return { error, outcome: "error" };
+  }
+  if (stage === "authorization") {
+    // An authorizer that throws anything other than a typed RuntimeError is
+    // treated as a denial: fail closed, keep the cause for diagnostics, and do
+    // not expose adapter details to the caller.
+    return {
+      error: new RuntimeError("AUTH_FORBIDDEN", "Access denied", {
+        cause: error,
+      }),
+      outcome: "error",
+    };
+  }
+  return {
+    error: new RuntimeError("UPSTREAM_FAILURE", `Tool '${toolName}' failed`, {
+      cause: error,
+    }),
+    outcome: "error",
+  };
 }
 
 function assertSupportedInputSchema(schema: unknown): void {

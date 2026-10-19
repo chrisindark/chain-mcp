@@ -46,7 +46,8 @@ The implementation must address:
 - Enforce authorization on every tool invocation.
 - Store refresh tokens and API credentials through secure secret providers.
 - Support expiry, revocation, and rotation.
-- Fail closed when identity or authorization cannot be verified.
+- Fail closed when identity or authorization cannot be verified. Treat untyped authorization adapter failures as denials and do not expose their details to clients.
+- Express rate-limit denials as explicit decisions and fail closed when a decision is missing, so an adapter outage is not confused with a quota denial.
 
 ### Caching
 

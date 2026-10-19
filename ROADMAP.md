@@ -21,6 +21,7 @@ A checkbox may be marked complete only after implementation, tests, documentatio
 - [x] Implement in-memory tool registry and invocation pipeline.
 - [x] Validate tool arguments before execution (documented JSON Schema subset).
 - [x] Add injectable authorization, cache, rate-limit, and metrics interfaces.
+- [x] Classify authorization and rate-limit adapter failures by invocation stage, with explicit rate-limit decisions and fail-closed untyped authorization failures.
 - [x] Implement timeout rejection and cooperative `AbortSignal` propagation.
 - [x] Add deterministic unit tests.
 
