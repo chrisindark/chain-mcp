@@ -43,7 +43,9 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
 
 `@chainmcp/core` currently provides `InMemoryToolRuntime`, which validates a documented JSON Schema subset, invokes an optional `Authorizer`, then an optional `RateLimiter`, and executes the tool. Cancellation is passed through an `AbortSignal`; calls have a 15-second default timeout, configurable through `RuntimeOptions.defaultTimeoutMs` or per tool. Cache and metrics interfaces are defined, but cache reads/writes are not integrated into invocation. Metrics failures are ignored so they do not change tool results.
 
-The validator currently supports `type`, primitive `enum`, required properties, nested object properties, `additionalProperties: false`, and array items. Other JSON Schema keywords are not enforced and must not be relied on. Unknown schema types reject all nonmatching values; use only the listed subset.
+The validator supports `type` (a string or non-empty array of strings), primitive `enum`, `required`, `properties`, boolean `additionalProperties`, and object-form `items`. Object keywords (`required`, `properties`, `additionalProperties`) and array `items` are enforced whenever the value has the corresponding JSON kind, including schemas that omit `type`. `additionalProperties` defaults to `true`, so unknown object keys are passed to `execute` untouched; tool implementations must treat them as untrusted input.
+
+Unsupported validation constructs are rejected at registration with `CONTRACT_INVALID` rather than silently ignored. This includes `$ref`, `anyOf`/`oneOf`/`allOf`, `const`, `not`, numeric/length/array bounds, `pattern`, `format`, `patternProperties`, `propertyNames`, boolean schemas, and tuple or boolean `items`. Schemas are limited to 32 levels of nesting and may not contain cycles. Annotation keywords (`title`, `description`, `default`, `examples`, `deprecated`, `readOnly`, `writeOnly`, `$comment`) are accepted and ignored. Other JSON Schema keywords are not enforced and must not be relied on.
 
 ### Tool runtime
 
@@ -67,7 +69,7 @@ export interface ToolRuntime {
 
 Duplicate names must fail explicitly. Unknown tool calls must return a stable error code.
 
-`RuntimeError` currently includes `TOOL_NOT_FOUND`, `TOOL_ALREADY_REGISTERED`, `INPUT_INVALID`, `AUTH_FORBIDDEN`, `RATE_LIMITED`, `CANCELLED`, `UPSTREAM_TIMEOUT`, and `UPSTREAM_FAILURE`. Authorization and rate-limit adapters should throw `RuntimeError` for stable errors. The runtime does not implement a concrete authorization or rate-limit policy. Unrecognized failures are wrapped in a generic `UPSTREAM_FAILURE`; their cause is retained for protected diagnostics, not included in the client message.
+`RuntimeError` currently includes `TOOL_NOT_FOUND`, `TOOL_ALREADY_REGISTERED`, `CONTRACT_INVALID` (registration-time schema rejection), `INPUT_INVALID`, `AUTH_FORBIDDEN`, `RATE_LIMITED`, `CANCELLED`, `UPSTREAM_TIMEOUT`, and `UPSTREAM_FAILURE`. Authorization and rate-limit adapters should throw `RuntimeError` for stable errors. The runtime does not implement a concrete authorization or rate-limit policy. Unrecognized failures are wrapped in a generic `UPSTREAM_FAILURE`; their cause is retained for protected diagnostics, not included in the client message.
 
 `createCacheKey` canonicalizes plain JSON-compatible argument values and includes tenant, principal, contract revision, and tool identity. It rejects cycles, non-finite numbers, and non-JSON values. It does not hash or encrypt the result; callers must treat the key as potentially revealing its encoded components and use an appropriate store.
 
