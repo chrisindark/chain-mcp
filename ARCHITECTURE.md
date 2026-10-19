@@ -134,6 +134,21 @@ export interface CacheStore {
   delete(key: string): Promise<void>;
 }
 
+export interface Authorizer {
+  authorize(tool: ToolDefinition, context: ToolContext): void | Promise<void>;
+}
+
+export interface RateLimitDecision {
+  allowed: boolean;
+}
+
+export interface RateLimiter {
+  check(
+    context: ToolContext,
+    toolName: string,
+  ): RateLimitDecision | Promise<RateLimitDecision>;
+}
+
 export interface MetricsSink {
   record(event: RuntimeEvent): void | Promise<void>;
 }
@@ -203,6 +218,8 @@ Use stable internal error codes, including:
 - `POLICY_DENIED`
 
 Expose safe messages to clients. Keep stack traces and sensitive diagnostics in protected logs.
+
+The runtime classifies failures by invocation stage. Typed `RuntimeError` values from adapters are preserved. An authorization adapter that throws anything else fails closed as `AUTH_FORBIDDEN` with a safe `Access denied` message, and its cause is retained only for protected diagnostics. Rate limiting is expressed as an explicit `{ allowed: false }` decision; a thrown limiter error is an infrastructure failure and does not produce the `rate_limited` metrics outcome, even if the adapter throws a `RATE_LIMITED` code. See ADR 0006.
 
 ## 12. Architecture decision records
 

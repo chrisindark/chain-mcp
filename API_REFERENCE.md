@@ -53,9 +53,9 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
 }
 ```
 
-`@chainmcp/core` currently provides `InMemoryToolRuntime`, which validates a documented JSON Schema subset, invokes an optional `Authorizer`, then an optional `RateLimiter`, and executes the tool. Cancellation is cooperative: the runtime aborts a per-call signal and stops waiting on caller cancellation or timeout, but executors must bind that signal to their own abortable I/O and release resources. Calls have a 15-second default timeout, configurable through `RuntimeOptions.defaultTimeoutMs` or per tool. Cache and metrics interfaces are defined, but cache reads/writes are not integrated into invocation. Metrics failures are ignored so they do not change tool results.
+`@chainmcp/core` currently provides `InMemoryToolRuntime`, which validates a documented JSON Schema subset, invokes an optional `Authorizer`, then an optional `RateLimiter`, and executes the tool. `RateLimiter.check` returns an explicit decision; only a denial is counted as rate limiting. Cancellation is cooperative: the runtime aborts a per-call signal and stops waiting on caller cancellation or timeout, but executors must bind that signal to their own abortable I/O and release resources. Calls have a 15-second default timeout, configurable through `RuntimeOptions.defaultTimeoutMs` or per tool. Cache interfaces are defined, but cache reads/writes are not integrated into invocation. Metrics failures are ignored so they do not change tool results.
 
-The validator supports `type` (a string or non-empty array of strings), primitive `enum`, `required`, `properties`, boolean `additionalProperties`, and object-form `items`. Object keywords (`required`, `properties`, `additionalProperties`) and array `items` are enforced whenever the value has the corresponding JSON kind, including schemas that omit `type`. `additionalProperties` defaults to `true`, so unknown object keys are passed to `execute` untouched; tool implementations must treat them as untrusted input.
+The validator supports `type` (a string or non-empty array of strings), primitive `enum` (string, boolean, null, and finite number values), `required`, `properties`, boolean `additionalProperties`, and object-form `items`. Object keywords (`required`, `properties`, `additionalProperties`) and array `items` are enforced whenever the value has the corresponding JSON kind, including schemas that omit `type`. `additionalProperties` defaults to `true`, so unknown object keys are passed to `execute` untouched; tool implementations must treat them as untrusted input. Keys are compared as own properties, so a key named after an `Object.prototype` member (for example `toString`, `constructor`, or `__proto__`) is treated as undeclared and cannot satisfy `required`. At most 20 issues are reported per call; the message ends with a truncation marker when more were found.
 
 Unsupported validation constructs are rejected at registration with `CONTRACT_INVALID` rather than silently ignored. This includes `$ref`, `anyOf`/`oneOf`/`allOf`, `const`, `not`, numeric/length/array bounds, `pattern`, `format`, `patternProperties`, `propertyNames`, boolean schemas, and tuple or boolean `items`. Schemas are limited to 32 levels of nesting and may not contain cycles. Annotation keywords (`title`, `description`, `default`, `examples`, `deprecated`, `readOnly`, `writeOnly`, `$comment`) are accepted and ignored. Other JSON Schema keywords are not enforced and must not be relied on.
 
@@ -128,7 +128,46 @@ export interface ToolRuntime {
 
 Duplicate names must fail explicitly. Unknown tool calls must return a stable error code.
 
-`RuntimeError` currently includes `TOOL_NOT_FOUND`, `TOOL_ALREADY_REGISTERED`, `CONTRACT_INVALID` (registration-time schema rejection), `INPUT_INVALID`, `AUTH_FORBIDDEN`, `RATE_LIMITED`, `CANCELLED`, `UPSTREAM_TIMEOUT`, and `UPSTREAM_FAILURE`. Authorization and rate-limit adapters should throw `RuntimeError` for stable errors. The runtime does not implement a concrete authorization or rate-limit policy. Unrecognized failures are wrapped in a generic `UPSTREAM_FAILURE`; their cause is retained for protected diagnostics, not included in the client message.
+`RuntimeError` currently includes `TOOL_NOT_FOUND`, `TOOL_ALREADY_REGISTERED`, `CONTRACT_INVALID` (registration-time schema rejection), `INPUT_INVALID`, `AUTH_FORBIDDEN`, `RATE_LIMITED`, `CANCELLED`, `UPSTREAM_TIMEOUT`, and `UPSTREAM_FAILURE`. The runtime does not implement a concrete authorization or rate-limit policy.
+
+Failures are classified by invocation stage:
+
+| Stage         | Adapter outcome                            | Runtime result                                                          |
+| ------------- | ------------------------------------------ | ----------------------------------------------------------------------- |
+| Authorization | throws `RuntimeError`                      | Preserved, including its code and safe message.                         |
+| Authorization | throws anything else                       | `AUTH_FORBIDDEN` with the safe message `Access denied`; cause retained. |
+| Validation    | schema mismatch                            | `INPUT_INVALID`.                                                        |
+| Rate limiting | returns `{ allowed: false }`               | `RATE_LIMITED`.                                                         |
+| Rate limiting | returns no decision or a malformed one     | `UPSTREAM_FAILURE`; the call is not allowed.                            |
+| Rate limiting | throws `RuntimeError` (not `RATE_LIMITED`) | Preserved.                                                              |
+| Rate limiting | throws `RATE_LIMITED` or anything else     | `UPSTREAM_FAILURE` with a limiter-failure message; cause retained.      |
+| Execution     | throws `RuntimeError`                      | Preserved.                                                              |
+| Execution     | throws anything else                       | `UPSTREAM_FAILURE` with `Tool '<name>' failed`; cause retained.         |
+
+Causes are retained for protected diagnostics and are never included in the client message or in `RuntimeEvent`. Authorization runs before validation so an unauthorized caller cannot probe the tool schema.
+
+### Authorization and rate limiting
+
+```ts
+export interface Authorizer {
+  authorize(tool: ToolDefinition, context: ToolContext): void | Promise<void>;
+}
+
+export interface RateLimitDecision {
+  allowed: boolean;
+}
+
+export interface RateLimiter {
+  check(
+    context: ToolContext,
+    toolName: string,
+  ): RateLimitDecision | Promise<RateLimitDecision>;
+}
+```
+
+`authorize` returns normally to allow the call. Throw `RuntimeError("AUTH_FORBIDDEN", ...)` for a policy denial. Throw another `RuntimeError` to report an authorization-stage failure with a distinct code, for example `UPSTREAM_FAILURE` when an identity provider is unavailable. Any other thrown value is treated as a denial and fails closed; this covers adapters that naturally throw a plain `Error` to reject a call.
+
+`check` must return a decision. `{ allowed: false }` denies the call. A missing or malformed decision fails closed as `UPSTREAM_FAILURE`; it does not silently allow the call. Throwing is reserved for limiter failures, not denials. A thrown `RuntimeError` other than `RATE_LIMITED` is preserved; any other throw, including `RATE_LIMITED`, becomes `UPSTREAM_FAILURE`. This keeps the `rate_limited` metrics outcome independent of adapter error-code conventions: only an explicit denial can produce it.
 
 `createCacheKey` returns an opaque, fixed-length key of the form `chainmcp:cache:v1:<64 lowercase hex characters>`. It canonicalizes plain JSON-compatible argument values and hashes the tenant, principal, contract revision, tool identity, and arguments with SHA-256 under a versioned domain separator. Object properties whose value is `undefined` are omitted; `undefined` at the root or in arrays, sparse arrays, cycles, non-finite numbers, and non-JSON values are rejected. Canonical input is limited to `MAX_CACHE_KEY_INPUT_BYTES` (64 KiB); larger inputs throw `TypeError`. Changing canonicalization, hashed fields, or digest semantics requires incrementing `CACHE_KEY_VERSION`, which changes the key prefix and deliberately invalidates the existing key space. Hashing reduces accidental disclosure but is not encryption; protect the cache store and do not treat keys as secrets.
 
@@ -159,24 +198,31 @@ Adapters must enforce bounded TTLs and entry sizes. Shared caches must partition
 
 ## Metrics interface
 
+The implemented Milestone 1 event is:
+
 ```ts
-export interface RuntimeEvent {
-  name: string;
+export type RuntimeEvent = {
+  name: "tool_invocation";
   timestamp: number;
-  durationMs?: number;
-  tenantId?: string;
-  toolName?: string;
-  outcome: "success" | "error" | "rate_limited" | "cache_hit";
-  tokenCount?: number;
-  attributes?: Record<string, string | number | boolean>;
-}
+  durationMs: number;
+  tenantId: string;
+  toolName: string;
+  outcome: "success" | "error" | "rate_limited";
+  errorCode?: RuntimeErrorCode;
+};
 
 export interface MetricsSink {
   record(event: RuntimeEvent): void | Promise<void>;
 }
 ```
 
-Attributes must not contain secrets, raw authorization data, or unrestricted request and response bodies.
+The runtime emits one event for every `callTool` that finds a registered tool, regardless of success or failure. Calls rejected with `TOOL_NOT_FOUND` are thrown before the event is created and do not emit one. `timestamp` and `durationMs` use the injected clock.
+
+`outcome` is `success` when execution resolves, `rate_limited` only when the configured `RateLimiter` returns `{ allowed: false }`, and `error` for every other failure, including authorization failures, validation failures, limiter failures, timeouts, cancellations, and upstream errors. `errorCode` is present on failures and is the final `RuntimeErrorCode`. A `RATE_LIMITED` error reported by an executor is preserved as `errorCode` but has outcome `error`, because the runtime rate limiter did not deny the call.
+
+The earlier target shape included `outcome: "cache_hit"` and optional `durationMs`, `tenantId`, `toolName`, `tokenCount`, and `attributes`. Those fields are not implemented in Milestone 1. `cache_hit` depends on cache integration (Milestone 4), `tokenCount` depends on token accounting (Milestone 4), and `attributes` plus the optional-field relaxation depend on analytics and redaction work (Milestone 6). Adapters must not assume they exist.
+
+`MetricsSink.record` is invoked after the call settles. Synchronous throws and rejected promises are ignored so telemetry cannot change the tool result. Events must not contain secrets, raw authorization data, or unrestricted request and response bodies.
 
 ## Compiler interface
 

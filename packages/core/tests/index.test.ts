@@ -80,7 +80,7 @@ describe("InMemoryToolRuntime", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("validates union types declared as an array", async () => {
+  it("validates array-valued type declarations", async () => {
     const runtime = new InMemoryToolRuntime();
     runtime.register(
       toolWithSchema({
@@ -124,6 +124,81 @@ describe("InMemoryToolRuntime", () => {
     await expect(
       runtime.callTool("lookup_item", { id: "x", extra: true }, context),
     ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+  });
+
+  it("enforces enum values and additionalProperties: false", async () => {
+    const runtime = new InMemoryToolRuntime();
+    runtime.register(
+      toolWithSchema({
+        type: "object",
+        required: ["mode"],
+        properties: {
+          mode: { type: "string", enum: ["read", "write"] },
+          id: { type: "string" },
+        },
+        additionalProperties: false,
+      }),
+    );
+
+    await expect(
+      runtime.callTool("lookup_item", { mode: "read" }, context),
+    ).resolves.toEqual({ mode: "read" });
+    await expect(
+      runtime.callTool("lookup_item", { mode: "delete" }, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    await expect(
+      runtime.callTool("lookup_item", { mode: "read", extra: true }, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+  });
+
+  it("reports nested object validation failures", async () => {
+    const execute = vi.fn(async (input: unknown) => input);
+    const runtime = new InMemoryToolRuntime();
+    runtime.register(
+      toolWithSchema(
+        {
+          type: "object",
+          required: ["filter"],
+          properties: {
+            filter: {
+              type: "object",
+              required: ["name"],
+              properties: {
+                name: { type: "string" },
+                limit: { type: "integer" },
+              },
+              additionalProperties: false,
+            },
+          },
+          additionalProperties: false,
+        },
+        execute,
+      ),
+    );
+
+    await expect(
+      runtime.callTool("lookup_item", { filter: { name: 3 } }, context),
+    ).rejects.toMatchObject({
+      code: "INPUT_INVALID",
+      message: expect.stringContaining("$.filter.name must be string"),
+    });
+    await expect(
+      runtime.callTool("lookup_item", { filter: {} }, context),
+    ).rejects.toMatchObject({
+      code: "INPUT_INVALID",
+      message: expect.stringContaining("$.filter.name is required"),
+    });
+    await expect(
+      runtime.callTool(
+        "lookup_item",
+        { filter: { name: "x", extra: true } },
+        context,
+      ),
+    ).rejects.toMatchObject({
+      code: "INPUT_INVALID",
+      message: expect.stringContaining("$.filter.extra is not allowed"),
+    });
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("enforces array items when type is omitted", async () => {
@@ -186,6 +261,8 @@ describe("InMemoryToolRuntime", () => {
     ],
     ["empty enum", { enum: [] }],
     ["object enum entry", { enum: [{ value: 1 }] }],
+    ["NaN enum entry", { enum: [Number.NaN] }],
+    ["Infinity enum entry", { enum: [Number.POSITIVE_INFINITY] }],
     ["non-array required", { required: "id" }],
     ["non-object properties", { properties: [] }],
   ])("rejects unsupported schema form %s at registration", (_form, schema) => {
@@ -239,9 +316,75 @@ describe("InMemoryToolRuntime", () => {
     expect(execute).toHaveBeenCalledWith(input, expect.anything());
   });
 
+  it("compares keys as own properties, not through the prototype chain", async () => {
+    const runtime = new InMemoryToolRuntime();
+    runtime.register(
+      toolWithSchema({
+        type: "object",
+        required: ["id"],
+        properties: { id: { type: "string" } },
+        additionalProperties: false,
+      }),
+    );
+
+    await expect(
+      runtime.callTool("lookup_item", { id: "x" }, context),
+    ).resolves.toEqual({ id: "x" });
+
+    // Inherited Object.prototype names are not declared properties, so an
+    // undeclared key must be rejected rather than treated as known. JSON.parse
+    // and computed keys both produce own properties for these names.
+    for (const key of ["toString", "constructor", "valueOf", "__proto__"]) {
+      await expect(
+        runtime.callTool("lookup_item", { id: "x", [key]: "x" }, context),
+      ).rejects.toMatchObject({
+        code: "INPUT_INVALID",
+        message: expect.stringContaining(`$.${key} is not allowed`),
+      });
+    }
+
+    // A required name that exists only on the prototype is still missing.
+    const phantom = new InMemoryToolRuntime();
+    phantom.register(toolWithSchema({ type: "object", required: ["valueOf"] }));
+    await expect(
+      phantom.callTool("lookup_item", {}, context),
+    ).rejects.toMatchObject({
+      code: "INPUT_INVALID",
+      message: expect.stringContaining("$.valueOf is required"),
+    });
+  });
+
+  it("bounds the number of reported validation issues", async () => {
+    const runtime = new InMemoryToolRuntime();
+    runtime.register(
+      toolWithSchema({ type: "array", items: { type: "string" } }),
+    );
+
+    const error = await runtime
+      .callTool(
+        "lookup_item",
+        Array.from({ length: 5_000 }, () => 1),
+        context,
+      )
+      .then(
+        () => {
+          throw new Error("expected the call to reject");
+        },
+        (caught: unknown) => caught,
+      );
+
+    expect(error).toMatchObject({
+      code: "INPUT_INVALID",
+      message: expect.stringContaining("further issues omitted after 20"),
+    });
+    expect(error).toBeInstanceOf(RuntimeError);
+    if (!(error instanceof RuntimeError)) throw new Error("unreachable");
+    expect(error.message.length).toBeLessThan(1_000);
+  });
+
   it("runs authorization and rate-limit hooks and emits metrics", async () => {
     const authorize = vi.fn();
-    const check = vi.fn();
+    const check = vi.fn(() => ({ allowed: true }));
     const record = vi.fn();
     const runtime = new InMemoryToolRuntime({
       authorizer: { authorize },
@@ -259,23 +402,282 @@ describe("InMemoryToolRuntime", () => {
     );
   });
 
-  it("does not execute a tool when authorization rejects it", async () => {
-    const execute = vi.fn(async () => "should not run");
+  it("runs authorization, validation, rate limiting, and execution in order", async () => {
+    const calls: string[] = [];
+    const execute = vi.fn(async () => {
+      calls.push("execute");
+      return "ok";
+    });
     const runtime = new InMemoryToolRuntime({
       authorizer: {
         authorize: () => {
-          throw new Error("private authorization detail");
+          calls.push("authorize");
+        },
+      },
+      rateLimiter: {
+        check: async () => {
+          calls.push("rate-limit");
+          return { allowed: true };
         },
       },
     });
     runtime.register(tool(execute));
+
+    await expect(
+      runtime.callTool("lookup_item", { id: "x" }, context),
+    ).resolves.toBe("ok");
+    expect(calls).toEqual(["authorize", "rate-limit", "execute"]);
+
+    calls.length = 0;
+    const invalidExecute = vi.fn(async () => "should not run");
+    const invalidRuntime = new InMemoryToolRuntime({
+      authorizer: {
+        authorize: () => {
+          calls.push("authorize");
+        },
+      },
+      rateLimiter: {
+        check: async () => {
+          calls.push("rate-limit");
+          return { allowed: true };
+        },
+      },
+    });
+    invalidRuntime.register(tool(invalidExecute));
+
+    await expect(
+      invalidRuntime.callTool("lookup_item", { id: 3 }, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    expect(calls).toEqual(["authorize"]);
+    expect(invalidExecute).not.toHaveBeenCalled();
+  });
+
+  it("maps only an explicit rate-limit denial to the rate_limited outcome", async () => {
+    const execute = vi.fn(async () => "should not run");
+    const record = vi.fn();
+    const runtime = new InMemoryToolRuntime({
+      rateLimiter: {
+        check: () => ({ allowed: false }),
+      },
+      metrics: { record },
+    });
+    runtime.register(tool(execute));
+
+    await expect(
+      runtime.callTool("lookup_item", { id: "x" }, context),
+    ).rejects.toMatchObject({ code: "RATE_LIMITED" });
+    expect(execute).not.toHaveBeenCalled();
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "rate_limited",
+        errorCode: "RATE_LIMITED",
+        toolName: "lookup_item",
+      }),
+    );
+  });
+
+  it("classifies limiter failures as errors rather than rate limiting", async () => {
+    const record = vi.fn();
+    const cause = new Error("redis unavailable");
+    const runtime = new InMemoryToolRuntime({
+      rateLimiter: {
+        check: () => {
+          throw cause;
+        },
+      },
+      metrics: { record },
+    });
+    runtime.register(tool());
+
+    const error = await runtime
+      .callTool("lookup_item", { id: "x" }, context)
+      .then(
+        () => {
+          throw new Error("expected the call to reject");
+        },
+        (caught: unknown) => caught,
+      );
+
+    expect(error).toMatchObject({
+      code: "UPSTREAM_FAILURE",
+      message: "Rate limiter for tool 'lookup_item' failed",
+      cause,
+    });
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "error",
+        errorCode: "UPSTREAM_FAILURE",
+      }),
+    );
+  });
+
+  it("fails closed when a rate limiter returns no decision", async () => {
+    const execute = vi.fn(async () => "should not run");
+    const record = vi.fn();
+    const runtime = new InMemoryToolRuntime({
+      rateLimiter: {
+        // Simulates an adapter written against the former void contract.
+        check: () => undefined as unknown as { allowed: boolean },
+      },
+      metrics: { record },
+    });
+    runtime.register(tool(execute));
+
     await expect(
       runtime.callTool("lookup_item", { id: "x" }, context),
     ).rejects.toMatchObject({
       code: "UPSTREAM_FAILURE",
-      message: "Tool 'lookup_item' failed",
+      message:
+        "Rate limiter for tool 'lookup_item' returned an invalid decision",
     });
     expect(execute).not.toHaveBeenCalled();
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "error",
+        errorCode: "UPSTREAM_FAILURE",
+      }),
+    );
+  });
+
+  it("does not trust a RATE_LIMITED thrown by a limiter as a denial", async () => {
+    const record = vi.fn();
+    const runtime = new InMemoryToolRuntime({
+      rateLimiter: {
+        check: () => {
+          throw new RuntimeError("RATE_LIMITED", "redis script failed");
+        },
+      },
+      metrics: { record },
+    });
+    runtime.register(tool());
+
+    await expect(
+      runtime.callTool("lookup_item", { id: "x" }, context),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_FAILURE",
+      message: "Rate limiter for tool 'lookup_item' failed",
+    });
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "error",
+        errorCode: "UPSTREAM_FAILURE",
+      }),
+    );
+  });
+
+  it("classifies upstream rate limits as errors with a RATE_LIMITED code", async () => {
+    const record = vi.fn();
+    const runtime = new InMemoryToolRuntime({
+      rateLimiter: { check: () => ({ allowed: true }) },
+      metrics: { record },
+    });
+    runtime.register(
+      tool(async () => {
+        throw new RuntimeError("RATE_LIMITED", "upstream throttled the call");
+      }),
+    );
+
+    await expect(
+      runtime.callTool("lookup_item", { id: "x" }, context),
+    ).rejects.toMatchObject({ code: "RATE_LIMITED" });
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "error",
+        errorCode: "RATE_LIMITED",
+      }),
+    );
+  });
+
+  it("ignores metrics sinks that throw or reject", async () => {
+    const throwing = new InMemoryToolRuntime({
+      metrics: {
+        record: () => {
+          throw new Error("metrics unavailable");
+        },
+      },
+    });
+    throwing.register(tool(async (input) => input));
+    await expect(
+      throwing.callTool("lookup_item", { id: "x" }, context),
+    ).resolves.toEqual({ id: "x" });
+
+    const rejecting = new InMemoryToolRuntime({
+      metrics: {
+        record: () => Promise.reject(new Error("metrics unavailable")),
+      },
+    });
+    rejecting.register(tool(async (input) => input));
+    await expect(
+      rejecting.callTool("lookup_item", { id: "x" }, context),
+    ).resolves.toEqual({ id: "x" });
+    await Promise.resolve();
+  });
+
+  it("maps untyped authorization failures to AUTH_FORBIDDEN", async () => {
+    const execute = vi.fn(async () => "should not run");
+    const record = vi.fn();
+    const cause = new Error("private authorization detail");
+    const runtime = new InMemoryToolRuntime({
+      authorizer: {
+        authorize: () => {
+          throw cause;
+        },
+      },
+      metrics: { record },
+    });
+    runtime.register(tool(execute));
+
+    const error = await runtime
+      .callTool("lookup_item", { id: "x" }, context)
+      .then(
+        () => {
+          throw new Error("expected the call to reject");
+        },
+        (caught: unknown) => caught,
+      );
+
+    expect(error).toMatchObject({
+      code: "AUTH_FORBIDDEN",
+      message: "Access denied",
+      cause,
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "error",
+        errorCode: "AUTH_FORBIDDEN",
+        toolName: "lookup_item",
+      }),
+    );
+  });
+
+  it("preserves typed authorization adapter failures", async () => {
+    const record = vi.fn();
+    const runtime = new InMemoryToolRuntime({
+      authorizer: {
+        authorize: () => {
+          throw new RuntimeError(
+            "UPSTREAM_FAILURE",
+            "identity provider unavailable",
+          );
+        },
+      },
+      metrics: { record },
+    });
+    runtime.register(tool());
+
+    await expect(
+      runtime.callTool("lookup_item", { id: "x" }, context),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_FAILURE",
+      message: "identity provider unavailable",
+    });
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "error",
+        errorCode: "UPSTREAM_FAILURE",
+      }),
+    );
   });
 
   it("authorizes before validating so unauthorized callers cannot probe schemas", async () => {
@@ -322,6 +724,40 @@ describe("InMemoryToolRuntime", () => {
     });
     expect(executionSignal?.aborted).toBe(true);
   });
+
+  it("uses a per-tool timeoutMs override", async () => {
+    const runtime = new InMemoryToolRuntime({ defaultTimeoutMs: 1_000 });
+    runtime.register({
+      ...tool(() => new Promise(() => {})),
+      timeoutMs: 5,
+    });
+
+    await expect(
+      runtime.callTool("lookup_item", { id: "x" }, context),
+    ).rejects.toMatchObject({ code: "UPSTREAM_TIMEOUT" });
+  });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "wraps invalid timeoutMs %s as UPSTREAM_FAILURE without executing",
+    async (timeoutMs) => {
+      const execute = vi.fn(async () => "should not run");
+      const runtime = new InMemoryToolRuntime();
+      runtime.register({ ...tool(execute), timeoutMs });
+
+      const error = await runtime
+        .callTool("lookup_item", { id: "x" }, context)
+        .then(
+          () => {
+            throw new Error("expected the call to reject");
+          },
+          (caught: unknown) => caught,
+        );
+
+      expect(error).toMatchObject({ code: "UPSTREAM_FAILURE" });
+      expect((error as RuntimeError).cause).toBeInstanceOf(TypeError);
+      expect(execute).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects a cancellation that arrives before execution", async () => {
     const controller = new AbortController();
@@ -434,6 +870,17 @@ describe("schema audit", () => {
     );
   });
 
+  it("rejects non-finite enum entries that could never match", () => {
+    expect(auditInputSchema({ enum: [Number.NaN, "ok"] }).diagnostics).toEqual([
+      {
+        code: "SCHEMA_INVALID_ENUM",
+        path: "$",
+        message:
+          "Schema 'enum' at $ must contain only finite numbers; NaN and Infinity cannot be represented",
+      },
+    ]);
+  });
+
   it("reports cycles and excessive depth", () => {
     const cyclic: Record<string, unknown> = { type: "object" };
     cyclic.properties = { self: cyclic };
@@ -520,6 +967,12 @@ describe("cache key serialization", () => {
     expect(
       createCacheKey({ ...base, arguments: { a: 1, optional: undefined } }),
     ).toBe(createCacheKey({ ...base, arguments: { a: 1 } }));
+    expect(
+      createCacheKey({
+        ...base,
+        arguments: { nested: { a: 1, optional: undefined } },
+      }),
+    ).toBe(createCacheKey({ ...base, arguments: { nested: { a: 1 } } }));
 
     expect(() => createCacheKey({ ...base, arguments: undefined })).toThrow(
       "JSON-compatible",

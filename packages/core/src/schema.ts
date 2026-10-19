@@ -115,19 +115,23 @@ function auditSchema(
           path,
           message: `Schema 'enum' at ${path} must be a non-empty array`,
         });
-      } else if (
-        schema.enum.some(
-          (entry) =>
-            entry !== null &&
-            typeof entry !== "string" &&
-            typeof entry !== "number" &&
-            typeof entry !== "boolean",
-        )
-      ) {
+      } else if (schema.enum.some((entry) => !isEnumPrimitive(entry))) {
         diagnostics.push({
           code: "SCHEMA_INVALID_ENUM",
           path,
           message: `Schema 'enum' at ${path} must contain only primitive JSON values`,
+        });
+      } else if (
+        schema.enum.some(
+          (entry) => typeof entry === "number" && !Number.isFinite(entry),
+        )
+      ) {
+        // A non-finite entry can never match: it cannot appear in JSON, and the
+        // type check rejects non-finite numbers before the enum comparison.
+        diagnostics.push({
+          code: "SCHEMA_INVALID_ENUM",
+          path,
+          message: `Schema 'enum' at ${path} must contain only finite numbers; NaN and Infinity cannot be represented`,
         });
       }
     }
@@ -196,6 +200,15 @@ function auditSchema(
   } finally {
     ancestors.delete(schema);
   }
+}
+
+function isEnumPrimitive(entry: unknown): boolean {
+  return (
+    entry === null ||
+    typeof entry === "string" ||
+    typeof entry === "boolean" ||
+    typeof entry === "number"
+  );
 }
 
 function auditTypeDeclaration(

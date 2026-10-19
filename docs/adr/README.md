@@ -24,6 +24,7 @@ Create an ADR before making a substantial change to public APIs, tenant isolatio
 | [0003](0003-cache-isolation.md)             | Mandatory cache isolation              | accepted |
 | [0004](0004-transport-strategy.md)          | MCP transport strategy                 | proposed |
 | [0005](0005-versioned-hashed-cache-keys.md) | Versioned, hashed cache keys           | proposed |
+| [0006](0006-stage-aware-policy-errors.md)   | Stage-aware policy adapter errors      | proposed |
 
 ADRs 0001–0003 were recorded retroactively from existing documentation and
 implementation. They describe decisions already reflected in the project, not
