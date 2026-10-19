@@ -130,7 +130,20 @@ Duplicate names must fail explicitly. Unknown tool calls must return a stable er
 
 `RuntimeError` currently includes `TOOL_NOT_FOUND`, `TOOL_ALREADY_REGISTERED`, `CONTRACT_INVALID` (registration-time schema rejection), `INPUT_INVALID`, `AUTH_FORBIDDEN`, `RATE_LIMITED`, `CANCELLED`, `UPSTREAM_TIMEOUT`, and `UPSTREAM_FAILURE`. Authorization and rate-limit adapters should throw `RuntimeError` for stable errors. The runtime does not implement a concrete authorization or rate-limit policy. Unrecognized failures are wrapped in a generic `UPSTREAM_FAILURE`; their cause is retained for protected diagnostics, not included in the client message.
 
-`createCacheKey` canonicalizes plain JSON-compatible argument values and includes tenant, principal, contract revision, and tool identity. It rejects cycles, non-finite numbers, and non-JSON values. It does not hash or encrypt the result; callers must treat the key as potentially revealing its encoded components and use an appropriate store.
+`createCacheKey` returns an opaque, fixed-length key of the form `chainmcp:cache:v1:<64 lowercase hex characters>`. It canonicalizes plain JSON-compatible argument values and hashes the tenant, principal, contract revision, tool identity, and arguments with SHA-256 under a versioned domain separator. Object properties whose value is `undefined` are omitted; `undefined` at the root or in arrays, sparse arrays, cycles, non-finite numbers, and non-JSON values are rejected. Canonical input is limited to `MAX_CACHE_KEY_INPUT_BYTES` (64 KiB); larger inputs throw `TypeError`. Changing canonicalization, hashed fields, or digest semantics requires incrementing `CACHE_KEY_VERSION`, which changes the key prefix and deliberately invalidates the existing key space. Hashing reduces accidental disclosure but is not encryption; protect the cache store and do not treat keys as secrets.
+
+```ts
+export const CACHE_KEY_VERSION = "v1";
+export const MAX_CACHE_KEY_INPUT_BYTES = 64 * 1024;
+
+export function createCacheKey(parts: {
+  tenantId: string;
+  principalId: string;
+  contractRevision: string;
+  toolName: string;
+  arguments: unknown;
+}): string;
+```
 
 ## Cache interface
 

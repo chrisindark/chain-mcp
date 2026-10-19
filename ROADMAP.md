@@ -54,7 +54,7 @@ A checkbox may be marked complete only after implementation, tests, documentatio
 
 - [ ] Add bounded in-memory cache for development.
 - [ ] Add optional Redis adapter.
-- [ ] Implement safe cache key construction and identity partitioning.
+- [ ] Implement safe, versioned, hashed cache key construction and identity partitioning.
 - [ ] Cache eligible read operations only by default.
 - [ ] Add TTL, invalidation, and field projection.
 - [ ] Integrate tokenizer adapters.
