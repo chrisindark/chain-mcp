@@ -36,6 +36,10 @@ The current workspace provides `pnpm format:check`, `pnpm lint`, `pnpm typecheck
 
 ## Testing strategy
 
+Production code lives in each package's `src/` directory; tests live in the
+matching `tests/` directory. Builds emit `src/` only, while typechecking and
+Vitest include both.
+
 ### Unit tests
 
 Test validation, cache keys, policies, canonicalization, rate limits, and JSON traversal.

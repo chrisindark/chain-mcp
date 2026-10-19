@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseConfig } from "./index.js";
+import { parseConfig } from "../src/index.js";
 
 describe("configuration schema", () => {
   it("applies conservative defaults to a minimal configuration", () => {

@@ -71,6 +71,7 @@ export interface ToolRuntime {
 export type RuntimeErrorCode =
   | "TOOL_NOT_FOUND"
   | "TOOL_ALREADY_REGISTERED"
+  | "CONTRACT_INVALID"
   | "INPUT_INVALID"
   | "AUTH_FORBIDDEN"
   | "RATE_LIMITED"
@@ -117,6 +118,7 @@ export class InMemoryToolRuntime implements ToolRuntime {
         `Tool '${tool.name}' is already registered`,
       );
     }
+    assertSupportedSchema(tool.inputSchema, "$");
     this.tools.set(tool.name, tool);
   }
 
@@ -147,6 +149,8 @@ export class InMemoryToolRuntime implements ToolRuntime {
     let outcome: RuntimeEvent["outcome"] = "success";
     let errorCode: RuntimeErrorCode | undefined;
     try {
+      // Authorization must precede validation: validation errors reveal the
+      // tool's schema, which unauthorized callers must not be able to probe.
       await this.options.authorizer?.authorize(tool, context);
       validateInput(tool.inputSchema, input);
       await this.options.rateLimiter?.check(context, name);
@@ -190,6 +194,171 @@ export class InMemoryToolRuntime implements ToolRuntime {
   }
 }
 
+const SUPPORTED_SCHEMA_KEYWORDS = new Set([
+  "type",
+  "enum",
+  "required",
+  "properties",
+  "additionalProperties",
+  "items",
+  "title",
+  "description",
+  "default",
+  "examples",
+  "deprecated",
+  "readOnly",
+  "writeOnly",
+  "$comment",
+]);
+
+const SUPPORTED_SCHEMA_TYPES = new Set([
+  "object",
+  "array",
+  "string",
+  "number",
+  "integer",
+  "boolean",
+  "null",
+]);
+
+const MAX_SCHEMA_DEPTH = 32;
+
+function assertSupportedSchema(
+  schema: unknown,
+  path: string,
+  depth = 0,
+  ancestors: Set<object> = new Set(),
+): void {
+  if (!isRecord(schema)) {
+    throw new RuntimeError(
+      "CONTRACT_INVALID",
+      `Schema at ${path} must be an object`,
+    );
+  }
+  if (depth > MAX_SCHEMA_DEPTH) {
+    throw new RuntimeError(
+      "CONTRACT_INVALID",
+      `Schema at ${path} exceeds the maximum depth of ${MAX_SCHEMA_DEPTH}`,
+    );
+  }
+  if (ancestors.has(schema)) {
+    throw new RuntimeError(
+      "CONTRACT_INVALID",
+      `Schema at ${path} contains a cycle`,
+    );
+  }
+  ancestors.add(schema);
+  try {
+    for (const keyword of Object.keys(schema)) {
+      if (!SUPPORTED_SCHEMA_KEYWORDS.has(keyword)) {
+        throw new RuntimeError(
+          "CONTRACT_INVALID",
+          `Schema keyword '${keyword}' at ${path} is not supported`,
+        );
+      }
+    }
+
+    assertSupportedTypeDeclaration(schema.type, path);
+
+    if ("enum" in schema) {
+      if (!Array.isArray(schema.enum) || schema.enum.length === 0) {
+        throw new RuntimeError(
+          "CONTRACT_INVALID",
+          `Schema 'enum' at ${path} must be a non-empty array`,
+        );
+      }
+      for (const entry of schema.enum) {
+        if (
+          entry !== null &&
+          typeof entry !== "string" &&
+          typeof entry !== "number" &&
+          typeof entry !== "boolean"
+        ) {
+          throw new RuntimeError(
+            "CONTRACT_INVALID",
+            `Schema 'enum' at ${path} must contain only primitive JSON values`,
+          );
+        }
+      }
+    }
+
+    if ("required" in schema) {
+      if (
+        !Array.isArray(schema.required) ||
+        !schema.required.every((key) => typeof key === "string")
+      ) {
+        throw new RuntimeError(
+          "CONTRACT_INVALID",
+          `Schema 'required' at ${path} must be an array of strings`,
+        );
+      }
+    }
+
+    if ("properties" in schema) {
+      if (!isRecord(schema.properties)) {
+        throw new RuntimeError(
+          "CONTRACT_INVALID",
+          `Schema 'properties' at ${path} must be an object`,
+        );
+      }
+      for (const [key, propertySchema] of Object.entries(schema.properties)) {
+        assertSupportedSchema(
+          propertySchema,
+          `${path}.properties.${key}`,
+          depth + 1,
+          ancestors,
+        );
+      }
+    }
+
+    if (
+      "additionalProperties" in schema &&
+      typeof schema.additionalProperties !== "boolean"
+    ) {
+      throw new RuntimeError(
+        "CONTRACT_INVALID",
+        `Schema 'additionalProperties' at ${path} must be a boolean`,
+      );
+    }
+
+    if ("items" in schema) {
+      if (!isRecord(schema.items)) {
+        throw new RuntimeError(
+          "CONTRACT_INVALID",
+          `Schema 'items' at ${path} must be an object schema; tuple and boolean forms are not supported`,
+        );
+      }
+      assertSupportedSchema(
+        schema.items,
+        `${path}.items`,
+        depth + 1,
+        ancestors,
+      );
+    }
+  } finally {
+    ancestors.delete(schema);
+  }
+}
+
+function assertSupportedTypeDeclaration(type: unknown, path: string): void {
+  if (type === undefined) return;
+  const types = typeof type === "string" ? [type] : type;
+  if (!Array.isArray(types) || types.length === 0) {
+    throw new RuntimeError(
+      "CONTRACT_INVALID",
+      `Schema 'type' at ${path} must be a string or a non-empty array of strings`,
+    );
+  }
+  for (const entry of types) {
+    if (typeof entry !== "string" || !SUPPORTED_SCHEMA_TYPES.has(entry)) {
+      throw new RuntimeError(
+        "CONTRACT_INVALID",
+        `Schema type '${String(entry)}' at ${path} is not supported`,
+      );
+    }
+  }
+}
+
 function validateInput(schema: JsonSchema, input: unknown): void {
   const issues: string[] = [];
   validateValue(schema, input, "$", issues);
@@ -206,10 +375,17 @@ function validateValue(
   value: unknown,
   path: string,
   issues: string[],
+  depth = 0,
 ): void {
+  if (depth > MAX_SCHEMA_DEPTH) {
+    issues.push(
+      `${path} exceeds the maximum validation depth of ${MAX_SCHEMA_DEPTH}`,
+    );
+    return;
+  }
   const type = schema.type;
-  if (typeof type === "string" && !matchesType(type, value)) {
-    issues.push(`${path} must be ${type}`);
+  if (!matchesTypeDeclaration(type, value)) {
+    issues.push(`${path} must be ${describeTypeDeclaration(type)}`);
     return;
   }
   if (
@@ -218,7 +394,7 @@ function validateValue(
   ) {
     issues.push(`${path} must be one of the allowed values`);
   }
-  if (type === "object" && isRecord(value)) {
+  if (isRecord(value)) {
     const properties = isRecord(schema.properties) ? schema.properties : {};
     const required = Array.isArray(schema.required) ? schema.required : [];
     for (const key of required) {
@@ -227,7 +403,13 @@ function validateValue(
     }
     for (const [key, propertySchema] of Object.entries(properties)) {
       if (key in value && isRecord(propertySchema)) {
-        validateValue(propertySchema, value[key], `${path}.${key}`, issues);
+        validateValue(
+          propertySchema,
+          value[key],
+          `${path}.${key}`,
+          issues,
+          depth + 1,
+        );
       }
     }
     if (schema.additionalProperties === false) {
@@ -236,16 +418,43 @@ function validateValue(
       }
     }
   }
-  if (type === "array" && Array.isArray(value) && isRecord(schema.items)) {
+  if (Array.isArray(value) && isRecord(schema.items)) {
     value.forEach((item, index) =>
       validateValue(
         schema.items as JsonSchema,
         item,
         `${path}[${index}]`,
         issues,
+        depth + 1,
       ),
     );
   }
+}
+
+function matchesTypeDeclaration(type: unknown, value: unknown): boolean {
+  if (type === undefined) return true;
+  if (typeof type === "string") return matchesType(type, value);
+  if (Array.isArray(type)) {
+    return (
+      type.length > 0 &&
+      type.some(
+        (entry: unknown) =>
+          typeof entry === "string" && matchesType(entry, value),
+      )
+    );
+  }
+  return false;
+}
+
+function describeTypeDeclaration(type: unknown): string {
+  if (typeof type === "string") return type;
+  if (Array.isArray(type)) {
+    const types = type.filter(
+      (entry: unknown): entry is string => typeof entry === "string",
+    );
+    if (types.length > 0) return types.join(" or ");
+  }
+  return "an allowed type";
 }
 
 function matchesType(type: string, value: unknown): boolean {

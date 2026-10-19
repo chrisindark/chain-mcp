@@ -74,16 +74,22 @@ A checkbox may be marked complete only after implementation, tests, documentatio
 
 **Exit criteria:** unauthorized requests fail closed, secrets remain protected, and quota enforcement works across processes when using a distributed adapter.
 
-## Milestone 6 — JSON navigation and analytics
+## Milestone 6 — JSON navigation, logging, and analytics
 
 - [ ] Add bounded JSON path selection.
 - [ ] Add filtering, pagination, and shape inspection.
 - [ ] Enforce depth, size, and execution limits.
+- [ ] Define an injectable logger interface with levels and structured records.
+- [ ] Add validated logging configuration, including level validation and environment-variable mapping.
+- [ ] Enforce secret and sensitive-field redaction at the logger boundary; exclude request and response bodies by default.
+- [ ] Correlate log records with request, tool call, and contract revision identifiers.
+- [ ] Define output sinks, retention, and separation between diagnostic and audit logs.
+- [ ] Test level filtering, redaction, correlation fields, and logger-failure isolation.
 - [ ] Emit structured usage and performance events.
 - [ ] Integrate OpenTelemetry.
 - [ ] Define retention and redaction defaults.
 
-**Exit criteria:** large and adversarial JSON documents remain bounded, and analytics exclude secrets and response bodies by default.
+**Exit criteria:** large and adversarial JSON documents remain bounded; analytics and logs exclude secrets and response bodies by default; and logs honor the configured level, emit structured and correlated records, and cannot change tool results when delivery fails.
 
 ## Milestone 7 — Generated servers
 
