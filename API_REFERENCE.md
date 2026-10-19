@@ -216,7 +216,7 @@ export interface MetricsSink {
 }
 ```
 
-The runtime emits one event for every `callTool` that finds a registered tool, regardless of success or failure. Calls rejected with `TOOL_NOT_FOUND` are thrown before the event is created and do not emit one. `timestamp` and `durationMs` use the injected clock.
+The runtime emits one event for every `callTool` that finds a registered tool, regardless of success or failure. Calls rejected with `TOOL_NOT_FOUND` are thrown before the event is created and do not emit one. `timestamp` (epoch milliseconds) is read from `RuntimeOptions.now`, which defaults to `Date.now`. `durationMs` is measured with the monotonic `RuntimeOptions.monotonicNow`, which defaults to `performance.now`, so wall-clock adjustments cannot distort or invert a duration. Both clocks are injectable for deterministic tests. See `docs/adr/0007-wall-clock-and-monotonic-duration.md`.
 
 `outcome` is `success` when execution resolves, `rate_limited` only when the configured `RateLimiter` returns `{ allowed: false }`, and `error` for every other failure, including authorization failures, validation failures, limiter failures, timeouts, cancellations, and upstream errors. `errorCode` is present on failures and is the final `RuntimeErrorCode`. A `RATE_LIMITED` error reported by an executor is preserved as `errorCode` but has outcome `error`, because the runtime rate limiter did not deny the call.
 

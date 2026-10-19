@@ -35,10 +35,12 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Compare object keys as own properties during validation. `additionalProperties: false` now rejects undeclared keys named after `Object.prototype` members such as `toString` or `__proto__`, and `required` is no longer satisfied by an inherited name.
 - Cap reported validation issues at 20 per call and append a truncation marker, so a large invalid input can no longer inflate the client-facing `INPUT_INVALID` message.
 - Reject non-finite `enum` entries such as `NaN` and `Infinity` at registration. They cannot appear in JSON, and the type check rejects non-finite numbers before the enum comparison, so such an entry could never match.
+- Measure `RuntimeEvent.durationMs` with a monotonic `performance.now` clock (`RuntimeOptions.monotonicNow`) instead of the wall clock, so system clock adjustments cannot distort or invert a duration. `RuntimeOptions.now` now only supplies the event `timestamp`; both clocks remain injectable for deterministic tests. See `docs/adr/0007-wall-clock-and-monotonic-duration.md`.
 
 ### Breaking changes
 
 - `RateLimiter.check` now returns `RateLimitDecision` (`{ allowed: boolean }`) instead of `Promise<void>`. Throwing `RuntimeError("RATE_LIMITED")` no longer denies a call; it is treated as a limiter failure. The package is pre-1.0, so this change is recorded rather than deprecated. See `docs/adr/0006-stage-aware-policy-errors.md`.
+- `RuntimeOptions.now` no longer measures `durationMs`; it only supplies the event `timestamp`. Inject `RuntimeOptions.monotonicNow` to control durations. The package is pre-1.0, so this change is recorded rather than deprecated.
 
 ### Limitations
 

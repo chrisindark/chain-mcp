@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
 
 import {
   auditInputSchema,
@@ -120,16 +121,25 @@ export interface RuntimeOptions {
   authorizer?: Authorizer;
   rateLimiter?: RateLimiter;
   metrics?: MetricsSink;
+  /** Wall clock used for the `RuntimeEvent` timestamp. Defaults to `Date.now`. */
   now?: () => number;
+  /**
+   * Monotonic clock used to measure `durationMs`. Defaults to
+   * `performance.now`. Wall-clock time can jump backwards or forwards, so
+   * durations must not be derived from `now`.
+   */
+  monotonicNow?: () => number;
   defaultTimeoutMs?: number;
 }
 
 export class InMemoryToolRuntime implements ToolRuntime {
   private readonly tools = new Map<string, ToolDefinition>();
   private readonly now: () => number;
+  private readonly monotonicNow: () => number;
 
   constructor(private readonly options: RuntimeOptions = {}) {
     this.now = options.now ?? Date.now;
+    this.monotonicNow = options.monotonicNow ?? (() => performance.now());
   }
 
   register(tool: ToolDefinition): void {
@@ -171,7 +181,7 @@ export class InMemoryToolRuntime implements ToolRuntime {
     if (!tool)
       throw new RuntimeError("TOOL_NOT_FOUND", `Tool '${name}' was not found`);
 
-    const startedAt = this.now();
+    const startedAt = this.monotonicNow();
     let outcome: RuntimeEvent["outcome"] = "success";
     let errorCode: RuntimeErrorCode | undefined;
     let stage: InvocationStage = "authorization";
@@ -219,7 +229,7 @@ export class InMemoryToolRuntime implements ToolRuntime {
         const event: RuntimeEvent = {
           name: "tool_invocation",
           timestamp: this.now(),
-          durationMs: Math.max(0, this.now() - startedAt),
+          durationMs: Math.max(0, this.monotonicNow() - startedAt),
           tenantId: context.tenantId,
           toolName: name,
           outcome,

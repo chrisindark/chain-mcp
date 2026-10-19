@@ -613,6 +613,31 @@ describe("InMemoryToolRuntime", () => {
     await Promise.resolve();
   });
 
+  it("measures durationMs on a monotonic clock and timestamp on the wall clock", async () => {
+    const record = vi.fn();
+    // A backwards wall-clock jump must not produce a negative or wrong duration.
+    const wallReadings = [1_000_000, 999_000, 998_000];
+    const now = vi.fn(() => wallReadings.shift() ?? 0);
+    const monotonicNow = vi
+      .fn<() => number>()
+      .mockReturnValueOnce(10)
+      .mockReturnValueOnce(35);
+    const runtime = new InMemoryToolRuntime({
+      metrics: { record },
+      now,
+      monotonicNow,
+    });
+    runtime.register(tool());
+
+    await expect(
+      runtime.callTool("lookup_item", { id: "x" }, context),
+    ).resolves.toEqual({ id: "x" });
+
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({ timestamp: 1_000_000, durationMs: 25 }),
+    );
+  });
+
   it("maps untyped authorization failures to AUTH_FORBIDDEN", async () => {
     const execute = vi.fn(async () => "should not run");
     const record = vi.fn();
