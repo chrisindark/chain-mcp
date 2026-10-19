@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   auditInputSchema,
+  CACHE_KEY_VERSION,
   createCacheKey,
   InMemoryToolRuntime,
+  MAX_CACHE_KEY_INPUT_BYTES,
   MAX_SCHEMA_DEPTH,
   RuntimeError,
   type ToolContext,
@@ -453,29 +455,87 @@ describe("schema audit", () => {
 });
 
 describe("cache key serialization", () => {
-  it("canonicalizes object key order and partitions by identity and revision", () => {
-    const base = {
-      tenantId: "t",
-      principalId: "p",
-      contractRevision: "r1",
-      toolName: "x",
-      arguments: { b: 2, a: 1 },
-    };
+  const base = {
+    tenantId: "tenant-secret",
+    principalId: "principal-secret",
+    contractRevision: "revision-secret",
+    toolName: "tool-secret",
+    arguments: { b: 2, a: 1, account: "arg-secret" },
+  };
+
+  it("pins the key format for the current version", () => {
+    expect(
+      createCacheKey({
+        tenantId: "t",
+        principalId: "p",
+        contractRevision: "r1",
+        toolName: "x",
+        arguments: { b: 2, a: 1 },
+      }),
+    ).toBe(
+      "chainmcp:cache:v1:cd555bbe0d1b8725cb873129fd6b98f0656c4baee6e2e74408d927ef37a3894d",
+    );
+  });
+
+  it("returns a fixed-length versioned digest without raw identity or arguments", () => {
+    const key = createCacheKey(base);
+
+    expect(key).toMatch(
+      new RegExp(`^chainmcp:cache:${CACHE_KEY_VERSION}:[0-9a-f]{64}$`),
+    );
+    for (const raw of [
+      "tenant-secret",
+      "principal-secret",
+      "revision-secret",
+      "tool-secret",
+      "arg-secret",
+    ]) {
+      expect(key).not.toContain(raw);
+    }
+
     expect(createCacheKey(base)).toBe(
-      createCacheKey({ ...base, arguments: { a: 1, b: 2 } }),
+      createCacheKey({
+        ...base,
+        arguments: { account: "arg-secret", a: 1, b: 2 },
+      }),
     );
     expect(createCacheKey(base)).not.toBe(
       createCacheKey({ ...base, tenantId: "other" }),
+    );
+    expect(createCacheKey(base)).not.toBe(
+      createCacheKey({ ...base, principalId: "other" }),
+    );
+    expect(createCacheKey(base)).not.toBe(
+      createCacheKey({ ...base, contractRevision: "other" }),
+    );
+    expect(createCacheKey(base)).not.toBe(
+      createCacheKey({ ...base, toolName: "other" }),
+    );
+    expect(createCacheKey(base)).not.toBe(
+      createCacheKey({ ...base, arguments: { ...base.arguments, a: 99 } }),
+    );
+  });
+
+  it("omits undefined object properties but rejects undefined at the root or in arrays", () => {
+    expect(
+      createCacheKey({ ...base, arguments: { a: 1, optional: undefined } }),
+    ).toBe(createCacheKey({ ...base, arguments: { a: 1 } }));
+
+    expect(() => createCacheKey({ ...base, arguments: undefined })).toThrow(
+      "JSON-compatible",
+    );
+    expect(() => createCacheKey({ ...base, arguments: [undefined] })).toThrow(
+      "undefined array items",
+    );
+    expect(() => createCacheKey({ ...base, arguments: new Array(1) })).toThrow(
+      "undefined array items",
     );
   });
 
   it("rejects values that cannot be deterministically represented", () => {
     expect(() =>
       createCacheKey({
-        tenantId: "t",
-        principalId: "p",
-        contractRevision: "r",
-        toolName: "x",
+        ...base,
         arguments: 1n,
       }),
     ).toThrow("JSON-compatible");
@@ -483,12 +543,18 @@ describe("cache key serialization", () => {
     cyclic.self = cyclic;
     expect(() =>
       createCacheKey({
-        tenantId: "t",
-        principalId: "p",
-        contractRevision: "r",
-        toolName: "x",
+        ...base,
         arguments: cyclic,
       }),
     ).toThrow("cycles");
+  });
+
+  it("rejects canonical input beyond the size limit", () => {
+    expect(() =>
+      createCacheKey({
+        ...base,
+        arguments: "x".repeat(MAX_CACHE_KEY_INPUT_BYTES + 1),
+      }),
+    ).toThrow(`maximum of ${MAX_CACHE_KEY_INPUT_BYTES} bytes`);
   });
 });

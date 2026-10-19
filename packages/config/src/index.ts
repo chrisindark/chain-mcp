@@ -23,13 +23,9 @@ export const ChainMcpConfigSchema = z
           .default(1_000_000),
       })
       .strict()
-      .default({
-        transport: "stdio",
-        host: "127.0.0.1",
-        port: 3333,
-        requestTimeoutMs: 15_000,
-        maxResponseBytes: 1_000_000,
-      }),
+      // prefault, not default: Zod 4 `.default({})` short-circuits inner
+      // parsing and would return `{}` without the field defaults above.
+      .prefault({}),
     security: z
       .object({
         requireInboundAuth: z.boolean().default(false),
@@ -39,11 +35,7 @@ export const ChainMcpConfigSchema = z
           .default(["authorization", "cookie", "x-api-key"]),
       })
       .strict()
-      .default({
-        requireInboundAuth: false,
-        allowedUpstreamHosts: [],
-        redactHeaders: ["authorization", "cookie", "x-api-key"],
-      }),
+      .prefault({}),
   })
   .strict();
 

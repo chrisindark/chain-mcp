@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   auditInputSchema,
   isJsonObject,
@@ -406,6 +408,12 @@ async function executeWithTimeout(
   }
 }
 
+export const CACHE_KEY_VERSION = "v1";
+export const MAX_CACHE_KEY_INPUT_BYTES = 64 * 1024;
+
+const CACHE_KEY_PREFIX = `chainmcp:cache:${CACHE_KEY_VERSION}:`;
+const CACHE_KEY_HASH_DOMAIN = `chainmcp:cache-key:${CACHE_KEY_VERSION}\u0000`;
+
 export function createCacheKey(parts: {
   tenantId: string;
   principalId: string;
@@ -413,13 +421,23 @@ export function createCacheKey(parts: {
   toolName: string;
   arguments: unknown;
 }): string {
-  return JSON.stringify([
+  const payload = JSON.stringify([
     parts.tenantId,
     parts.principalId,
     parts.contractRevision,
     parts.toolName,
     canonicalize(parts.arguments, new Set()),
   ]);
+  if (Buffer.byteLength(payload, "utf8") > MAX_CACHE_KEY_INPUT_BYTES) {
+    throw new TypeError(
+      `Cache key input exceeds the maximum of ${MAX_CACHE_KEY_INPUT_BYTES} bytes`,
+    );
+  }
+  const digest = createHash("sha256")
+    .update(CACHE_KEY_HASH_DOMAIN, "utf8")
+    .update(payload, "utf8")
+    .digest("hex");
+  return `${CACHE_KEY_PREFIX}${digest}`;
 }
 
 function canonicalize(value: unknown, ancestors: Set<object>): unknown {
@@ -445,7 +463,14 @@ function canonicalize(value: unknown, ancestors: Set<object>): unknown {
     ancestors.add(value);
     try {
       if (Array.isArray(value)) {
-        return value.map((item) => canonicalize(item, ancestors));
+        return Array.from(value, (item) => {
+          if (item === undefined) {
+            throw new TypeError(
+              "Cache key arguments cannot contain undefined array items",
+            );
+          }
+          return canonicalize(item, ancestors);
+        });
       }
       if (
         !isJsonObject(value) ||
@@ -455,11 +480,13 @@ function canonicalize(value: unknown, ancestors: Set<object>): unknown {
           "Cache key arguments must be plain JSON-compatible data",
         );
       }
-      return Object.fromEntries(
-        Object.keys(value)
-          .sort()
-          .map((key) => [key, canonicalize(value[key], ancestors)]),
-      );
+      const canonical: Array<[string, unknown]> = [];
+      for (const key of Object.keys(value).sort()) {
+        const property = value[key];
+        if (property === undefined) continue;
+        canonical.push([key, canonicalize(property, ancestors)]);
+      }
+      return Object.fromEntries(canonical);
     } finally {
       ancestors.delete(value);
     }

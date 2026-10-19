@@ -10,8 +10,59 @@ describe("configuration schema", () => {
         host: "127.0.0.1",
         port: 3333,
         requestTimeoutMs: 15_000,
+        maxResponseBytes: 1_000_000,
       },
-      security: { requireInboundAuth: false, allowedUpstreamHosts: [] },
+      security: {
+        requireInboundAuth: false,
+        allowedUpstreamHosts: [],
+        redactHeaders: ["authorization", "cookie", "x-api-key"],
+      },
+    });
+  });
+
+  it("applies field defaults to empty or partial nested objects", () => {
+    expect(
+      parseConfig({
+        version: 1,
+        name: "catalog",
+        server: {},
+        security: {},
+      }),
+    ).toMatchObject({
+      server: {
+        transport: "stdio",
+        host: "127.0.0.1",
+        port: 3333,
+        requestTimeoutMs: 15_000,
+        maxResponseBytes: 1_000_000,
+      },
+      security: {
+        requireInboundAuth: false,
+        allowedUpstreamHosts: [],
+        redactHeaders: ["authorization", "cookie", "x-api-key"],
+      },
+    });
+
+    expect(
+      parseConfig({
+        version: 1,
+        name: "catalog",
+        server: { port: 4444 },
+        security: { requireInboundAuth: true },
+      }),
+    ).toMatchObject({
+      server: {
+        transport: "stdio",
+        host: "127.0.0.1",
+        port: 4444,
+        requestTimeoutMs: 15_000,
+        maxResponseBytes: 1_000_000,
+      },
+      security: {
+        requireInboundAuth: true,
+        allowedUpstreamHosts: [],
+        redactHeaders: ["authorization", "cookie", "x-api-key"],
+      },
     });
   });
 

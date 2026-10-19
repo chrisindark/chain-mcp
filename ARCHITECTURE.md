@@ -151,6 +151,9 @@ A cache key must incorporate:
 - Tenant identity.
 - Principal or authorization partition.
 - Relevant scopes and response-varying inputs.
+- A key-format version.
+
+The store key must be an opaque, fixed-length digest of the canonical key material. Do not place raw tenant, principal, tool, revision, or argument text in store keys. Bound the canonical input size before hashing. Increment the key-format version whenever canonicalization or hashed fields change so old entries become misses instead of colliding with entries written under different semantics.
 
 Never use raw bearer tokens as keys. If a safe authorization partition cannot be computed, bypass shared caching.
 

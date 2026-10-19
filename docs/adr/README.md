@@ -21,5 +21,6 @@ Initial decisions to document:
 2. Shared runtime for generated and dynamic execution.
 3. Mandatory tenant and authorization cache partitioning.
 4. MCP transport and authentication strategy.
+5. Versioned, hashed cache keys.
 
 Do not invent historical decisions. Mark new decisions as proposed until reviewed.
