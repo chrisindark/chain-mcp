@@ -261,6 +261,8 @@ describe("InMemoryToolRuntime", () => {
     ],
     ["empty enum", { enum: [] }],
     ["object enum entry", { enum: [{ value: 1 }] }],
+    ["NaN enum entry", { enum: [Number.NaN] }],
+    ["Infinity enum entry", { enum: [Number.POSITIVE_INFINITY] }],
     ["non-array required", { required: "id" }],
     ["non-object properties", { properties: [] }],
   ])("rejects unsupported schema form %s at registration", (_form, schema) => {
@@ -866,6 +868,17 @@ describe("schema audit", () => {
         message: first?.message,
       }),
     );
+  });
+
+  it("rejects non-finite enum entries that could never match", () => {
+    expect(auditInputSchema({ enum: [Number.NaN, "ok"] }).diagnostics).toEqual([
+      {
+        code: "SCHEMA_INVALID_ENUM",
+        path: "$",
+        message:
+          "Schema 'enum' at $ must contain only finite numbers; NaN and Infinity cannot be represented",
+      },
+    ]);
   });
 
   it("reports cycles and excessive depth", () => {

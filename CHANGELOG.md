@@ -34,6 +34,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Preserve typed authorization failures so operators can distinguish policy denial from adapter infrastructure failure.
 - Compare object keys as own properties during validation. `additionalProperties: false` now rejects undeclared keys named after `Object.prototype` members such as `toString` or `__proto__`, and `required` is no longer satisfied by an inherited name.
 - Cap reported validation issues at 20 per call and append a truncation marker, so a large invalid input can no longer inflate the client-facing `INPUT_INVALID` message.
+- Reject non-finite `enum` entries such as `NaN` and `Infinity` at registration. They cannot appear in JSON, and the type check rejects non-finite numbers before the enum comparison, so such an entry could never match.
 
 ### Breaking changes
 
