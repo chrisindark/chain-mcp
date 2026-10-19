@@ -32,6 +32,8 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Classify invocation failures by stage. Untyped authorizer failures now fail closed as `AUTH_FORBIDDEN` with a safe message and retain their cause instead of surfacing as `UPSTREAM_FAILURE`.
 - Replace the throwing `RateLimiter.check` contract with an explicit `RateLimitDecision`. Only `{ allowed: false }` produces `RATE_LIMITED` and the `rate_limited` metrics outcome; limiter failures, missing decisions, and a thrown `RATE_LIMITED` code become `UPSTREAM_FAILURE`.
 - Preserve typed authorization failures so operators can distinguish policy denial from adapter infrastructure failure.
+- Compare object keys as own properties during validation. `additionalProperties: false` now rejects undeclared keys named after `Object.prototype` members such as `toString` or `__proto__`, and `required` is no longer satisfied by an inherited name.
+- Cap reported validation issues at 20 per call and append a truncation marker, so a large invalid input can no longer inflate the client-facing `INPUT_INVALID` message.
 
 ### Breaking changes
 

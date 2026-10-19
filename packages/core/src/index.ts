@@ -302,62 +302,94 @@ function assertSupportedInputSchema(schema: unknown): void {
   }
 }
 
+/**
+ * Upper bound on the number of issues collected for one call. Without a bound,
+ * an adversarial input such as a large invalid array produces one message per
+ * element, which is then serialized into the client-facing error message.
+ */
+const MAX_VALIDATION_ISSUES = 20;
+
+interface ValidationState {
+  readonly issues: string[];
+  readonly maxIssues: number;
+  truncated: boolean;
+}
+
 function validateInput(schema: JsonSchema, input: unknown): void {
-  const issues: string[] = [];
-  validateValue(schema, input, "$", issues);
-  if (issues.length > 0) {
-    throw new RuntimeError(
-      "INPUT_INVALID",
-      `Input does not match schema: ${issues.join("; ")}`,
-    );
-  }
+  const state: ValidationState = {
+    issues: [],
+    maxIssues: MAX_VALIDATION_ISSUES,
+    truncated: false,
+  };
+  validateValue(schema, input, "$", state, 0);
+  if (state.issues.length === 0) return;
+  const issues = state.truncated
+    ? [...state.issues, `further issues omitted after ${state.maxIssues}`]
+    : state.issues;
+  throw new RuntimeError(
+    "INPUT_INVALID",
+    `Input does not match schema: ${issues.join("; ")}`,
+  );
+}
+
+function addIssue(state: ValidationState, message: string): void {
+  if (state.issues.length < state.maxIssues) state.issues.push(message);
+  else state.truncated = true;
 }
 
 function validateValue(
   schema: JsonSchema,
   value: unknown,
   path: string,
-  issues: string[],
-  depth = 0,
+  state: ValidationState,
+  depth: number,
 ): void {
   if (depth > MAX_SCHEMA_DEPTH) {
-    issues.push(
+    addIssue(
+      state,
       `${path} exceeds the maximum validation depth of ${MAX_SCHEMA_DEPTH}`,
     );
     return;
   }
   const type = schema.type;
   if (!matchesTypeDeclaration(type, value)) {
-    issues.push(`${path} must be ${describeTypeDeclaration(type)}`);
+    addIssue(state, `${path} must be ${describeTypeDeclaration(type)}`);
     return;
   }
   if (
     Array.isArray(schema.enum) &&
     !schema.enum.some((item) => Object.is(item, value))
   ) {
-    issues.push(`${path} must be one of the allowed values`);
+    addIssue(state, `${path} must be one of the allowed values`);
   }
   if (isJsonObject(value)) {
     const properties = isJsonObject(schema.properties) ? schema.properties : {};
     const required = Array.isArray(schema.required) ? schema.required : [];
     for (const key of required) {
-      if (typeof key === "string" && !(key in value))
-        issues.push(`${path}.${key} is required`);
+      // Own-property checks only. An `in` test would accept inherited names
+      // such as 'toString', so a caller could satisfy `required` with nothing.
+      if (typeof key === "string" && !Object.hasOwn(value, key)) {
+        addIssue(state, `${path}.${key} is required`);
+      }
     }
     for (const [key, propertySchema] of Object.entries(properties)) {
-      if (key in value && isJsonObject(propertySchema)) {
+      if (Object.hasOwn(value, key) && isJsonObject(propertySchema)) {
         validateValue(
           propertySchema,
           value[key],
           `${path}.${key}`,
-          issues,
+          state,
           depth + 1,
         );
       }
     }
     if (schema.additionalProperties === false) {
       for (const key of Object.keys(value)) {
-        if (!(key in properties)) issues.push(`${path}.${key} is not allowed`);
+        // `in` would treat inherited Object.prototype names as declared
+        // properties and let undeclared keys such as 'toString' through.
+        if (!Object.hasOwn(properties, key)) {
+          addIssue(state, `${path}.${key} is not allowed`);
+        }
       }
     }
   }
@@ -367,7 +399,7 @@ function validateValue(
         schema.items as JsonSchema,
         item,
         `${path}[${index}]`,
-        issues,
+        state,
         depth + 1,
       ),
     );

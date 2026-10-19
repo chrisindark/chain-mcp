@@ -314,6 +314,72 @@ describe("InMemoryToolRuntime", () => {
     expect(execute).toHaveBeenCalledWith(input, expect.anything());
   });
 
+  it("compares keys as own properties, not through the prototype chain", async () => {
+    const runtime = new InMemoryToolRuntime();
+    runtime.register(
+      toolWithSchema({
+        type: "object",
+        required: ["id"],
+        properties: { id: { type: "string" } },
+        additionalProperties: false,
+      }),
+    );
+
+    await expect(
+      runtime.callTool("lookup_item", { id: "x" }, context),
+    ).resolves.toEqual({ id: "x" });
+
+    // Inherited Object.prototype names are not declared properties, so an
+    // undeclared key must be rejected rather than treated as known. JSON.parse
+    // and computed keys both produce own properties for these names.
+    for (const key of ["toString", "constructor", "valueOf", "__proto__"]) {
+      await expect(
+        runtime.callTool("lookup_item", { id: "x", [key]: "x" }, context),
+      ).rejects.toMatchObject({
+        code: "INPUT_INVALID",
+        message: expect.stringContaining(`$.${key} is not allowed`),
+      });
+    }
+
+    // A required name that exists only on the prototype is still missing.
+    const phantom = new InMemoryToolRuntime();
+    phantom.register(toolWithSchema({ type: "object", required: ["valueOf"] }));
+    await expect(
+      phantom.callTool("lookup_item", {}, context),
+    ).rejects.toMatchObject({
+      code: "INPUT_INVALID",
+      message: expect.stringContaining("$.valueOf is required"),
+    });
+  });
+
+  it("bounds the number of reported validation issues", async () => {
+    const runtime = new InMemoryToolRuntime();
+    runtime.register(
+      toolWithSchema({ type: "array", items: { type: "string" } }),
+    );
+
+    const error = await runtime
+      .callTool(
+        "lookup_item",
+        Array.from({ length: 5_000 }, () => 1),
+        context,
+      )
+      .then(
+        () => {
+          throw new Error("expected the call to reject");
+        },
+        (caught: unknown) => caught,
+      );
+
+    expect(error).toMatchObject({
+      code: "INPUT_INVALID",
+      message: expect.stringContaining("further issues omitted after 20"),
+    });
+    expect(error).toBeInstanceOf(RuntimeError);
+    if (!(error instanceof RuntimeError)) throw new Error("unreachable");
+    expect(error.message.length).toBeLessThan(1_000);
+  });
+
   it("runs authorization and rate-limit hooks and emits metrics", async () => {
     const authorize = vi.fn();
     const check = vi.fn(() => ({ allowed: true }));
