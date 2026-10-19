@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  auditInputSchema,
   createCacheKey,
   InMemoryToolRuntime,
+  MAX_SCHEMA_DEPTH,
   RuntimeError,
   type ToolContext,
   type ToolDefinition,
@@ -295,12 +297,14 @@ describe("InMemoryToolRuntime", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("enforces execution timeouts and propagates cancellation", async () => {
+  it("rejects on timeout and aborts the execution signal", async () => {
     const runtime = new InMemoryToolRuntime({ defaultTimeoutMs: 5 });
+    let executionSignal: AbortSignal | undefined;
     runtime.register(
       tool(
         (_input, executionContext) =>
           new Promise((_resolve, reject) => {
+            executionSignal = executionContext.signal;
             executionContext.signal?.addEventListener(
               "abort",
               () => reject(new Error("aborted")),
@@ -314,26 +318,40 @@ describe("InMemoryToolRuntime", () => {
     ).rejects.toMatchObject({
       code: "UPSTREAM_TIMEOUT",
     });
+    expect(executionSignal?.aborted).toBe(true);
+  });
 
+  it("rejects a cancellation that arrives before execution", async () => {
     const controller = new AbortController();
     controller.abort();
+    const execute = vi.fn(async (input: unknown) => input);
     const cancelled = new InMemoryToolRuntime();
-    cancelled.register(
-      tool((_input, executionContext) =>
-        Promise.reject(executionContext.signal?.reason),
-      ),
-    );
+    cancelled.register(tool(execute));
     await expect(
       cancelled.callTool(
         "lookup_item",
         { id: "x" },
         { ...context, signal: controller.signal },
       ),
-    ).rejects.toBeDefined();
+    ).rejects.toMatchObject({ code: "CANCELLED" });
+    expect(execute).not.toHaveBeenCalled();
+  });
 
+  it("rejects with CANCELLED when the caller aborts, even if the tool ignores the signal", async () => {
     const pendingController = new AbortController();
     const ignoresAbort = new InMemoryToolRuntime();
-    ignoresAbort.register(tool(() => new Promise(() => {})));
+    let executionSignal: AbortSignal | undefined;
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    ignoresAbort.register(
+      tool((_input, executionContext) => {
+        executionSignal = executionContext.signal;
+        markStarted?.();
+        return new Promise(() => {});
+      }),
+    );
     const pendingCall = ignoresAbort.callTool(
       "lookup_item",
       { id: "x" },
@@ -342,8 +360,95 @@ describe("InMemoryToolRuntime", () => {
         signal: pendingController.signal,
       },
     );
+    await started;
     pendingController.abort();
     await expect(pendingCall).rejects.toMatchObject({ code: "CANCELLED" });
+    expect(executionSignal?.aborted).toBe(true);
+  });
+});
+
+describe("schema audit", () => {
+  it("returns no diagnostics for a supported schema", () => {
+    expect(
+      auditInputSchema({
+        type: ["object", "null"],
+        required: ["id"],
+        properties: {
+          id: { type: "string" },
+          tags: { type: "array", items: { type: "string" } },
+        },
+        additionalProperties: false,
+      }),
+    ).toEqual({ supported: true, diagnostics: [] });
+  });
+
+  it("reports unsupported keywords without throwing", () => {
+    const result = auditInputSchema({ anyOf: [{ type: "string" }] });
+
+    expect(result.supported).toBe(false);
+    expect(result.diagnostics).toEqual([
+      {
+        code: "SCHEMA_UNSUPPORTED_KEYWORD",
+        path: "$",
+        message: "Schema keyword 'anyOf' at $ is not supported",
+      },
+    ]);
+  });
+
+  it("collects multiple diagnostics with nested paths", () => {
+    const result = auditInputSchema({
+      type: "object",
+      properties: {
+        name: { type: "string", format: "email" },
+        count: { type: "number", minimum: 0 },
+      },
+      additionalProperties: { type: "string" },
+    });
+
+    expect(
+      result.diagnostics.map(({ code, path }) => ({ code, path })),
+    ).toEqual([
+      { code: "SCHEMA_UNSUPPORTED_KEYWORD", path: "$.properties.name" },
+      { code: "SCHEMA_UNSUPPORTED_KEYWORD", path: "$.properties.count" },
+      {
+        code: "SCHEMA_INVALID_ADDITIONAL_PROPERTIES",
+        path: "$",
+      },
+    ]);
+  });
+
+  it("uses the same first diagnostic message that registration throws", () => {
+    const schema = { type: "array" as const, items: false };
+    const result = auditInputSchema(schema);
+    expect(result.diagnostics).toHaveLength(1);
+    const first = result.diagnostics[0];
+
+    const runtime = new InMemoryToolRuntime();
+    expect(() => runtime.register(toolWithSchema(schema))).toThrowError(
+      expect.objectContaining({
+        code: "CONTRACT_INVALID",
+        message: first?.message,
+      }),
+    );
+  });
+
+  it("reports cycles and excessive depth", () => {
+    const cyclic: Record<string, unknown> = { type: "object" };
+    cyclic.properties = { self: cyclic };
+    expect(auditInputSchema(cyclic).diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "SCHEMA_CYCLE",
+        path: "$.properties.self",
+      }),
+    );
+
+    let deep: ToolDefinition["inputSchema"] = { type: "string" };
+    for (let depth = 0; depth <= MAX_SCHEMA_DEPTH; depth += 1) {
+      deep = { type: "object", properties: { nested: deep } };
+    }
+    expect(auditInputSchema(deep).diagnostics).toContainEqual(
+      expect.objectContaining({ code: "SCHEMA_TOO_DEEP" }),
+    );
   });
 });
 

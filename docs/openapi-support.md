@@ -17,6 +17,7 @@ The compiler should:
 7. Record authentication and operation policies.
 8. Emit diagnostics for unsupported or ambiguous constructs.
 9. Produce a source hash and compiler version.
+10. Bind `context.signal` to generated upstream calls and release executor resources on abort or timeout.
 
 ## Initial mapping
 
@@ -35,6 +36,8 @@ The compiler should:
 ## Unsupported constructs
 
 The compiler must not silently weaken validation when it encounters unsupported schema features. It should fail in strict mode or emit explicit diagnostics in permissive mode.
+
+Use `auditInputSchema` from `@chainmcp/core` on every generated tool input schema. It returns the same diagnostics the runtime enforces at registration, including stable codes and JSON-path locations. Do not emit a tool while its audit result is unsupported.
 
 ## Reference resolution
 

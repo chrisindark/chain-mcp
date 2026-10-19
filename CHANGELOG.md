@@ -14,6 +14,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Document security requirements and release gates.
 - Establish coding-agent workflow and roadmap milestones.
 - Add explicit production logging requirements to Milestone 6.
+- Document timeout and cancellation as cooperative `AbortSignal` propagation, with executor responsibility for resource release.
 
 ### Implementation
 
@@ -23,6 +24,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Wrap unexpected execution failures in a stable, safe runtime error and keep metrics delivery from delaying tool results.
 - Fix input validation to enforce array-valued (`type: [...]`) declarations and object/array keywords in schemas that omit `type`; empty or malformed type declarations now fail closed.
 - Reject unsupported validation keywords and schema forms at tool registration with `CONTRACT_INVALID` instead of silently skipping them. Bound schema nesting to 32 levels, reject cyclic schemas, and cap validation depth so hostile input cannot surface as `UPSTREAM_FAILURE`.
+- Export `auditInputSchema` and its diagnostic types from `@chainmcp/core` so the compiler can apply the same supported-schema rules at compile time.
 
 ### Limitations
 

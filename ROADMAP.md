@@ -21,10 +21,10 @@ A checkbox may be marked complete only after implementation, tests, documentatio
 - [x] Implement in-memory tool registry and invocation pipeline.
 - [x] Validate tool arguments before execution (documented JSON Schema subset).
 - [x] Add injectable authorization, cache, rate-limit, and metrics interfaces.
-- [x] Implement timeout and cancellation propagation.
+- [x] Implement timeout rejection and cooperative `AbortSignal` propagation.
 - [x] Add deterministic unit tests.
 
-**Exit criteria:** tools can be registered, discovered, validated, and executed through the shared runtime. Verified by the deterministic core tests and workspace checks. Cache storage and concrete authorization/rate-limit policies remain injected adapters, not built-in features.
+**Exit criteria:** tools can be registered, discovered, validated, and executed through the shared runtime. Verified by the deterministic core tests and workspace checks. Timeout and cancellation reject the caller and abort the per-call signal; they do not guarantee executor termination or resource release. Cache storage and concrete authorization/rate-limit policies remain injected adapters, not built-in features.
 
 ## Milestone 2 — MCP server adapter
 
@@ -45,9 +45,10 @@ A checkbox may be marked complete only after implementation, tests, documentatio
 - [ ] Translate supported JSON Schema constructs into validators.
 - [ ] Map authentication schemes to explicit policies.
 - [ ] Report unsupported constructs and ambiguous mappings.
+- [ ] Bind `context.signal` to generated upstream calls and release executor resources on timeout or cancellation.
 - [ ] Add deterministic compiler tests and fixtures.
 
-**Exit criteria:** a representative API contract compiles into validated tools with documented limitations.
+**Exit criteria:** a representative API contract compiles into validated tools with documented limitations, and generated executors bind the cancellation signal to upstream I/O.
 
 ## Milestone 4 — Smart caching and token accounting
 

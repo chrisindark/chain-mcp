@@ -26,7 +26,7 @@ The current workspace provides `pnpm format:check`, `pnpm lint`, `pnpm typecheck
 - Use TypeScript strict mode and ESM.
 - Avoid `any`; use `unknown` at untrusted boundaries.
 - Validate external data at runtime.
-- Propagate `AbortSignal` through network operations.
+- Propagate `AbortSignal` through network operations and release resources on abort or timeout.
 - Keep core packages independent of infrastructure adapters.
 - Use dependency injection for clocks, HTTP clients, caches, and metrics.
 - Prefer deterministic tests and mock upstream APIs.
