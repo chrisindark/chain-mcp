@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
 import {
+  cacheKeyHashDomain,
+  cacheKeyPrefix,
+  MAX_CACHE_KEY_INPUT_BYTES,
+} from "./cache-key.js";
+import {
   auditInputSchema,
   isJsonObject,
   MAX_SCHEMA_DEPTH,
@@ -15,6 +20,7 @@ export type {
   SchemaDiagnosticCode,
 } from "./schema.js";
 export { auditInputSchema, MAX_SCHEMA_DEPTH } from "./schema.js";
+export { CACHE_KEY_VERSION, MAX_CACHE_KEY_INPUT_BYTES } from "./cache-key.js";
 
 export interface Principal {
   id: string;
@@ -35,11 +41,28 @@ export interface OperationPolicy {
   requiredScopes?: readonly string[];
 }
 
+export interface ToolCachePolicy {
+  /**
+   * Time-to-live for cached results, in seconds. Store adapters enforce their
+   * own upper bound. Caching is opt-in: only idempotent read operations should
+   * declare it, and no tool is cached by default.
+   */
+  ttlSeconds: number;
+}
+
 export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   name: string;
   description: string;
   inputSchema: JsonSchema;
   operation: OperationPolicy;
+  /**
+   * Immutable contract revision this tool was compiled from. Required when
+   * `cache` is set, and hashed into every cache key so revisions cannot share
+   * entries.
+   */
+  contractRevision?: string;
+  /** Opt-in caching for an idempotent read operation. Omit for mutations. */
+  cache?: ToolCachePolicy;
   /**
    * Tenant that owns this tool, bound at registration time. In multi-tenant
    * mode the binding is required. In single-tenant mode an omitted value is
@@ -59,12 +82,51 @@ export type RuntimeEvent = {
   toolName: string;
   outcome: "success" | "error" | "rate_limited";
   errorCode?: RuntimeErrorCode;
+  /**
+   * Cache lookup result for a cache-eligible tool when the runtime has a cache.
+   * Absent for tools that are not cache-eligible. `bypass` means no lookup
+   * produced a value: the partition or key could not be derived, or the store
+   * read failed. The hit ratio is `hit / (hit + miss)`; `bypass` is reported
+   * separately because no usable lookup occurred.
+   */
+  cacheOutcome?: "hit" | "miss" | "bypass";
+  /**
+   * Token measurement for a successful invocation when a `Tokenizer` is
+   * configured. Absent when the tokenizer is not configured, the result cannot
+   * be serialized, or the adapter fails or returns an unusable count. Always
+   * includes the measurement mode so estimates are never presented as exact.
+   */
+  tokenUsage?: {
+    count: number;
+    measurement: "exact" | "estimate";
+    tokenizer: string;
+    /** UTF-8 bytes of the serialized result presented to the model. */
+    payloadBytes: number;
+  };
 };
 
 export interface CacheStore {
   get<T>(key: string): Promise<T | undefined>;
   set<T>(key: string, value: T, ttlSeconds: number): Promise<void>;
   delete(key: string): Promise<void>;
+}
+
+export interface RuntimeCacheOptions {
+  /**
+   * Store used for eligible invocations. Its byte, entry, and TTL limits are
+   * the adapter's responsibility; the runtime never caches writes implicitly.
+   */
+  store: CacheStore;
+  /**
+   * Derives a stable, non-secret authorization partition from the caller's
+   * effective grants or policy state. Return `undefined` to bypass caching for
+   * this call. Throwing also bypasses caching; it never fails the tool call.
+   * Never return a bearer token or another credential.
+   */
+  authorizationPartition(
+    context: ToolContext,
+    tool: ToolDefinition,
+  ): string | undefined;
 }
 
 export interface RateLimitDecision {
@@ -84,6 +146,22 @@ export interface RateLimiter {
 
 export interface MetricsSink {
   record(event: RuntimeEvent): void | Promise<void>;
+}
+
+export interface Tokenizer {
+  /**
+   * Stable identifier for the tokenizer or model, for example `cl100k_base` or
+   * a model name. Recorded with each measurement.
+   */
+  readonly id: string;
+  /**
+   * Whether `count` is authoritative for this tokenizer (`exact`) or an
+   * approximation (`estimate`). Adapters must not claim `exact` unless the
+   * count matches the tokenizer the model will actually use.
+   */
+  readonly measurement: "exact" | "estimate";
+  /** Counts tokens in the serialized result presented to the model. */
+  count(text: string): number;
 }
 
 export interface Authorizer {
@@ -115,6 +193,20 @@ export interface ToolRuntime {
     input: unknown,
     context: ToolContext | ToolContextFactory,
   ): Promise<unknown>;
+  /**
+   * Deletes the cached result for one exact invocation. Optional: a runtime
+   * without caching support may omit it. Hashed keys cannot be invalidated by
+   * prefix or predicate, so callers must supply the same tool, arguments, and
+   * caller context used for the cached call. This is a trusted operator
+   * surface, not an MCP request: it does not run authorization, and it is a
+   * no-op when caching is not configured, the tool is not cache-eligible, or
+   * the key cannot be derived. Store deletion failures propagate.
+   */
+  invalidateCachedResult?(
+    name: string,
+    input: unknown,
+    context: ToolContext,
+  ): Promise<void>;
 }
 
 export type RuntimeErrorCode =
@@ -170,6 +262,20 @@ export interface RuntimeOptions {
    */
   monotonicNow?: () => number;
   defaultTimeoutMs?: number;
+  /**
+   * Enables result caching for tools that opt in through `ToolDefinition.cache`.
+   * Cache reads happen after authorization, validation, and rate limiting, so a
+   * hit never bypasses those stages. Without this option, cache declarations are
+   * inert and every invocation executes.
+   */
+  cache?: RuntimeCacheOptions;
+  /**
+   * Enables token measurement of successful results. The adapter supplies its
+   * own identifier and declares whether counts are exact or estimates; the
+   * runtime never labels an estimate as exact. Measurement failures omit
+   * `tokenUsage` and never change the tool result.
+   */
+  tokenizer?: Tokenizer;
 }
 
 export class InMemoryToolRuntime implements ToolRuntime {
@@ -223,6 +329,49 @@ export class InMemoryToolRuntime implements ToolRuntime {
     this.tenantMode = tenantMode;
     this.pinnedTenantId =
       tenantMode === "single-tenant" ? options.tenantId : undefined;
+    if (options.cache !== undefined) {
+      const store = options.cache.store;
+      if (
+        typeof store?.get !== "function" ||
+        typeof store.set !== "function" ||
+        typeof store.delete !== "function"
+      ) {
+        throw new RuntimeError(
+          "CONFIG_INVALID",
+          "Runtime cache requires a get/set/delete store",
+        );
+      }
+      if (typeof options.cache.authorizationPartition !== "function") {
+        throw new RuntimeError(
+          "CONFIG_INVALID",
+          "Runtime cache requires an authorizationPartition function",
+        );
+      }
+    }
+    if (options.tokenizer !== undefined) {
+      const tokenizer = options.tokenizer;
+      if (!isNonEmptyTrimmedString(tokenizer.id)) {
+        throw new RuntimeError(
+          "CONFIG_INVALID",
+          "Runtime tokenizer requires a non-empty id",
+        );
+      }
+      if (
+        tokenizer.measurement !== "exact" &&
+        tokenizer.measurement !== "estimate"
+      ) {
+        throw new RuntimeError(
+          "CONFIG_INVALID",
+          "Runtime tokenizer measurement must be 'exact' or 'estimate'",
+        );
+      }
+      if (typeof tokenizer.count !== "function") {
+        throw new RuntimeError(
+          "CONFIG_INVALID",
+          "Runtime tokenizer requires a count function",
+        );
+      }
+    }
   }
 
   register(tool: ToolDefinition): void {
@@ -245,6 +394,7 @@ export class InMemoryToolRuntime implements ToolRuntime {
       );
     }
     assertSupportedInputSchema(tool.inputSchema);
+    assertCacheMetadata(tool);
     const bucket = this.tenantTools.get(tenantId);
     if (bucket) {
       bucket.set(tool.name, tool);
@@ -338,6 +488,8 @@ export class InMemoryToolRuntime implements ToolRuntime {
     const startedAt = this.monotonicNow();
     let outcome: RuntimeEvent["outcome"] = "success";
     let errorCode: RuntimeErrorCode | undefined;
+    let cacheOutcome: RuntimeEvent["cacheOutcome"];
+    let tokenUsage: RuntimeEvent["tokenUsage"];
     let context: ToolContext | undefined;
     let stage: InvocationStage = "context";
     let rateLimitDenied = false;
@@ -388,13 +540,56 @@ export class InMemoryToolRuntime implements ToolRuntime {
           throw new RuntimeError("RATE_LIMITED", "Rate limit exceeded");
         }
       }
+      stage = "cache";
+      const cache = this.options.cache;
+      let cacheKey: string | undefined;
+      if (cache !== undefined && tool.cache !== undefined) {
+        cacheKey =
+          tool.contractRevision !== undefined
+            ? tryCreateCacheKey(
+                cache,
+                tool,
+                tool.contractRevision,
+                input,
+                context,
+              )
+            : undefined;
+        if (cacheKey === undefined) {
+          cacheOutcome = "bypass";
+        } else {
+          const lookup = await readCached(cache.store, cacheKey);
+          if (lookup.status === "hit") {
+            cacheOutcome = "hit";
+            if (context.signal?.aborted) {
+              throw new RuntimeError(
+                "CANCELLED",
+                `Tool '${name}' was cancelled`,
+                { cause: context.signal.reason },
+              );
+            }
+            tokenUsage = this.measureTokens(lookup.value);
+            return lookup.value;
+          }
+          cacheOutcome = lookup.status;
+        }
+      }
       stage = "execution";
-      return await executeWithTimeout(
+      const result = await executeWithTimeout(
         tool,
         input,
         context,
         this.options.defaultTimeoutMs ?? 15_000,
       );
+      if (
+        cache !== undefined &&
+        cacheKey !== undefined &&
+        tool.cache !== undefined &&
+        result !== undefined
+      ) {
+        await writeCached(cache.store, cacheKey, result, tool.cache.ttlSeconds);
+      }
+      tokenUsage = this.measureTokens(result);
+      return result;
     } catch (error) {
       const failure = classifyFailure(name, stage, error, rateLimitDenied);
       outcome = failure.outcome;
@@ -410,6 +605,8 @@ export class InMemoryToolRuntime implements ToolRuntime {
           toolName: name,
           outcome,
           ...(errorCode ? { errorCode } : {}),
+          ...(cacheOutcome ? { cacheOutcome } : {}),
+          ...(tokenUsage ? { tokenUsage } : {}),
         };
         try {
           void Promise.resolve(this.options.metrics.record(event)).catch(
@@ -419,6 +616,71 @@ export class InMemoryToolRuntime implements ToolRuntime {
           // Telemetry failures must not change the tool result.
         }
       }
+    }
+  }
+
+  /**
+   * Deletes the cached result for one exact invocation. This does not run the
+   * authorizer: it is a trusted process-local control surface, not a tool call.
+   * Hashed keys cannot be enumerated by prefix, so callers must supply the
+   * same tool, arguments, and caller context that produced the entry. A store
+   * deletion failure is propagated so the operator sees that invalidation did
+   * not succeed.
+   */
+  async invalidateCachedResult(
+    name: string,
+    input: unknown,
+    context: ToolContext,
+  ): Promise<void> {
+    const tool = this.resolveTool(name, context, () => {});
+    if (
+      this.tenantMode === "single-tenant" &&
+      this.pinnedTenantId !== undefined &&
+      context.tenantId !== this.pinnedTenantId
+    ) {
+      throw new RuntimeError("AUTH_FORBIDDEN", "Access denied");
+    }
+    const cache = this.options.cache;
+    if (
+      cache === undefined ||
+      tool.cache === undefined ||
+      tool.contractRevision === undefined
+    ) {
+      return;
+    }
+    const cacheKey = tryCreateCacheKey(
+      cache,
+      tool,
+      tool.contractRevision,
+      input,
+      context,
+    );
+    if (cacheKey === undefined) return;
+    await cache.store.delete(cacheKey);
+  }
+
+  /**
+   * Measures the serialized result the MCP adapter will present to the model.
+   * Returns `undefined` when no tokenizer is configured, the value has no JSON
+   * representation, the adapter throws, or the adapter returns a count that is
+   * not a non-negative safe integer. Measurement never changes the result.
+   */
+  private measureTokens(value: unknown): RuntimeEvent["tokenUsage"] {
+    const tokenizer = this.options.tokenizer;
+    if (tokenizer === undefined) return undefined;
+    try {
+      const text = JSON.stringify(value);
+      if (text === undefined) return undefined;
+      const count = tokenizer.count(text);
+      if (!Number.isSafeInteger(count) || count < 0) return undefined;
+      return {
+        count,
+        measurement: tokenizer.measurement,
+        tokenizer: tokenizer.id,
+        payloadBytes: Buffer.byteLength(text, "utf8"),
+      };
+    } catch {
+      return undefined;
     }
   }
 
@@ -452,7 +714,70 @@ export class InMemoryToolRuntime implements ToolRuntime {
 }
 
 type InvocationStage =
-  "context" | "authorization" | "validation" | "rate_limit" | "execution";
+  | "context"
+  | "authorization"
+  | "validation"
+  | "rate_limit"
+  | "cache"
+  | "execution";
+
+function tryCreateCacheKey(
+  cache: RuntimeCacheOptions,
+  tool: ToolDefinition,
+  contractRevision: string,
+  input: unknown,
+  context: ToolContext,
+): string | undefined {
+  try {
+    // A missing or ambiguous partition disables caching for this call rather
+    // than sharing an entry across authorization contexts (ADR 0003).
+    const partition = cache.authorizationPartition(context, tool);
+    if (!isNonEmptyTrimmedString(partition)) return undefined;
+    return createCacheKey({
+      tenantId: context.tenantId,
+      principalId: context.principal.id,
+      authorizationPartition: partition,
+      contractRevision,
+      toolName: tool.name,
+      arguments: input,
+    });
+  } catch {
+    // Input that cannot be canonicalized, or a partition adapter failure,
+    // degrades to a miss. It must not fail the tool call or bypass the stages
+    // that already ran.
+    return undefined;
+  }
+}
+
+type CacheLookup =
+  { status: "hit"; value: unknown } | { status: "miss" } | { status: "bypass" };
+
+async function readCached(
+  store: CacheStore,
+  key: string,
+): Promise<CacheLookup> {
+  try {
+    const value = await store.get<unknown>(key);
+    return value === undefined ? { status: "miss" } : { status: "hit", value };
+  } catch {
+    // A store outage cannot produce a hit, so report it as a bypass rather
+    // than a miss; neither case changes the tool result.
+    return { status: "bypass" };
+  }
+}
+
+async function writeCached(
+  store: CacheStore,
+  key: string,
+  value: unknown,
+  ttlSeconds: number,
+): Promise<void> {
+  try {
+    await store.set(key, value, ttlSeconds);
+  } catch {
+    // A failed write must not fail the invocation or alter its result.
+  }
+}
 
 function classifyFailure(
   toolName: string,
@@ -519,9 +844,43 @@ function assertSupportedInputSchema(schema: unknown): void {
   }
 }
 
+function assertCacheMetadata(tool: ToolDefinition): void {
+  if (
+    tool.contractRevision !== undefined &&
+    !isNonEmptyTrimmedString(tool.contractRevision)
+  ) {
+    throw new RuntimeError(
+      "CONTRACT_INVALID",
+      `Tool '${tool.name}' must declare a non-empty contractRevision`,
+    );
+  }
+  if (tool.cache === undefined) return;
+  if (
+    typeof tool.cache !== "object" ||
+    tool.cache === null ||
+    !Number.isFinite(tool.cache.ttlSeconds) ||
+    tool.cache.ttlSeconds <= 0
+  ) {
+    throw new RuntimeError(
+      "CONTRACT_INVALID",
+      `Tool '${tool.name}' must declare a positive finite cache ttlSeconds`,
+    );
+  }
+  if (!isNonEmptyTrimmedString(tool.contractRevision)) {
+    throw new RuntimeError(
+      "CONTRACT_INVALID",
+      `Cacheable tool '${tool.name}' must declare a non-empty contractRevision`,
+    );
+  }
+}
+
 /** Tenant identifiers are trusted adapter data and must at least be non-empty. */
 function isNonEmptyTenantId(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+function isNonEmptyTrimmedString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 /**
@@ -748,22 +1107,30 @@ async function executeWithTimeout(
   }
 }
 
-export const CACHE_KEY_VERSION = "v1";
-export const MAX_CACHE_KEY_INPUT_BYTES = 64 * 1024;
-
-const CACHE_KEY_PREFIX = `chainmcp:cache:${CACHE_KEY_VERSION}:`;
-const CACHE_KEY_HASH_DOMAIN = `chainmcp:cache-key:${CACHE_KEY_VERSION}\u0000`;
-
 export function createCacheKey(parts: {
   tenantId: string;
   principalId: string;
+  /** Stable, non-secret partition for effective grants and policy state. */
+  authorizationPartition: string;
   contractRevision: string;
   toolName: string;
   arguments: unknown;
 }): string {
+  for (const [field, value] of Object.entries({
+    tenantId: parts.tenantId,
+    principalId: parts.principalId,
+    authorizationPartition: parts.authorizationPartition,
+    contractRevision: parts.contractRevision,
+    toolName: parts.toolName,
+  })) {
+    if (typeof value !== "string" || value.trim().length === 0) {
+      throw new TypeError(`A non-empty ${field} is required`);
+    }
+  }
   const payload = JSON.stringify([
     parts.tenantId,
     parts.principalId,
+    parts.authorizationPartition,
     parts.contractRevision,
     parts.toolName,
     canonicalize(parts.arguments, new Set()),
@@ -774,10 +1141,10 @@ export function createCacheKey(parts: {
     );
   }
   const digest = createHash("sha256")
-    .update(CACHE_KEY_HASH_DOMAIN, "utf8")
+    .update(cacheKeyHashDomain(), "utf8")
     .update(payload, "utf8")
     .digest("hex");
-  return `${CACHE_KEY_PREFIX}${digest}`;
+  return `${cacheKeyPrefix()}${digest}`;
 }
 
 function canonicalize(value: unknown, ancestors: Set<object>): unknown {
@@ -841,3 +1208,6 @@ function canonicalize(value: unknown, ancestors: Set<object>): unknown {
   }
   return value;
 }
+
+export { InMemoryCacheStore } from "./cache.js";
+export type { InMemoryCacheStoreOptions } from "./cache.js";
