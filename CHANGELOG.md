@@ -15,9 +15,11 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Establish coding-agent workflow and roadmap milestones.
 - Add explicit production logging requirements to Milestone 6.
 - Document timeout and cancellation as cooperative `AbortSignal` propagation, with executor responsibility for resource release.
-- Record ADRs 0001–0006 and add an ADR index with statuses.
+- Record ADRs 0001–0009 and maintain an ADR index with current statuses.
 - Document the implemented Milestone 1 `RuntimeEvent` shape and mark `cache_hit`, `tokenCount`, `attributes`, and optional event fields as Milestone 4/6 targets rather than current behavior.
 - Document authorization and rate-limit adapter contracts, including the distinction between policy denial and adapter failure.
+- Record ADR 0008, the MCP authorization mapping (tenant-bound registration, tenancy modes, identity-scoped listing), and document the tenant-bound runtime groundwork in `API_REFERENCE.md` and `ARCHITECTURE.md`.
+- Document the `@chainmcp/auth` package and its `OperationScopeAuthorizer` default, including the exact-match scope semantics and the protected-diagnostics cause contract.
 
 ### Implementation
 
@@ -36,14 +38,30 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Cap reported validation issues at 20 per call and append a truncation marker, so a large invalid input can no longer inflate the client-facing `INPUT_INVALID` message.
 - Reject non-finite `enum` entries such as `NaN` and `Infinity` at registration. They cannot appear in JSON, and the type check rejects non-finite numbers before the enum comparison, so such an entry could never match.
 - Measure `RuntimeEvent.durationMs` with a monotonic `performance.now` clock (`RuntimeOptions.monotonicNow`) instead of the wall clock, so system clock adjustments cannot distort or invert a duration. `RuntimeOptions.now` now only supplies the event `timestamp`; both clocks remain injectable for deterministic tests. See `docs/adr/0007-wall-clock-and-monotonic-duration.md`.
+- Add publish metadata (`license`, `repository`, `publishConfig.access`) to `@chainmcp/core` and `@chainmcp/config` so the scoped packages can be published publicly.
+- Add release and commit tooling: Conventional Commit enforcement (`commitlint`), staged-file formatting and linting (`lint-staged`), a `pre-commit` typecheck, Husky hooks, and Changesets with a fixed `@chainmcp/core`/`@chainmcp/config`/`@chainmcp/server` group and a root version-sync check.
+- Add `@chainmcp/auth` with `OperationScopeAuthorizer`, the ADR 0008 default authorizer: it denies with `AUTH_FORBIDDEN` unless every `operation.requiredScopes` entry is present in `principal.scopes` (exact token match, no wildcards; missing/empty requirements impose none), retains the ungranted requirements only as a protected diagnostic cause, and denies malformed definitions or principal data instead of failing open. Tenant matches stay structural in the runtime, so composing the scope authorizer cannot weaken tenant isolation. Composition tests demonstrate scope enforcement, safe metrics, and authorization ordering in a multi-tenant runtime; dependency boundaries, version sync, and the changeset fixed group extended to the new package.
+- Add `@chainmcp/server` with official MCP SDK tool listing and invocation, safe runtime error mapping, a serialized response byte cap, local stdio serving, and idempotent connection shutdown.
+- Change pre-1.0 context factories to receive MCP request metadata; run context resolution inside runtime accounting and map failures to `AUTH_FORBIDDEN` with metrics.
+- Wire stdio EOF, abort, SIGINT, and SIGTERM to shutdown; expose transport closure and make concurrent close calls await completion. Add lifecycle regression tests.
+- Require an exact non-null object root for MCP tool schemas, explain the audited SDK schema conversion, and test validation parity, cancellation, non-JSON results, timeouts, connection failure, and stdio lifecycle.
+- Add tenant-bound registration and tenancy modes to `@chainmcp/core` (ADR 0008). A single-tenant runtime may pin `RuntimeOptions.tenantId`, stamps tools without `ownerTenantId` with the pin, rejects foreign bindings with `CONFIG_INVALID`, and denies cross-tenant callers with `AUTH_FORBIDDEN` before adapters run. A multi-tenant runtime requires an authorizer at construction, requires a non-empty `ownerTenantId` per tool, allows repeated tool names across tenants, scopes tool resolution and per-call listing to the caller's tenant, and rejects cross-tenant tools with `TOOL_NOT_FOUND` (no metrics event), keeping cross-tenant calls indistinguishable from unknown tools. `listTools` without a caller context is `AUTH_REQUIRED`. Milestone 2 single-tenant behavior without a pin is unchanged. The `@chainmcp/server` safe-error mapping covers the new `CONFIG_INVALID` and `AUTH_REQUIRED` codes.
+- Adopt identity-filtered listing in `@chainmcp/server` (ADR 0008). A multi-tenant runtime is now adapted through low-level per-request `tools/list` and `tools/call` handlers instead of failing closed: per-request identity is established via `createContext`, listing is scoped to the caller's tenant against the same registry `callTool` resolves against, listing failures that cannot establish identity fail closed with a safe protocol error, and serialization, response byte caps, and safe error mapping are shared with the snapshot path so both modes cannot drift. Single-tenant snapshot behavior, including all Milestone 2 exit criteria, is unchanged, and cross-tenant calls remain indistinguishable from unknown tools at the MCP surface.
+- Declare `tenantMode` on the `ToolRuntime` interface and dispatch the MCP adapter on that declaration instead of on `InMemoryToolRuntime`. A custom multi-tenant runtime can no longer be mistaken for a single-tenant one and listed without a caller context; a server regression test exercises a non-`InMemoryToolRuntime` implementation.
+- Preserve typed `RuntimeError`s thrown by context factories. Untyped identity-resolution failures still fail closed as `AUTH_FORBIDDEN`, but an identity-provider outage now keeps `UPSTREAM_FAILURE`, so operators can distinguish it from a policy denial in metrics (ADR 0006, ADR 0008).
+- Map `RuntimeErrorCode` to client-safe messages through an exhaustive `Record`, making a newly added code a compile error, and bound `maxResponseBytes` to 100 MB to match the configuration limit.
+- Set `license: "UNLICENSED"` in every workspace package, replacing the invalid `TODO` placeholder that would fail publish validation. Choosing and documenting a real license remains an open Milestone 0 item.
+- Build before `typecheck` and `test` in `pnpm check`. Cross-package imports resolve through each package's built `dist`, so the previous order only passed when stale artifacts happened to exist and failed on a clean checkout.
 
 ### Breaking changes
 
 - `RateLimiter.check` now returns `RateLimitDecision` (`{ allowed: boolean }`) instead of `Promise<void>`. Throwing `RuntimeError("RATE_LIMITED")` no longer denies a call; it is treated as a limiter failure. The package is pre-1.0, so this change is recorded rather than deprecated. See `docs/adr/0006-stage-aware-policy-errors.md`.
 - `RuntimeOptions.now` no longer measures `durationMs`; it only supplies the event `timestamp`. Inject `RuntimeOptions.monotonicNow` to control durations. The package is pre-1.0, so this change is recorded rather than deprecated.
+- `ToolRuntime.listTools` accepts an optional `ToolContext`, and `RuntimeErrorCode` gained `CONFIG_INVALID` and `AUTH_REQUIRED`. `ToolDefinition` gained optional `ownerTenantId`. Existing single-tenant call sites are unaffected. See `docs/adr/0008-mcp-authorization-mapping.md`.
+- `ToolRuntime` now requires a `tenantMode` declaration so adapters can select the listing strategy without depending on a concrete class. Custom runtime implementations must add the field; the package is pre-1.0, so this change is recorded rather than deprecated.
 
 ### Limitations
 
-- No MCP server, OpenAPI compiler, CLI, gateway, upstream HTTP executor, or concrete cache/auth/rate-limit adapter is included.
+- No OpenAPI compiler, CLI, gateway, upstream HTTP executor, or concrete cache/auth/rate-limit adapter is included.
 - The core input validator supports only the subset documented in `API_REFERENCE.md`.
 - License selection remains unresolved; the existing `LICENSE` file is empty.

@@ -4,6 +4,26 @@ This roadmap is the delivery plan and source of truth for project progress.
 
 A checkbox may be marked complete only after implementation, tests, documentation, and acceptance criteria have been verified.
 
+## Cross-cutting acceptance criteria
+
+These apply to every milestone that touches the relevant surface, in addition to
+that milestone's own exit criteria. They exist so that repeated failure modes
+are not re-argued per milestone. Deferred risks and their triggers live in
+`docs/risk-register.md`.
+
+- **Protocol conformance:** a server-mode change is exercised by an MCP client,
+  and generated servers pass an Inspector conformance check, before the
+  milestone is checked.
+- **Determinism:** the same contract and compiler version produce byte-identical
+  output, and the generation manifest records a toolset hash.
+- **No blocking I/O:** request paths avoid synchronous filesystem, process, and
+  network calls; a lint rule enforces this.
+- **Outbound safety:** the first outbound HTTP call lands with destination
+  allowlisting, private/link-local/metadata range blocking, redirect
+  revalidation, and response size and time caps.
+- **Bounded serialization:** response caps are enforced while producing output,
+  not only after `JSON.stringify`.
+
 ## Milestone 0 — Project foundation
 
 - [x] Establish monorepo and package boundaries (`@chainmcp/core`, `@chainmcp/config`).
@@ -29,27 +49,34 @@ A checkbox may be marked complete only after implementation, tests, documentatio
 
 ## Milestone 2 — MCP server adapter
 
-- [ ] Integrate the official TypeScript MCP SDK.
-- [ ] Support local stdio transport.
-- [ ] Add tool listing and invocation handlers.
-- [ ] Map runtime errors to safe MCP results.
-- [ ] Test against a real MCP client.
-- [ ] Add transport lifecycle and shutdown handling.
+- [x] Integrate the official TypeScript MCP SDK.
+- [x] Support local stdio transport.
+- [x] Add tool listing and invocation handlers.
+- [x] Map runtime errors to safe MCP results.
+- [x] Test SDK client/server interoperability over a linked in-memory transport pair.
+- [x] Handle and test stdio EOF, abort, SIGINT/SIGTERM, peer closure, close propagation, concurrent close, and connect-failure cleanup.
 
-**Exit criteria:** an MCP client can discover and call a test tool end to end.
+**Exit criteria:** an MCP client can discover and call a test tool end to end. Verified through the SDK client over a linked transport pair. The adapter returns JSON results as text, checks the serialized response against a configurable cap (1 MB default, 100 MB maximum), maps safe runtime errors into MCP error results, and requires trusted context construction. The byte check currently runs after `JSON.stringify`, so it does not bound serialization memory; bounded output production/serialization remains an M6 requirement. Context factories receive MCP request metadata; untyped factory failures fail closed as `AUTH_FORBIDDEN`, typed `RuntimeError`s keep their code, and metrics use an `unknown` tenant ID when identity resolution fails. The adapter dispatches on the `ToolRuntime.tenantMode` declaration, snapshots single-tenant tools at server creation, and rejects non-object root schemas. Lifecycle tests cover stdio EOF, application abort, SIGTERM, concurrent close callers, onclose propagation, and connection-failure cleanup. Stdio also closes on SIGINT; remote transport authentication is not implemented.
 
 ## Milestone 3 — OpenAPI compiler
 
 - [ ] Parse and validate OpenAPI 3.0 and 3.1.
 - [ ] Map operations, parameters, request bodies, and response schemas.
+- [ ] Resolve nested and composed `$ref` schemas deterministically.
+- [ ] Preserve required fields, enums, formats, and numeric and string constraints in generated validators.
 - [ ] Generate stable tool names and descriptions.
+- [ ] Detect circular references, invalid schemas, and tool-name collisions; fail with actionable diagnostics.
 - [ ] Translate supported JSON Schema constructs into validators.
-- [ ] Map authentication schemes to explicit policies.
+- [ ] Map authentication schemes to explicit policies, including alternative (OR) and combined (AND) requirements; never silently drop a requirement.
 - [ ] Report unsupported constructs and ambiguous mappings.
+- [ ] Enforce outbound destination policy (allowlist, private-range and metadata blocking, redirect revalidation) on generated executors.
 - [ ] Bind `context.signal` to generated upstream calls and release executor resources on timeout or cancellation.
+- [ ] Emit a deterministic generation manifest with a toolset hash and a regeneration diff.
+- [ ] Validate compiled output with an MCP client and an Inspector conformance check.
+- [ ] Document one end-to-end example in `docs/getting-started.md` and `examples/`.
 - [ ] Add deterministic compiler tests and fixtures.
 
-**Exit criteria:** a representative API contract compiles into validated tools with documented limitations, and generated executors bind the cancellation signal to upstream I/O.
+**Exit criteria:** a representative API contract compiles into validated tools with documented limitations; generated executors bind the cancellation signal and the outbound destination policy to upstream I/O; output is byte-identical for the same contract and compiler version; and a runnable example is documented in `docs/getting-started.md`.
 
 ## Milestone 4 — Smart caching and token accounting
 
@@ -58,6 +85,7 @@ A checkbox may be marked complete only after implementation, tests, documentatio
 - [ ] Implement safe, versioned, hashed cache key construction and identity partitioning.
 - [ ] Cache eligible read operations only by default.
 - [ ] Add TTL, invalidation, and field projection.
+- [ ] Enforce output-level policy and a token-budgeted projection on tool results.
 - [ ] Integrate tokenizer adapters.
 - [ ] Distinguish exact counts from estimates.
 - [ ] Record cache hit ratio and token metrics.
@@ -124,6 +152,24 @@ A checkbox may be marked complete only after implementation, tests, documentatio
 - [ ] Document migration and rollback procedures.
 - [ ] Configure signed releases and software bill of materials.
 - [ ] Meet all 1.0 release gates in `RELEASES.md`.
+
+## Deferred and out of scope
+
+The following are recorded in `docs/risk-register.md` with status and
+re-evaluation triggers. They are deliberately not milestones:
+
+- OAuth discovery, refresh, rotation, and revocation (revisit only with a real
+  OAuth-required contract; placeholder OAuth is forbidden by `AGENTS.md`).
+- Retries, backoff, circuit breakers, and health checks beyond explicit retries
+  for idempotent operations.
+- Orphaned process and container cleanup, and multi-OS CI matrices (release
+  hardening).
+- Pluggable persistence, configuration rollback, audit dashboards, usage
+  metering, and any hosted control plane.
+- Approval gates beyond client-side confirmation and destructive-tool design.
+
+Deferred does not mean unimportant. It means no failing test and no place on
+the current vertical slice.
 
 ## Definition of done
 

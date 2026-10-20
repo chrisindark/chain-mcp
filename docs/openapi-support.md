@@ -21,17 +21,35 @@ The compiler should:
 
 ## Initial mapping
 
-| OpenAPI concept      | Intended MCP representation                 |
-| -------------------- | ------------------------------------------- |
-| `operationId`        | Preferred tool-name source                  |
-| `summary`            | Tool description                            |
-| Path parameters      | Required input properties                   |
-| Query parameters     | Input properties                            |
-| Header parameters    | Policy-controlled inputs                    |
-| Request body         | Validated input object                      |
-| Security schemes     | Authentication policy                       |
-| Response schema      | Output validation and documentation         |
-| Deprecated operation | Warning or exclusion based on configuration |
+| OpenAPI concept        | Intended MCP representation                 |
+| ---------------------- | ------------------------------------------- |
+| `operationId`          | Preferred tool-name source                  |
+| `summary`              | Tool description                            |
+| Path parameters        | Required input properties                   |
+| Query parameters       | Input properties                            |
+| Header parameters      | Policy-controlled inputs                    |
+| Request body           | Validated input object                      |
+| Security schemes       | Authentication policy                       |
+| Response schema        | Output validation and documentation         |
+| Deprecated operation   | Warning or exclusion based on configuration |
+| `nullable: true` (3.0) | `type` union containing `"null"`            |
+
+### OpenAPI 3.0 `nullable`
+
+The compiler is not implemented yet; this section records the required translation so it is not lost.
+
+OpenAPI 3.0 expresses nullability with `nullable: true`, while the runtime validates only the JSON Schema union form (`type: ["string", "null"]`). `auditInputSchema` rejects `nullable` as an unsupported keyword, so an untranslated schema fails closed at registration with `CONTRACT_INVALID` rather than silently dropping the constraint.
+
+The compiler must translate before auditing:
+
+- `nullable` only takes effect in 3.0 when `type` is present in the same schema object. If `nullable: true` appears without `type`, emit a diagnostic; do not drop it silently.
+- `type: T` with `nullable: true` becomes `type: [T, "null"]`.
+- When `enum` is present, `null` must be added to the enum as well. The runtime validates `enum` independently of `type`, so `type: ["string", "null"], enum: ["a", "b"]` would reject `null` even though 3.0 defines `nullable` as allowing it. Do not duplicate `null` if already present.
+- `nullable` on a schema that also uses `$ref`, `allOf`, or another unsupported construct must produce a diagnostic rather than silently discarding nullability.
+- A nullable root schema cannot be exposed as an MCP tool input, because tool arguments must be an object; `@chainmcp/server` rejects non-object root schemas.
+- Run `auditInputSchema` on the translated schema and do not emit the tool if the result is unsupported.
+
+Cover the 3.0 and 3.1 forms with fixtures so the two paths are tested separately.
 
 ## Unsupported constructs
 

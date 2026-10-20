@@ -29,6 +29,8 @@ export interface ToolContext {
   signal?: AbortSignal;
 }
 
+export type ToolContextFactory = () => ToolContext | Promise<ToolContext>;
+
 export interface OperationPolicy {
   requiredScopes?: readonly string[];
 }
@@ -38,6 +40,13 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   description: string;
   inputSchema: JsonSchema;
   operation: OperationPolicy;
+  /**
+   * Tenant that owns this tool, bound at registration time. In multi-tenant
+   * mode the binding is required. In single-tenant mode an omitted value is
+   * stamped with the deployment's pinned tenant (`RuntimeOptions.tenantId`),
+   * and an explicit value must match it. See ADR 0008.
+   */
+  ownerTenantId?: string;
   timeoutMs?: number;
   execute(input: TInput, context: ToolContext): Promise<TOutput>;
 }
@@ -82,8 +91,21 @@ export interface Authorizer {
 }
 
 export interface ToolRuntime {
+  /**
+   * Tenancy mode implemented by this runtime. Adapters dispatch on this
+   * declaration rather than on a concrete class, so a custom runtime that
+   * requires a caller context cannot be listed through the single-tenant
+   * snapshot path.
+   */
+  readonly tenantMode: TenantMode;
   register(tool: ToolDefinition): void;
-  listTools(): ReadonlyArray<{
+  /**
+   * Lists tools. In single-tenant mode the listing is unfiltered, matching
+   * Milestone 2 behavior. In multi-tenant mode the listing is scoped to the
+   * caller's tenant and computed per call; without a context it fails closed
+   * with `AUTH_REQUIRED` (ADR 0008).
+   */
+  listTools(context?: ToolContext): ReadonlyArray<{
     name: string;
     description: string;
     inputSchema: JsonSchema;
@@ -91,15 +113,17 @@ export interface ToolRuntime {
   callTool(
     name: string,
     input: unknown,
-    context: ToolContext,
+    context: ToolContext | ToolContextFactory,
   ): Promise<unknown>;
 }
 
 export type RuntimeErrorCode =
   | "TOOL_NOT_FOUND"
   | "TOOL_ALREADY_REGISTERED"
+  | "CONFIG_INVALID"
   | "CONTRACT_INVALID"
   | "INPUT_INVALID"
+  | "AUTH_REQUIRED"
   | "AUTH_FORBIDDEN"
   | "RATE_LIMITED"
   | "CANCELLED"
@@ -117,10 +141,26 @@ export class RuntimeError extends Error {
   }
 }
 
+export type TenantMode = "single-tenant" | "multi-tenant";
+
 export interface RuntimeOptions {
   authorizer?: Authorizer;
   rateLimiter?: RateLimiter;
   metrics?: MetricsSink;
+  /**
+   * Tenancy mode. Defaults to `single-tenant`: tools resolve by name exactly
+   * as in Milestone 2. `multi-tenant` requires an `Authorizer`, binds every
+   * tool to a tenant at registration, scopes resolution and listing to the
+   * caller's tenant, and fails closed when not configured; see ADR 0008.
+   */
+  tenantMode?: TenantMode;
+  /**
+   * Pinned tenant for single-tenant mode. Registration stamps tools without
+   * `ownerTenantId` with this tenant, rejects tools bound to a different
+   * tenant, and denies calls whose `ToolContext.tenantId` differs from it.
+   * Providing it in `multi-tenant` mode fails construction.
+   */
+  tenantId?: string;
   /** Wall clock used for the `RuntimeEvent` timestamp. Defaults to `Date.now`. */
   now?: () => number;
   /**
@@ -133,13 +173,56 @@ export interface RuntimeOptions {
 }
 
 export class InMemoryToolRuntime implements ToolRuntime {
-  private readonly tools = new Map<string, ToolDefinition>();
+  /** Tenancy mode selected at construction. See ADR 0008. */
+  readonly tenantMode: TenantMode;
+  private readonly pinnedTenantId: string | undefined;
+  // Tools are stored per tenant so multi-tenant resolution can never observe
+  // another tenant's registrations, while `names` preserves the exact
+  // Milestone 2 name-keyed behavior in single-tenant mode.
+  private readonly tenantTools = new Map<string, Map<string, ToolDefinition>>();
+  private readonly names = new Map<string, ToolDefinition>();
   private readonly now: () => number;
   private readonly monotonicNow: () => number;
 
   constructor(private readonly options: RuntimeOptions = {}) {
     this.now = options.now ?? Date.now;
     this.monotonicNow = options.monotonicNow ?? (() => performance.now());
+    const tenantMode = options.tenantMode ?? "single-tenant";
+    if (tenantMode !== "single-tenant" && tenantMode !== "multi-tenant") {
+      throw new RuntimeError(
+        "CONFIG_INVALID",
+        "Tenant mode must be 'single-tenant' or 'multi-tenant'",
+      );
+    }
+    if (tenantMode === "single-tenant") {
+      if (
+        options.tenantId !== undefined &&
+        !isNonEmptyTenantId(options.tenantId)
+      ) {
+        throw new RuntimeError(
+          "CONFIG_INVALID",
+          "A single-tenant runtime must pin a non-empty tenant",
+        );
+      }
+    } else {
+      // A multi-tenant registry without a mandatory authorization stage would
+      // admit cross-tenant access by default, so it cannot be constructed.
+      if (!options.authorizer) {
+        throw new RuntimeError(
+          "CONFIG_INVALID",
+          "A multi-tenant runtime requires an authorizer",
+        );
+      }
+      if (options.tenantId !== undefined) {
+        throw new RuntimeError(
+          "CONFIG_INVALID",
+          "Tenant pinning applies only to single-tenant runtimes",
+        );
+      }
+    }
+    this.tenantMode = tenantMode;
+    this.pinnedTenantId =
+      tenantMode === "single-tenant" ? options.tenantId : undefined;
   }
 
   register(tool: ToolDefinition): void {
@@ -148,45 +231,138 @@ export class InMemoryToolRuntime implements ToolRuntime {
         "Tool name must be 1-64 letters, numbers, underscores, or hyphens",
       );
     }
-    if (this.tools.has(tool.name)) {
+    const tenantId = this.resolveOwnerTenantId(tool);
+    if (this.tenantMode === "single-tenant" && this.names.has(tool.name)) {
+      throw new RuntimeError(
+        "TOOL_ALREADY_REGISTERED",
+        `Tool '${tool.name}' is already registered`,
+      );
+    }
+    if (this.tenantTools.get(tenantId)?.has(tool.name)) {
       throw new RuntimeError(
         "TOOL_ALREADY_REGISTERED",
         `Tool '${tool.name}' is already registered`,
       );
     }
     assertSupportedInputSchema(tool.inputSchema);
-    this.tools.set(tool.name, tool);
+    const bucket = this.tenantTools.get(tenantId);
+    if (bucket) {
+      bucket.set(tool.name, tool);
+    } else {
+      this.tenantTools.set(tenantId, new Map([[tool.name, tool]]));
+    }
+    if (this.tenantMode === "single-tenant") {
+      this.names.set(tool.name, tool);
+    }
   }
 
-  listTools(): ReadonlyArray<{
+  /**
+   * Resolves the tenant a tool binds to at registration time and enforces the
+   * mode's binding rules. In multi-tenant mode a binding is mandatory; in
+   * single-tenant mode an unstamped tool binds to the pinned tenant or to no
+   * tenant, preserving Milestone 2 behavior.
+   */
+  private resolveOwnerTenantId(tool: ToolDefinition): string {
+    if (this.tenantMode === "multi-tenant") {
+      if (!isNonEmptyTenantId(tool.ownerTenantId)) {
+        throw new RuntimeError(
+          "CONFIG_INVALID",
+          `Tool '${tool.name}' must declare a non-empty ownerTenantId in multi-tenant mode`,
+        );
+      }
+      return tool.ownerTenantId;
+    }
+    if (tool.ownerTenantId !== undefined) {
+      if (!isNonEmptyTenantId(tool.ownerTenantId)) {
+        throw new RuntimeError(
+          "CONFIG_INVALID",
+          `Tool '${tool.name}' declares an empty ownerTenantId`,
+        );
+      }
+      if (
+        this.pinnedTenantId !== undefined &&
+        tool.ownerTenantId !== this.pinnedTenantId
+      ) {
+        throw new RuntimeError(
+          "CONFIG_INVALID",
+          `Tool '${tool.name}' is bound to tenant '${tool.ownerTenantId}', but this runtime pins tenant '${this.pinnedTenantId}'`,
+        );
+      }
+      return tool.ownerTenantId;
+    }
+    return this.pinnedTenantId ?? "";
+  }
+
+  listTools(context?: ToolContext): ReadonlyArray<{
     name: string;
     description: string;
     inputSchema: JsonSchema;
   }> {
-    return [...this.tools.values()].map(
-      ({ name, description, inputSchema }) => ({
-        name,
-        description,
-        inputSchema,
-      }),
-    );
+    const summarize = ({ name, description, inputSchema }: ToolDefinition) => ({
+      name,
+      description,
+      inputSchema,
+    });
+    if (this.tenantMode === "single-tenant") {
+      // Single-tenant listings stay unfiltered: every registered tool belongs
+      // to the one deployment tenant.
+      return [...this.names.values()].map(summarize);
+    }
+    // Multi-tenant listings are identity-scoped and computed per call; there
+    // is no pre-filtered snapshot (ADR 0008). Without an identity the listing
+    // fails closed instead of enumerating tools.
+    if (context === undefined) {
+      throw new RuntimeError(
+        "AUTH_REQUIRED",
+        "Listing tools requires a caller context",
+      );
+    }
+    const bucket =
+      typeof context.tenantId === "string"
+        ? this.tenantTools.get(context.tenantId)
+        : undefined;
+    if (!bucket) return [];
+    return [...bucket.values()].map(summarize);
   }
 
   async callTool(
     name: string,
     input: unknown,
-    context: ToolContext,
+    contextOrFactory: ToolContext | ToolContextFactory,
   ): Promise<unknown> {
-    const tool = this.tools.get(name);
-    if (!tool)
+    // Single-tenant behavior stays Milestone 2-exact: unknown tools reject
+    // before a context factory runs and emit no metrics event.
+    if (this.tenantMode === "single-tenant" && !this.names.has(name)) {
       throw new RuntimeError("TOOL_NOT_FOUND", `Tool '${name}' was not found`);
-
+    }
     const startedAt = this.monotonicNow();
     let outcome: RuntimeEvent["outcome"] = "success";
     let errorCode: RuntimeErrorCode | undefined;
-    let stage: InvocationStage = "authorization";
+    let context: ToolContext | undefined;
+    let stage: InvocationStage = "context";
     let rateLimitDenied = false;
+    // Unknown and cross-tenant tools are the same observable miss in
+    // multi-tenant mode and emit no metrics event, so metrics timing cannot
+    // be used to enumerate another tenant's tools.
+    let unresolved = false;
     try {
+      context =
+        typeof contextOrFactory === "function"
+          ? await contextOrFactory()
+          : contextOrFactory;
+      stage = "authorization";
+      const tool = this.resolveTool(name, context, () => {
+        unresolved = true;
+      });
+      if (
+        this.tenantMode === "single-tenant" &&
+        this.pinnedTenantId !== undefined &&
+        context.tenantId !== this.pinnedTenantId
+      ) {
+        // A pinned single-tenant deployment serves exactly one tenant; any
+        // other caller identity is a policy denial, not a lookup miss.
+        throw new RuntimeError("AUTH_FORBIDDEN", "Access denied");
+      }
       // Authorization must precede validation: validation errors reveal the
       // tool's schema, which unauthorized callers must not be able to probe.
       await this.options.authorizer?.authorize(tool, context);
@@ -225,12 +401,12 @@ export class InMemoryToolRuntime implements ToolRuntime {
       errorCode = failure.error.code;
       throw failure.error;
     } finally {
-      if (this.options.metrics) {
+      if (this.options.metrics && !unresolved) {
         const event: RuntimeEvent = {
           name: "tool_invocation",
           timestamp: this.now(),
           durationMs: Math.max(0, this.monotonicNow() - startedAt),
-          tenantId: context.tenantId,
+          tenantId: context?.tenantId ?? "unknown",
           toolName: name,
           outcome,
           ...(errorCode ? { errorCode } : {}),
@@ -245,10 +421,38 @@ export class InMemoryToolRuntime implements ToolRuntime {
       }
     }
   }
+
+  /**
+   * Resolves a tool against the caller identity (ADR 0008). Tenant binding
+   * runs in the authorization stage before any adapter, so a cross-tenant
+   * call can neither probe input schemas nor reach an executor. In
+   * multi-tenant mode an unauthorized tool does not resolve at all, which
+   * keeps a cross-tenant call indistinguishable from an unknown tool. The
+   * `markUnresolved` callback lets `callTool` suppress the invocation metric
+   * for that miss, matching the established unknown-tool behavior.
+   */
+  private resolveTool(
+    name: string,
+    context: ToolContext,
+    markUnresolved: () => void,
+  ): ToolDefinition {
+    if (this.tenantMode === "single-tenant") {
+      const tool = this.names.get(name);
+      if (tool) return tool;
+      markUnresolved();
+      throw new RuntimeError("TOOL_NOT_FOUND", `Tool '${name}' was not found`);
+    }
+    const tenantId =
+      typeof context.tenantId === "string" ? context.tenantId : "";
+    const tool = this.tenantTools.get(tenantId)?.get(name);
+    if (tool) return tool;
+    markUnresolved();
+    throw new RuntimeError("TOOL_NOT_FOUND", `Tool '${name}' was not found`);
+  }
 }
 
 type InvocationStage =
-  "authorization" | "validation" | "rate_limit" | "execution";
+  "context" | "authorization" | "validation" | "rate_limit" | "execution";
 
 function classifyFailure(
   toolName: string,
@@ -284,10 +488,13 @@ function classifyFailure(
     };
   }
   if (error instanceof RuntimeError) {
+    // Typed adapter failures keep their code in every stage, including
+    // identity resolution: an identity-provider outage must not be reported
+    // as a policy denial (ADR 0006, ADR 0008).
     return { error, outcome: "error" };
   }
-  if (stage === "authorization") {
-    // An authorizer that throws anything other than a typed RuntimeError is
+  if (stage === "authorization" || stage === "context") {
+    // An adapter that throws anything other than a typed RuntimeError is
     // treated as a denial: fail closed, keep the cause for diagnostics, and do
     // not expose adapter details to the caller.
     return {
@@ -310,6 +517,11 @@ function assertSupportedInputSchema(schema: unknown): void {
   if (diagnostic) {
     throw new RuntimeError("CONTRACT_INVALID", diagnostic.message);
   }
+}
+
+/** Tenant identifiers are trusted adapter data and must at least be non-empty. */
+function isNonEmptyTenantId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
 }
 
 /**
