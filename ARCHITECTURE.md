@@ -39,22 +39,22 @@ The target architecture consists of a contract compiler, shared runtime, MCP ada
 
 ## 3. Monorepo package boundaries
 
-Currently implemented workspace packages are `@chainmcp/core` and `@chainmcp/config`. Remaining rows describe planned boundaries; no empty packages are created for them.
+Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, and `@chainmcp/server`. Remaining rows describe planned boundaries; no empty packages are created for them.
 
-| Package                     | Responsibility                                           |
-| --------------------------- | -------------------------------------------------------- |
-| `@chainmcp/core`            | Runtime interfaces, registry, execution pipeline, errors |
-| `@chainmcp/compiler`        | OpenAPI parsing, validation, tool generation             |
-| `@chainmcp/server`          | MCP SDK integration and transports                       |
-| `@chainmcp/cache`           | Cache interfaces and adapters                            |
-| `@chainmcp/auth`            | Identity, authorization, and credential abstractions     |
-| `@chainmcp/rate-limit`      | Quotas and concurrency limits                            |
-| `@chainmcp/analytics`       | Events, metrics, tracing                                 |
-| `@chainmcp/token-metrics`   | Token measurement and estimates                          |
-| `@chainmcp/json-navigation` | Bounded JSON exploration                                 |
-| `@chainmcp/config`          | Configuration schema and loading                         |
-| `@chainmcp/cli`             | Developer commands                                       |
-| `apps/gateway`              | Dynamic multi-contract gateway                           |
+| Package                     | Responsibility                                                                                         |
+| --------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `@chainmcp/core`            | Runtime interfaces, registry, execution pipeline, errors                                               |
+| `@chainmcp/compiler`        | OpenAPI parsing, validation, tool generation                                                           |
+| `@chainmcp/server`          | Official MCP SDK tool adapter and local stdio transport                                                |
+| `@chainmcp/cache`           | Cache interfaces and adapters                                                                          |
+| `@chainmcp/auth`            | Identity, authorization, and credential abstractions, including the default operation-scope authorizer |
+| `@chainmcp/rate-limit`      | Quotas and concurrency limits                                                                          |
+| `@chainmcp/analytics`       | Events, metrics, tracing                                                                               |
+| `@chainmcp/token-metrics`   | Token measurement and estimates                                                                        |
+| `@chainmcp/json-navigation` | Bounded JSON exploration                                                                               |
+| `@chainmcp/config`          | Configuration schema and loading                                                                       |
+| `@chainmcp/cli`             | Developer commands                                                                                     |
+| `apps/gateway`              | Dynamic multi-contract gateway                                                                         |
 
 Use workspace dependencies. Core packages must not directly depend on concrete Redis, PostgreSQL, or cloud SDKs unless the package specifically implements that adapter.
 
@@ -79,6 +79,8 @@ Each tool invocation follows this logical sequence:
 15. Return the result through the MCP adapter.
 
 Implementations may optimize this sequence only if security and correctness guarantees remain intact.
+
+The runtime supports two tenancy modes (ADR 0008). **Single-tenant** deployments (generated servers and local stdio) resolve by name exactly as before; a pinned tenant stamps unstamped tools at registration and denies callers carrying a different tenant. **Multi-tenant** deployments (the gateway) require an authorizer at construction, bind every tool to an owner tenant at registration, scope tool resolution and listing to the caller's tenant, and reject cross-tenant tools as unresolvable rather than revealing their existence. Tool listing is identity-scoped and computed per call; there is no pre-filtered static snapshot that could drift from invocation behavior.
 
 Timeout and cancellation are cooperative. The runtime creates a per-call `AbortController`, aborts it when the caller cancels or the timeout elapses, and rejects the caller with `CANCELLED` or `UPSTREAM_TIMEOUT`. This does not forcibly terminate `execute` or release resources it has acquired. Tool and executor implementations must observe `context.signal`, bind it to abortable I/O, and release resources in `finally`. A tool that ignores the signal may continue running after the caller has been rejected.
 
@@ -125,6 +127,7 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   description: string;
   inputSchema: JsonSchema;
   operation: OperationPolicy;
+  ownerTenantId?: string;
   execute(input: TInput, context: ToolContext): Promise<TOutput>;
 }
 
@@ -155,6 +158,25 @@ export interface MetricsSink {
 ```
 
 The final public interfaces are governed by `API_REFERENCE.md`.
+
+The M2 server adapter snapshots the runtime's tool definitions when
+`createMcpServer` is called for single-tenant runtimes and does not observe
+tools registered afterward. Multi-tenant runtimes are adapted through
+low-level per-request `tools/list` and `tools/call` handlers instead: each
+listing establishes the caller identity and enumerates only that caller's
+tenant's tools against the shared tenant-scoped registry (ADR 0008), so
+discovery and invocation resolve through one code path and a listing whose
+identity cannot be established fails closed. The adapter selects this behavior
+from the runtime's declared `tenantMode`, not from its concrete class. The
+adapter runs trusted context construction inside the runtime invocation
+boundary, so untyped failures fail closed as `AUTH_FORBIDDEN`, typed
+`RuntimeError`s keep their code, and both are recorded in
+metrics. Metrics use the tenant ID `unknown` when context construction fails
+before tenant resolution. The context factory receives the MCP request ID,
+cancellation signal, and optional HTTP auth info. Stdio closes on EOF,
+application abort, SIGINT, or SIGTERM. A `closed` promise and `onclose`
+callback expose transport lifecycle; repeated close calls await the same
+shutdown. Remote serving and inbound authentication are not implemented.
 
 ## 8. Caching invariants
 

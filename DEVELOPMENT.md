@@ -19,7 +19,29 @@ pnpm test
 
 These commands must be implemented and verified by the initial repository-generation task. Do not claim they pass until executed successfully.
 
-The current workspace provides `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build`; `pnpm check` runs these in sequence. `pnpm format` applies Prettier. The available packages are `@chainmcp/core` and `@chainmcp/config`.
+The current workspace provides `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build`; `pnpm check` runs these in sequence and finishes with `pnpm version:check`. `pnpm format` applies Prettier. The available packages are `@chainmcp/core`, `@chainmcp/config`, and `@chainmcp/server`.
+
+## Commits and local hooks
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) (`type(scope): subject`, for example `feat(core): add monotonic duration`). `commitlint` enforces this.
+
+Husky installs two hooks during `pnpm install`:
+
+- `pre-commit` runs `lint-staged` (Prettier and ESLint on staged files) and then `pnpm typecheck`.
+- `commit-msg` runs `commitlint` against the message.
+
+Hooks are a fast local guardrail, not the gate. CI runs the full `pnpm check`, and hooks can be bypassed with `git commit --no-verify`. Do not rely on a bypassing commit; CI is the source of truth.
+
+## Releases and versioning
+
+Releases use [Changesets](https://github.com/changesets/changesets). `@chainmcp/core`, `@chainmcp/config`, and `@chainmcp/server` are a fixed group: they always share one version, and the private root package mirrors it.
+
+- Add a changeset for every user-visible change: `pnpm changeset`.
+- Apply pending changesets locally with `pnpm release:version`. This runs `changeset version` and then `scripts/sync-version.mjs`, which copies the shared package version onto the root `package.json`.
+- `pnpm version:check` fails when the root and package versions drift; it runs as part of `pnpm check`.
+- Publishing is intended to be a protected CI responsibility (`pnpm release:publish`), never a workstation step. The protected publishing workflow is not implemented yet. See `RELEASES.md`.
+
+`changeset status` and `changeset version` compare against `baseBranch` (`master`), so run them from a clone that has the base branch fetched.
 
 ## Engineering conventions
 

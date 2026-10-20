@@ -1,7 +1,7 @@
 # ADR 0004 — MCP transport strategy
 
-- Status: proposed
-- Recorded: 2026-10-19 (reconstructed from existing documentation and roadmap; implementation pending)
+- Status: accepted
+- Recorded: 2026-10-20 (accepted after Milestone 2 implementation and verification)
 
 ## Context and problem
 
@@ -13,7 +13,10 @@ boundary: an unauthenticated or accidentally exposed HTTP endpoint must not
 serve tools or upstream credentials.
 
 The project targets the official TypeScript MCP SDK and keeps policy logic
-independent of transport. Milestone 2 has not been implemented yet.
+independent of transport. Milestone 2 implements the local stdio adapter and
+transport lifecycle. It has been verified with the SDK client over a linked
+in-memory transport pair and deterministic lifecycle tests. Remote serving and
+inbound HTTP authentication remain unimplemented.
 
 ## Decision
 
@@ -54,8 +57,9 @@ adapters.
 - Two transport adapters increase test and lifecycle coverage.
 - Keeping policy transport-independent prevents behavior differences between
   generated servers and the gateway.
-- The proposal remains open until Milestone 2 proves it against a real MCP
-  client.
+- The local transport strategy is accepted based on the verified Milestone 2
+  adapter. This does not approve unauthenticated remote serving or claim that
+  remote transports exist.
 
 ## Security implications
 
@@ -69,10 +73,7 @@ adapters.
 
 ## Follow-up actions
 
-- Implement the stdio adapter and an end-to-end MCP client test
-  (Milestone 2).
 - Define Streamable HTTP authentication and configuration in
   `CONFIGURATION.md` before implementation.
-- Add transport lifecycle, shutdown, and cancellation tests.
-- Mark this ADR accepted only after the implemented transport strategy is
-  verified; record any deviation in a new ADR.
+- Revisit this ADR if remote transport requirements change the accepted
+  transport-independent policy boundary.

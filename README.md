@@ -65,7 +65,7 @@ These are initial architectural choices and may change through documented archit
 ChainMcp
 begins as an early-stage project. Features are considered implemented only when the code, tests, documentation, and security requirements agree.
 
-The current workspace contains `@chainmcp/core` (an in-memory tool registry/runtime with basic input validation and injectable policy/telemetry interfaces) and `@chainmcp/config` (a strict Zod schema and parser for a small configuration subset). OpenAPI compilation, MCP transports, CLI, network execution, concrete auth/cache/rate-limit adapters, and the gateway are not implemented.
+The current workspace contains `@chainmcp/core` (an in-memory tool registry/runtime with basic input validation and injectable policy/telemetry interfaces), `@chainmcp/config` (a strict Zod schema and parser for a small configuration subset), `@chainmcp/auth` (the default authorizer enforcing `operation.requiredScopes` against the caller's principal), and `@chainmcp/server` (an official TypeScript MCP SDK adapter with local stdio transport). OpenAPI compilation, CLI, network execution, credential providers, cache/rate-limit adapters, remote MCP transports, and the gateway are not implemented.
 
 Run `pnpm install` followed by `pnpm check` from the repository root to run formatting verification, lint, typecheck, unit tests, and builds.
 

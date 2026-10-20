@@ -15,11 +15,24 @@ Before 1.0, breaking changes are permitted but must be documented prominently.
 - `next`: prerelease validation.
 - `latest`: stable releases.
 
-Publish packages from a protected CI workflow rather than a developer workstation.
+The release policy is to publish packages from a protected CI workflow rather than a developer workstation. That workflow is not implemented yet; `.github/workflows/ci.yml` runs validation only. Until a protected publishing workflow exists, do not treat `pnpm release:publish` as an approved release procedure.
+
+## Changesets workflow
+
+Versioning is managed with [Changesets](https://github.com/changesets/changesets).
+
+- `@chainmcp/core`, `@chainmcp/config`, and `@chainmcp/server` form a fixed group and always share one version. The private root `package.json` mirrors that version through `scripts/sync-version.mjs`, so the repository has a single version.
+- Add a changeset (`pnpm changeset`) with every change that should appear in a release. `changeset status` fails on changed packages without one.
+- Apply pending changesets with `pnpm release:version`, then review the generated `CHANGELOG.md` and version bumps before committing.
+- `pnpm version:check` (part of `pnpm check`) fails when the root and package versions drift.
+- The configured base branch is `master`. Run `changeset status` and `changeset version` from a clone with that branch fetched.
+- `pnpm release:publish` invokes Changesets publishing, but no protected publish workflow currently calls it. Treat publishing as unavailable until that workflow is implemented and reviewed.
 
 ## Release checklist
 
 - [ ] Relevant roadmap acceptance criteria are met.
+- [ ] Every releasable change has a changeset, and pending changesets are applied.
+- [ ] Root and package versions match (`pnpm version:check`).
 - [ ] Changelog and release notes are updated.
 - [ ] Documentation and migration notes are complete.
 - [ ] Lint, typecheck, unit tests, and integration tests pass.

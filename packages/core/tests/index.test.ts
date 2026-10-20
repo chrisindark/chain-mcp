@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   auditInputSchema,
   CACHE_KEY_VERSION,
@@ -705,6 +705,53 @@ describe("InMemoryToolRuntime", () => {
     );
   });
 
+  it("maps untyped context factory failures to AUTH_FORBIDDEN", async () => {
+    const record = vi.fn();
+    const runtime = new InMemoryToolRuntime({ metrics: { record } });
+    runtime.register(tool());
+
+    await expect(
+      runtime.callTool("lookup_item", { id: "x" }, () => {
+        throw new Error("private identity provider detail");
+      }),
+    ).rejects.toMatchObject({
+      code: "AUTH_FORBIDDEN",
+      message: "Access denied",
+    });
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "error",
+        errorCode: "AUTH_FORBIDDEN",
+        tenantId: "unknown",
+      }),
+    );
+  });
+
+  it("preserves typed context factory failures instead of flattening them", async () => {
+    const record = vi.fn();
+    const runtime = new InMemoryToolRuntime({ metrics: { record } });
+    runtime.register(tool());
+
+    await expect(
+      runtime.callTool("lookup_item", { id: "x" }, () => {
+        throw new RuntimeError(
+          "UPSTREAM_FAILURE",
+          "identity provider unavailable",
+        );
+      }),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_FAILURE",
+      message: "identity provider unavailable",
+    });
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "error",
+        errorCode: "UPSTREAM_FAILURE",
+        tenantId: "unknown",
+      }),
+    );
+  });
+
   it("authorizes before validating so unauthorized callers cannot probe schemas", async () => {
     const authorize = vi.fn(() => {
       throw new RuntimeError("AUTH_FORBIDDEN", "Access denied");
@@ -1034,5 +1081,195 @@ describe("cache key serialization", () => {
         arguments: "x".repeat(MAX_CACHE_KEY_INPUT_BYTES + 1),
       }),
     ).toThrow(`maximum of ${MAX_CACHE_KEY_INPUT_BYTES} bytes`);
+  });
+});
+
+describe("tenant binding and tenancy modes (ADR 0008)", () => {
+  const tenantContext = (tenantId: string): ToolContext => ({
+    requestId: `req-${tenantId}`,
+    tenantId,
+    principal: { id: `user-${tenantId}`, scopes: ["read"] },
+  });
+
+  const ownedTool = (
+    ownerTenantId: string,
+    name = "lookup_item",
+    execute: ToolDefinition["execute"] = async (input) => input,
+  ): ToolDefinition => ({
+    ...tool(execute),
+    name,
+    ownerTenantId,
+  });
+
+  const authorizer = vi.fn();
+
+  beforeEach(() => {
+    authorizer.mockReset();
+  });
+
+  it("preserves the Milestone 2 unpinned single-tenant behavior", async () => {
+    const execute = vi.fn(async (input: unknown) => input);
+    const runtime = new InMemoryToolRuntime();
+    runtime.register(tool(execute));
+    await expect(
+      runtime.callTool("lookup_item", { id: "a" }, tenantContext("tenant-1")),
+    ).resolves.toEqual({ id: "a" });
+    await expect(
+      runtime.callTool("lookup_item", { id: "b" }, tenantContext("tenant-2")),
+    ).resolves.toEqual({ id: "b" });
+    expect(runtime.listTools().map(({ name }) => name)).toEqual([
+      "lookup_item",
+    ]);
+  });
+
+  it("stamps unstamped tools with the pinned tenant", () => {
+    const runtime = new InMemoryToolRuntime({ tenantId: "tenant-1" });
+    expect(() => runtime.register(tool())).not.toThrow();
+    expect(() =>
+      runtime.register(ownedTool("tenant-1", "description_tool")),
+    ).not.toThrow();
+  });
+
+  it("rejects a tool bound to a foreign tenant in a pinned runtime", () => {
+    const runtime = new InMemoryToolRuntime({ tenantId: "tenant-1" });
+    expect(() => runtime.register(ownedTool("tenant-2"))).toThrowError(
+      expect.objectContaining({ code: "CONFIG_INVALID" }),
+    );
+  });
+
+  it("rejects invalid tenancy construction options", () => {
+    expect(
+      () =>
+        new InMemoryToolRuntime({
+          tenantId: "",
+        }),
+    ).toThrowError(expect.objectContaining({ code: "CONFIG_INVALID" }));
+    expect(
+      () =>
+        new InMemoryToolRuntime({
+          tenantMode: "multi-tenant",
+        }),
+    ).toThrowError(expect.objectContaining({ code: "CONFIG_INVALID" }));
+    expect(
+      () =>
+        new InMemoryToolRuntime({
+          tenantMode: "multi-tenant",
+          tenantId: "tenant-1",
+          authorizer: { authorize: authorizer },
+        }),
+    ).toThrowError(expect.objectContaining({ code: "CONFIG_INVALID" }));
+    expect(
+      () =>
+        // @ts-expect-error -- exercising runtime validation of unknown modes
+        new InMemoryToolRuntime({ tenantMode: "multitenant" }),
+    ).toThrowError(expect.objectContaining({ code: "CONFIG_INVALID" }));
+  });
+
+  it("denies pinned-tenant callers from another tenant before adapters run", async () => {
+    const execute = vi.fn(async (input: unknown) => input);
+    const metrics = vi.fn();
+    const runtime = new InMemoryToolRuntime({
+      tenantId: "tenant-1",
+      authorizer: { authorize: authorizer },
+      metrics: { record: metrics },
+    });
+    runtime.register(tool(execute));
+    const failure = await runtime
+      .callTool("lookup_item", { id: "a" }, tenantContext("tenant-2"))
+      .then(
+        () => {
+          throw new Error("cross-tenant call unexpectedly succeeded");
+        },
+        (error: unknown) => error,
+      );
+    expect(failure).toBeInstanceOf(RuntimeError);
+    const denial = failure as RuntimeError;
+    expect(denial.code).toBe("AUTH_FORBIDDEN");
+    expect(denial.message).toBe("Access denied");
+    expect(denial.cause).toBeUndefined();
+    expect(authorizer).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(metrics).toHaveBeenCalledOnce();
+    expect(metrics).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "error",
+        errorCode: "AUTH_FORBIDDEN",
+        tenantId: "tenant-2",
+      }),
+    );
+  });
+
+  it("requires tenant binding for registration in multi-tenant mode", () => {
+    const runtime = new InMemoryToolRuntime({
+      tenantMode: "multi-tenant",
+      authorizer: { authorize: () => {} },
+    });
+    expect(() => runtime.register(tool())).toThrowError(
+      expect.objectContaining({ code: "CONFIG_INVALID" }),
+    );
+    expect(() => runtime.register(ownedTool("", "lookup_item"))).toThrowError(
+      expect.objectContaining({ code: "CONFIG_INVALID" }),
+    );
+    expect(() => runtime.register(ownedTool("tenant-1"))).not.toThrow();
+    expect(() => runtime.register(ownedTool("tenant-1"))).toThrowError(
+      expect.objectContaining({ code: "TOOL_ALREADY_REGISTERED" }),
+    );
+    // A duplicate name under a different tenant is a different tool.
+    expect(() =>
+      runtime.register(ownedTool("tenant-2", "lookup_item")),
+    ).not.toThrow();
+  });
+
+  it("scopes multi-tenant listing to the caller's tenant", () => {
+    const runtime = new InMemoryToolRuntime({
+      tenantMode: "multi-tenant",
+      authorizer: { authorize: () => {} },
+    });
+    runtime.register(ownedTool("tenant-1", "tool_1"));
+    runtime.register(ownedTool("tenant-2", "tool_2"));
+    expect(
+      runtime.listTools(tenantContext("tenant-1")).map(({ name }) => name),
+    ).toEqual(["tool_1"]);
+    expect(
+      runtime.listTools(tenantContext("tenant-2")).map(({ name }) => name),
+    ).toEqual(["tool_2"]);
+    expect(runtime.listTools(tenantContext("tenant-9"))).toEqual([]);
+    expect(() => runtime.listTools()).toThrowError(
+      expect.objectContaining({ code: "AUTH_REQUIRED" }),
+    );
+  });
+
+  it("makes cross-tenant calls indistinguishable from unknown tools", async () => {
+    const execute = vi.fn(async (input: unknown) => input);
+    const metrics = vi.fn();
+    const runtime = new InMemoryToolRuntime({
+      tenantMode: "multi-tenant",
+      authorizer: { authorize: authorizer },
+      metrics: { record: metrics },
+    });
+    runtime.register(ownedTool("tenant-2", "secret_tool", execute));
+    await expect(
+      runtime.callTool("secret_tool", { id: "a" }, tenantContext("tenant-1")),
+    ).rejects.toMatchObject({
+      code: "TOOL_NOT_FOUND",
+      message: "Tool 'secret_tool' was not found",
+    });
+    expect(authorizer).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(metrics).not.toHaveBeenCalled();
+  });
+
+  it("keeps same-tenant calls working in multi-tenant mode", async () => {
+    const execute = vi.fn(async (input: unknown) => input);
+    const runtime = new InMemoryToolRuntime({
+      tenantMode: "multi-tenant",
+      authorizer: { authorize: authorizer },
+    });
+    runtime.register(ownedTool("tenant-1", "lookup_item", execute));
+    await expect(
+      runtime.callTool("lookup_item", { id: "a" }, tenantContext("tenant-1")),
+    ).resolves.toEqual({ id: "a" });
+    expect(authorizer).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledOnce();
   });
 });
