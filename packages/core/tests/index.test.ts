@@ -151,6 +151,213 @@ describe("InMemoryToolRuntime", () => {
     ).rejects.toMatchObject({ code: "INPUT_INVALID" });
   });
 
+  it("enforces string length, pattern, and format constraints", async () => {
+    const runtime = new InMemoryToolRuntime();
+    runtime.register(
+      toolWithSchema({
+        type: "object",
+        required: ["name", "email", "id", "when", "emoji"],
+        properties: {
+          name: {
+            type: "string",
+            minLength: 2,
+            maxLength: 4,
+            pattern: "^[a-z]+$",
+          },
+          email: { type: "string", format: "email" },
+          id: { type: "string", format: "uuid" },
+          when: { type: "string", format: "date-time" },
+          emoji: { type: "string", maxLength: 1 },
+          note: { type: "string", format: "int32" },
+        },
+        additionalProperties: false,
+      }),
+    );
+
+    const valid = {
+      name: "test",
+      email: "user@example.test",
+      id: "123e4567-e89b-12d3-a456-426614174000",
+      when: "2026-10-21T12:34:56Z",
+      emoji: "😀",
+      note: "annotation-only",
+    };
+    await expect(
+      runtime.callTool("lookup_item", valid, context),
+    ).resolves.toEqual(valid);
+
+    await expect(
+      runtime.callTool("lookup_item", { ...valid, name: "x" }, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    await expect(
+      runtime.callTool("lookup_item", { ...valid, name: "TOOLONG" }, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    await expect(
+      runtime.callTool("lookup_item", { ...valid, name: "UPPER" }, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    await expect(
+      runtime.callTool(
+        "lookup_item",
+        { ...valid, email: "not-an-email" },
+        context,
+      ),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    await expect(
+      runtime.callTool("lookup_item", { ...valid, id: "not-a-uuid" }, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    await expect(
+      runtime.callTool(
+        "lookup_item",
+        { ...valid, when: "2026-02-30T12:34:56Z" },
+        context,
+      ),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    await expect(
+      runtime.callTool("lookup_item", { ...valid, emoji: "😀😀" }, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+  });
+
+  it("enforces numeric and array constraints", async () => {
+    const runtime = new InMemoryToolRuntime();
+    runtime.register(
+      toolWithSchema({
+        type: "object",
+        required: ["ratio", "values"],
+        properties: {
+          ratio: {
+            type: "number",
+            exclusiveMinimum: 0,
+            exclusiveMaximum: 10,
+            multipleOf: 0.5,
+          },
+          values: {
+            type: "array",
+            minItems: 2,
+            maxItems: 3,
+            uniqueItems: true,
+            items: { type: "integer", minimum: 1 },
+          },
+        },
+        additionalProperties: false,
+      }),
+    );
+
+    await expect(
+      runtime.callTool("lookup_item", { ratio: 1.5, values: [1, 2] }, context),
+    ).resolves.toEqual({ ratio: 1.5, values: [1, 2] });
+    await expect(
+      runtime.callTool("lookup_item", { ratio: 0, values: [1, 2] }, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    await expect(
+      runtime.callTool("lookup_item", { ratio: 10, values: [1, 2] }, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    await expect(
+      runtime.callTool("lookup_item", { ratio: 1.25, values: [1, 2] }, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    await expect(
+      runtime.callTool("lookup_item", { ratio: 1, values: [1] }, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    await expect(
+      runtime.callTool(
+        "lookup_item",
+        { ratio: 1, values: [1, 2, 3, 4] },
+        context,
+      ),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    await expect(
+      runtime.callTool("lookup_item", { ratio: 1, values: [1, 1] }, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    await expect(
+      runtime.callTool("lookup_item", { ratio: 1, values: [1, 0] }, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+
+    const largeRuntime = new InMemoryToolRuntime();
+    largeRuntime.register(
+      toolWithSchema({
+        type: "number",
+        multipleOf: 1,
+      }),
+    );
+    await expect(
+      largeRuntime.callTool("lookup_item", 1_000_000_000_000_000.5, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+  });
+
+  it("compares uniqueItems structurally and enforces object property counts", async () => {
+    const runtime = new InMemoryToolRuntime();
+    runtime.register(
+      toolWithSchema({
+        type: "object",
+        required: ["items", "record"],
+        properties: {
+          items: {
+            type: "array",
+            uniqueItems: true,
+            items: {
+              type: "object",
+              properties: { a: { type: "integer" }, b: { type: "integer" } },
+            },
+          },
+          record: {
+            type: "object",
+            minProperties: 1,
+            maxProperties: 2,
+            properties: { a: { type: "integer" }, b: { type: "integer" } },
+          },
+        },
+        additionalProperties: false,
+      }),
+    );
+
+    await expect(
+      runtime.callTool(
+        "lookup_item",
+        { items: [{ a: 1, b: 2 }], record: { a: 1 } },
+        context,
+      ),
+    ).resolves.toEqual({ items: [{ a: 1, b: 2 }], record: { a: 1 } });
+    await expect(
+      runtime.callTool(
+        "lookup_item",
+        {
+          items: [
+            { a: 1, b: 2 },
+            { b: 2, a: 1 },
+          ],
+          record: { a: 1 },
+        },
+        context,
+      ),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    await expect(
+      runtime.callTool("lookup_item", { items: [], record: {} }, context),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+    await expect(
+      runtime.callTool(
+        "lookup_item",
+        { items: [], record: { a: 1, b: 2, extra: 3 } },
+        context,
+      ),
+    ).rejects.toMatchObject({ code: "INPUT_INVALID" });
+  });
+
+  it("rejects malformed constraint declarations at registration", () => {
+    for (const schema of [
+      { type: "string", minLength: -1 },
+      { type: "string", maxLength: 1.5 },
+      { type: "string", pattern: "(" },
+      { type: "string", pattern: "(?=a)" },
+      { type: "string", format: 1 },
+      { type: "number", minimum: "zero" },
+      { type: "number", exclusiveMinimum: true },
+      { type: "number", multipleOf: 0 },
+      { type: "array", uniqueItems: "yes" },
+      { type: "object", minProperties: -1 },
+    ]) {
+      expectContractInvalid(schema);
+    }
+  });
+
   it("reports nested object validation failures", async () => {
     const execute = vi.fn(async (input: unknown) => input);
     const runtime = new InMemoryToolRuntime();
@@ -226,18 +433,6 @@ describe("InMemoryToolRuntime", () => {
     ["allOf", { allOf: [{ type: "string" }] }],
     ["const", { const: "fixed" }],
     ["not", { not: { type: "string" } }],
-    ["minimum", { type: "number", minimum: 0 }],
-    ["maximum", { type: "number", maximum: 10 }],
-    ["exclusiveMinimum", { type: "number", exclusiveMinimum: 0 }],
-    ["exclusiveMaximum", { type: "number", exclusiveMaximum: 10 }],
-    ["multipleOf", { type: "number", multipleOf: 2 }],
-    ["minLength", { type: "string", minLength: 1 }],
-    ["maxLength", { type: "string", maxLength: 10 }],
-    ["pattern", { type: "string", pattern: "^a" }],
-    ["format", { type: "string", format: "email" }],
-    ["minItems", { type: "array", minItems: 1 }],
-    ["maxItems", { type: "array", maxItems: 10 }],
-    ["uniqueItems", { type: "array", uniqueItems: true }],
     ["contains", { type: "array", contains: { type: "string" } }],
     ["patternProperties", { type: "object", patternProperties: {} }],
     ["propertyNames", { type: "object", propertyNames: { type: "string" } }],
@@ -909,8 +1104,8 @@ describe("schema audit", () => {
     const result = auditInputSchema({
       type: "object",
       properties: {
-        name: { type: "string", format: "email" },
-        count: { type: "number", minimum: 0 },
+        name: { type: "string", patternProperties: {} },
+        count: { type: "number", minimum: "zero" },
       },
       additionalProperties: { type: "string" },
     });
@@ -919,7 +1114,7 @@ describe("schema audit", () => {
       result.diagnostics.map(({ code, path }) => ({ code, path })),
     ).toEqual([
       { code: "SCHEMA_UNSUPPORTED_KEYWORD", path: "$.properties.name" },
-      { code: "SCHEMA_UNSUPPORTED_KEYWORD", path: "$.properties.count" },
+      { code: "SCHEMA_INVALID_CONSTRAINT", path: "$.properties.count" },
       {
         code: "SCHEMA_INVALID_ADDITIONAL_PROPERTIES",
         path: "$",

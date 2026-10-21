@@ -1,0 +1,81 @@
+openapi: 3.0.3
+info:
+  title: Petstore example
+  version: 1.0.0
+  description: A small contract used by the ChainMcp getting-started example.
+paths:
+  /items/{id}:
+    get:
+      operationId: getItem
+      summary: Read one item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Item identifier.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 32
+      responses:
+        "200":
+          description: The requested item.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+        "404":
+          description: No item exists with that identifier.
+  /items:
+    post:
+      operationId: createItem
+      summary: Create an item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewItem"
+      responses:
+        "201":
+          description: The created item.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+components:
+  schemas:
+    Item:
+      type: object
+      required:
+        - id
+        - name
+        - quantity
+      properties:
+        id:
+          type: string
+          minLength: 1
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        quantity:
+          type: integer
+          minimum: 0
+          maximum: 1000
+      additionalProperties: false
+    NewItem:
+      type: object
+      required:
+        - name
+        - quantity
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        quantity:
+          type: integer
+          minimum: 0
+          maximum: 1000
+      additionalProperties: false

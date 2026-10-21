@@ -47,6 +47,21 @@ importers:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@22.20.5)(jiti@2.7.0)(yaml@2.9.1)
 
+  examples/petstore:
+    dependencies:
+      "@chainmcp/compiler":
+        specifier: workspace:*
+        version: link:../../packages/compiler
+      "@chainmcp/core":
+        specifier: workspace:*
+        version: link:../../packages/core
+      "@chainmcp/executor":
+        specifier: workspace:*
+        version: link:../../packages/executor
+      "@chainmcp/server":
+        specifier: workspace:*
+        version: link:../../packages/server
+
   packages/auth:
     dependencies:
       "@chainmcp/core":
@@ -59,13 +74,35 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/compiler:
+    dependencies:
+      "@chainmcp/core":
+        specifier: workspace:*
+        version: link:../core
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+
   packages/config:
     dependencies:
       zod:
         specifier: ^4.1.12
         version: 4.6.7
 
-  packages/core: {}
+  packages/core:
+    dependencies:
+      re2js:
+        specifier: ^2.9.0
+        version: 2.9.0
+
+  packages/executor:
+    dependencies:
+      "@chainmcp/compiler":
+        specifier: workspace:*
+        version: link:../compiler
+      "@chainmcp/core":
+        specifier: workspace:*
+        version: link:../core
 
   packages/server:
     dependencies:
@@ -2053,6 +2090,13 @@ packages:
       }
     engines: { node: ">=6" }
 
+  re2js@2.9.0:
+    resolution:
+      {
+        integrity: sha512-rZpqkd4ETP3GrQ5mDLzADr14OleeKdb/40lG84WE8absRfsVLJpWt2ifjtYYeoPqeouIkcxhTlurxIXfR5kR5Q==,
+      }
+    engines: { node: ">=20.0.0" }
+
   require-from-string@2.0.2:
     resolution:
       {
@@ -3562,6 +3606,8 @@ snapshots:
   prettier@3.9.10: {}
 
   punycode@2.3.1: {}
+
+  re2js@2.9.0: {}
 
   require-from-string@2.0.2: {}
 

@@ -14,7 +14,7 @@ on untyped errors (ADR 0006).
 What is not decided anywhere is the mapping itself: given a caller identity,
 who may call which tenant's tools. Concretely, several questions are open and
 they shape the compiler (Milestone 3), the auth package (Milestone 5), and the
-gateway (Milestone 8), so they must be settled before those milestones generate
+gateway (Milestone 9), so they must be settled before those milestones generate
 structure that would have to be retrofitted:
 
 - **Where does a tool's tenant binding live?** `ToolDefinition` has no tenant
@@ -191,7 +191,7 @@ records which behavior is mandatory, not the exact signatures.
 - Keep the snapshot behavior for single-tenant deployments and document it as
   trusted-local.
 - Sync `API_REFERENCE.md`, `ARCHITECTURE.md`, and `docs/generated-servers.md`
-  when the interface lands; leave Milestone 5 and Milestone 8 unchecked until
+  when the interface lands; leave Milestone 5 and Milestone 9 unchecked until
   the mapping is implemented and verified.
 - Define the transport-side session-to-principal mapping in `CONFIGURATION.md`
   as ADR 0004's follow-up before remote transport work (Milestone 5).

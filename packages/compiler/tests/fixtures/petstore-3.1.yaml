@@ -1,0 +1,91 @@
+openapi: 3.1.0
+info:
+  title: Item API
+  version: 2.0.0
+security:
+  - oauth:
+      - items:read
+  - bearer: []
+paths:
+  /items/{id}:
+    get:
+      operationId: getItem
+      summary: Get an item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: filter
+          in: query
+          schema:
+            type:
+              - string
+              - "null"
+            enum:
+              - active
+              - archived
+              - null
+      responses:
+        "200":
+          description: An item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+    put:
+      operationId: replaceItem
+      summary: Replace an item
+      security:
+        - oauth:
+            - items:write
+          bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ItemInput"
+      responses:
+        "200":
+          description: Replaced
+components:
+  securitySchemes:
+    oauth:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://example.com/authorize
+          tokenUrl: https://example.com/token
+          scopes:
+            "items:read": Read items
+            "items:write": Write items
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Item:
+      allOf:
+        - $ref: "#/components/schemas/ItemInput"
+        - type: object
+          properties:
+            id:
+              type: string
+              readOnly: true
+            internal:
+              type: string
+              writeOnly: true
+    ItemInput:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        note:
+          type:
+            - string
+            - "null"
+      additionalProperties: false

@@ -20,6 +20,12 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Document authorization and rate-limit adapter contracts, including the distinction between policy denial and adapter failure.
 - Record ADR 0008, the MCP authorization mapping (tenant-bound registration, tenancy modes, identity-scoped listing), and document the tenant-bound runtime groundwork in `API_REFERENCE.md` and `ARCHITECTURE.md`.
 - Document the `@chainmcp/auth` package and its `OperationScopeAuthorizer` default, including the exact-match scope semantics and the protected-diagnostics cause contract.
+- Document the first Milestone 3 compiler slice, its supported/rejected OpenAPI surface, deterministic manifest hashes, and its metadata-only boundary in `API_REFERENCE.md`, `ARCHITECTURE.md`, `docs/openapi-support.md`, and ADR 0015.
+- Document response metadata mapping and object `allOf` flattening, including the unvalidated status of response schemas and the remaining input union-composition limits, in `API_REFERENCE.md`, `ARCHITECTURE.md`, `docs/openapi-support.md`, and ADR 0016.
+- Document explicit OR/AND authentication policy mapping, anonymous alternatives, scope validation, and the unenforced boundary in `API_REFERENCE.md`, `ARCHITECTURE.md`, `docs/openapi-support.md`, and ADR 0017.
+- Document the upstream executor, request/response mapping, destination policy, cancellation binding, and remaining credential/validation limits in `API_REFERENCE.md`, `ARCHITECTURE.md`, `SECURITY.md`, `docs/openapi-support.md`, `docs/generated-servers.md`, and ADR 0018.
+- Document the `chainmcp/no-blocking-io` lint rule and its runtime-source scope in `DEVELOPMENT.md`.
+- Add Milestone 8 (tool sources and code-first authoring), renumber the dynamic gateway and stable release to Milestones 9 and 10, and record ADR 0019. Scaffold, `defineTool()`, `chainmcp dev`, and code-first docs are in the 1.0 path; the declarative tool builder and admin UI are explicitly post-1.0 and are not a 1.0 release gate.
 
 ### Implementation
 
@@ -60,6 +66,15 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Map `RuntimeErrorCode` to client-safe messages through an exhaustive `Record`, making a newly added code a compile error, and bound `maxResponseBytes` to 100 MB to match the configuration limit.
 - Set `license: "UNLICENSED"` in every workspace package, replacing the invalid `TODO` placeholder that would fail publish validation. Choosing and documenting a real license remains an open Milestone 0 item.
 - Build before `typecheck` and `test` in `pnpm check`. Cross-package imports resolve through each package's built `dist`, so the previous order only passed when stale artifacts happened to exist and failed on a clean checkout.
+- Add `chainmcp/no-blocking-io`, a custom ESLint rule that rejects synchronous `fs` and `child_process` APIs on runtime source paths, including aliased/namespace imports, `require`, and dynamic import. RuleTester coverage runs through `pnpm test:rules` in `pnpm check`.
+- Add `@chainmcp/compiler` with the first Milestone 3 slice: bounded YAML/JSON parsing, OpenAPI 3.0/3.1 structural validation, local `$ref` resolution with cycle/depth limits, deterministic operation enumeration and tool names, object-root input schemas from path/query/header parameters and JSON request bodies, 3.0 `nullable` translation, `readOnly` input filtering, `auditInputSchema` enforcement, security OR/AND metadata, and deterministic source/contract/toolset hashes with `diffManifests()`. It emits metadata only; executors and authentication enforcement remain open.
+- Map declared OpenAPI responses into deterministic metadata with status keys, descriptions, selected media types, and translated schemas. Response schemas resolve local `$ref`s, drop `writeOnly` fields, preserve composition, and are explicitly not applied as output validation. Flatten object `allOf` intersections for inputs, rejecting incompatible properties, non-object members, and sibling validation keywords. Include responses in per-tool hashes.
+- Derive `CompiledOperation.authentication` as explicit OR alternatives and AND scheme sets with credential metadata and sorted, deduplicated scopes. Preserve anonymous alternatives, reject scopes on non-OAuth/OIDC schemes, and diagnose undeclared OAuth2 scopes. Include authentication details in per-tool hashes. Policies are metadata only; no credentials are resolved or enforced.
+- Add the compiler package to the fixed release group and root version-sync check.
+- Record sorted path/query/header parameter bindings and JSON request-body media metadata on `CompiledOperation`, include them in per-tool hashes, and reject transport/credential headers such as `Content-Type` and `User-Agent` as tool inputs.
+- Add `@chainmcp/executor` with `createUpstreamExecutor()`: compile output becomes runnable tools with bounded path/query/header/JSON-body mapping; exact host allowlists; HTTPS by default; fixed protocol/port; same-host redirect revalidation; rejection of any loopback, private, shared, link-local, metadata, multicast, documentation, or reserved DNS answer; pinned lookups with peer verification; no proxy environment or connection reuse; compression refusal; URL/header/request/response/redirect/time caps; and `context.signal`/total-timeout binding. It does not inject credentials, enforce authentication, validate response schemas, or retry.
+- Extend the runtime validator and compiler with bounded schema constraints: string `minLength`/`maxLength`/`pattern` and asserted formats, numeric bounds and `multipleOf`, array length and structural `uniqueItems`, and object property counts. Patterns use the linear-time `re2js` engine; invalid or oversized patterns fail registration. OpenAPI 3.0 boolean exclusive bounds are normalized to numeric JSON Schema bounds.
+- Add `examples/petstore`, a compiled stdio MCP server that wires the compiler, executor, shared runtime, and server adapter to a deterministic mock upstream. Add `docs/getting-started.md` and `pnpm conformance:inspector`, which runs the MCP Inspector CLI against `tools/list` and `tools/call`; CI runs the Inspector check in a separate Node.js 22.19.0 job.
 
 ### Breaking changes
 
@@ -70,6 +85,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Limitations
 
-- No OpenAPI compiler, CLI, gateway, upstream HTTP executor, or concrete cache/auth/rate-limit adapter is included.
+- No OpenAPI response-schema validation, CLI, gateway, credential provider, authentication enforcement, generated-server wiring, or concrete cache/auth/rate-limit adapter is included.
+- `@chainmcp/compiler` output is operation metadata; `@chainmcp/executor` turns it into runnable tools. Response schemas and authentication policies are not enforced; input `oneOf`/`anyOf`/`not` composition, `const`, remote references, and formats outside the asserted set remain unsupported. Authentication enforcement remains Milestone 5 work; generated-server/CLI wiring remains Milestone 7 work.
 - The core input validator supports only the subset documented in `API_REFERENCE.md`.
 - License selection remains unresolved; the existing `LICENSE` file is empty.

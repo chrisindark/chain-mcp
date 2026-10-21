@@ -19,7 +19,7 @@ pnpm test
 
 These commands must be implemented and verified by the initial repository-generation task. Do not claim they pass until executed successfully.
 
-The current workspace provides `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build`; `pnpm check` runs these in sequence and finishes with `pnpm version:check`. `pnpm format` applies Prettier. The available packages are `@chainmcp/core`, `@chainmcp/config`, and `@chainmcp/server`.
+The current workspace provides `pnpm format:check`, `pnpm lint`, `pnpm test:rules`, `pnpm typecheck`, `pnpm test`, and `pnpm build`; `pnpm check` runs these in sequence and finishes with `pnpm version:check`. `pnpm format` applies Prettier. The available packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/compiler`, `@chainmcp/auth`, `@chainmcp/cache-redis`, and `@chainmcp/server`.
 
 ## Commits and local hooks
 
@@ -34,7 +34,7 @@ Hooks are a fast local guardrail, not the gate. CI runs the full `pnpm check`, a
 
 ## Releases and versioning
 
-Releases use [Changesets](https://github.com/changesets/changesets). `@chainmcp/core`, `@chainmcp/config`, and `@chainmcp/server` are a fixed group: they always share one version, and the private root package mirrors it.
+Releases use [Changesets](https://github.com/changesets/changesets). `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/compiler`, `@chainmcp/auth`, `@chainmcp/cache-redis`, and `@chainmcp/server` are a fixed group: they always share one version, and the private root package mirrors it.
 
 - Add a changeset for every user-visible change: `pnpm changeset`.
 - Apply pending changesets locally with `pnpm release:version`. This runs `changeset version` and then `scripts/sync-version.mjs`, which copies the shared package version onto the root `package.json`.
@@ -55,6 +55,7 @@ Releases use [Changesets](https://github.com/changesets/changesets). `@chainmcp/
 - Do not log credentials or raw response bodies by default.
 - Avoid implicit retries for non-idempotent requests.
 - Keep public exports explicit.
+- Runtime source under `packages/*/src` and `apps/*/src` must not call synchronous filesystem or child-process APIs. `chainmcp/no-blocking-io` enforces this over `fs`/`node:fs` and `child_process`/`node:child_process` imports, aliases, `require`, and dynamic import. Tooling scripts are exempt.
 
 ## Testing strategy
 
@@ -68,7 +69,11 @@ Test validation, cache keys, policies, canonicalization, rate limits, and JSON t
 
 ### Contract tests
 
-Test OpenAPI 3.0 and 3.1 documents, invalid schemas, missing operation IDs, authentication definitions, and unsupported constructs.
+Test OpenAPI 3.0 and 3.1 documents, invalid schemas, missing operation IDs, authentication definitions, and unsupported constructs. `@chainmcp/compiler` keeps deterministic fixtures in `packages/compiler/tests/fixtures/`.
+
+### Lint-rule tests
+
+`pnpm test:rules` runs the repository's custom ESLint rules with `node --test`. Add a RuleTester case for every new rule or detected API form.
 
 ### Integration tests
 

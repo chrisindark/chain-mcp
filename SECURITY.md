@@ -40,6 +40,35 @@ The implementation must address:
 - Enforce request and response byte limits.
 - Avoid forwarding inbound credentials to upstream hosts without explicit policy.
 
+Current implementation: `@chainmcp/executor` enforces exact host allowlists,
+HTTPS by default, public-address classification for every DNS answer, pinned
+lookups with peer verification, same-origin redirect revalidation, request and
+response caps, and cancellation binding. It performs no credential injection or
+authentication. The default transport does not honor proxy environment
+variables or decompress responses. These controls are covered by unit and local
+transport tests, not by a production security review.
+
+### Input validation
+
+- Treat tool arguments as untrusted. Enforce the audited JSON Schema subset at
+  registration and again at invocation.
+- Do not run contract-supplied regular expressions on a backtracking engine.
+  The runtime uses the linear-time `re2js` engine, caps pattern length at 4,096
+  characters, and rejects patterns that RE2 cannot compile.
+- Use a bounded structural comparison for `uniqueItems` and fail closed when
+  the value exceeds the comparison budget.
+- Assert only documented formats. Other format strings are annotations, not
+  security checks.
+- Reject unsupported schema composition at registration rather than silently
+  accepting values the contract rejects.
+
+Current implementation: `@chainmcp/core` enforces required fields, primitive
+enums, string length/pattern/format constraints, numeric bounds and multiples,
+array length and structural uniqueness, and object property counts. String
+lengths count Unicode code points. OpenAPI 3.0 boolean exclusive bounds are
+normalized by the compiler. Validation still has no overall input-size cap;
+executors and adapters must bound request bodies and caller memory.
+
 ### Authentication
 
 - Separate inbound MCP identity from upstream API credentials.

@@ -10,8 +10,10 @@
     [
       "@chainmcp/auth",
       "@chainmcp/cache-redis",
+      "@chainmcp/compiler",
       "@chainmcp/core",
       "@chainmcp/config",
+      "@chainmcp/executor",
       "@chainmcp/server"
     ]
   ],

@@ -73,6 +73,6 @@ Use one shared runtime for both modes.
 - Verify generated projects build and run from clean installations
   (Milestone 7).
 - Verify the gateway uses the same runtime with atomic revision loading
-  (Milestone 8).
+  (Milestone 9).
 - Keep `API_REFERENCE.md` and package boundaries synchronized with runtime
   changes.

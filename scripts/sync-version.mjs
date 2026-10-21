@@ -13,8 +13,10 @@ import { fileURLToPath } from "node:url";
 const WORKSPACE_PACKAGES = [
   "packages/auth/package.json",
   "packages/cache-redis/package.json",
+  "packages/compiler/package.json",
   "packages/core/package.json",
   "packages/config/package.json",
+  "packages/executor/package.json",
   "packages/server/package.json",
 ];
 const ROOT_PACKAGE = "package.json";

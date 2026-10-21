@@ -8,8 +8,12 @@ import {
 } from "./cache-key.js";
 import {
   auditInputSchema,
+  isAssertedFormat,
   isJsonObject,
+  matchesFormat,
   MAX_SCHEMA_DEPTH,
+  patternMatches,
+  stableValueKey,
   type JsonSchema,
 } from "./schema.js";
 import { assertFieldSelection } from "./field-projection.js";
@@ -1213,9 +1217,34 @@ function validateValue(
   ) {
     addIssue(state, `${path} must be one of the allowed values`);
   }
+  if (typeof value === "string") {
+    validateStringConstraints(schema, value, path, state);
+  }
+  if (typeof value === "number") {
+    validateNumberConstraints(schema, value, path, state);
+  }
   if (isJsonObject(value)) {
     const properties = isJsonObject(schema.properties) ? schema.properties : {};
     const required = Array.isArray(schema.required) ? schema.required : [];
+    const propertyCount = Object.keys(value).length;
+    if (
+      typeof schema.minProperties === "number" &&
+      propertyCount < schema.minProperties
+    ) {
+      addIssue(
+        state,
+        `${path} must have at least ${schema.minProperties} properties`,
+      );
+    }
+    if (
+      typeof schema.maxProperties === "number" &&
+      propertyCount > schema.maxProperties
+    ) {
+      addIssue(
+        state,
+        `${path} must have at most ${schema.maxProperties} properties`,
+      );
+    }
     for (const key of required) {
       // Own-property checks only. An `in` test would accept inherited names
       // such as 'toString', so a caller could satisfy `required` with nothing.
@@ -1244,17 +1273,130 @@ function validateValue(
       }
     }
   }
-  if (Array.isArray(value) && isJsonObject(schema.items)) {
-    value.forEach((item, index) =>
-      validateValue(
-        schema.items as JsonSchema,
-        item,
-        `${path}[${index}]`,
-        state,
-        depth + 1,
-      ),
+  if (Array.isArray(value)) {
+    if (typeof schema.minItems === "number" && value.length < schema.minItems) {
+      addIssue(state, `${path} must have at least ${schema.minItems} items`);
+    }
+    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) {
+      addIssue(state, `${path} must have at most ${schema.maxItems} items`);
+    }
+    if (schema.uniqueItems === true) {
+      const seen = new Set<string>();
+      for (const item of value) {
+        const key = stableValueKey(item);
+        if (key === undefined) {
+          addIssue(
+            state,
+            `${path} contains a value that is too complex to compare for uniqueness`,
+          );
+          break;
+        }
+        if (seen.has(key)) {
+          addIssue(state, `${path} must contain unique items`);
+          break;
+        }
+        seen.add(key);
+      }
+    }
+    if (isJsonObject(schema.items)) {
+      value.forEach((item, index) =>
+        validateValue(
+          schema.items as JsonSchema,
+          item,
+          `${path}[${index}]`,
+          state,
+          depth + 1,
+        ),
+      );
+    }
+  }
+}
+
+function validateStringConstraints(
+  schema: JsonSchema,
+  value: string,
+  path: string,
+  state: ValidationState,
+): void {
+  const length = codePointLength(value);
+  if (typeof schema.minLength === "number" && length < schema.minLength) {
+    addIssue(state, `${path} must be at least ${schema.minLength} characters`);
+  }
+  if (typeof schema.maxLength === "number" && length > schema.maxLength) {
+    addIssue(state, `${path} must be at most ${schema.maxLength} characters`);
+  }
+  if (
+    typeof schema.pattern === "string" &&
+    !patternMatches(schema.pattern, value)
+  ) {
+    addIssue(state, `${path} must match pattern '${schema.pattern}'`);
+  }
+  if (
+    typeof schema.format === "string" &&
+    isAssertedFormat(schema.format) &&
+    !matchesFormat(schema.format, value)
+  ) {
+    addIssue(state, `${path} must match format '${schema.format}'`);
+  }
+}
+
+function validateNumberConstraints(
+  schema: JsonSchema,
+  value: number,
+  path: string,
+  state: ValidationState,
+): void {
+  if (typeof schema.minimum === "number" && value < schema.minimum) {
+    addIssue(
+      state,
+      `${path} must be greater than or equal to ${schema.minimum}`,
     );
   }
+  if (typeof schema.maximum === "number" && value > schema.maximum) {
+    addIssue(state, `${path} must be less than or equal to ${schema.maximum}`);
+  }
+  if (
+    typeof schema.exclusiveMinimum === "number" &&
+    value <= schema.exclusiveMinimum
+  ) {
+    addIssue(state, `${path} must be greater than ${schema.exclusiveMinimum}`);
+  }
+  if (
+    typeof schema.exclusiveMaximum === "number" &&
+    value >= schema.exclusiveMaximum
+  ) {
+    addIssue(state, `${path} must be less than ${schema.exclusiveMaximum}`);
+  }
+  if (
+    typeof schema.multipleOf === "number" &&
+    !isMultipleOf(value, schema.multipleOf)
+  ) {
+    addIssue(state, `${path} must be a multiple of ${schema.multipleOf}`);
+  }
+}
+
+function codePointLength(value: string): number {
+  let length = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const codePoint = value.codePointAt(index);
+    if (codePoint !== undefined && codePoint > 0xffff) index += 1;
+    length += 1;
+  }
+  return length;
+}
+
+function isMultipleOf(value: number, multiple: number): boolean {
+  if (!Number.isFinite(value) || !Number.isFinite(multiple) || multiple <= 0) {
+    return false;
+  }
+  const quotient = value / multiple;
+  if (!Number.isFinite(quotient)) return false;
+  const nearest = Math.round(quotient);
+  const tolerance = Math.min(
+    1e-9,
+    Number.EPSILON * Math.max(1, Math.abs(quotient)) * 8,
+  );
+  return Math.abs(quotient - nearest) <= tolerance;
 }
 
 function matchesTypeDeclaration(type: unknown, value: unknown): boolean {

@@ -33,22 +33,23 @@ derived from this gate, not from a source tracker's `[P0]` label.
 | **Drop**    | Out of scope for the current product direction; reason recorded.       |
 | **Done**    | Implemented and covered by tests; keep as a regression check.          |
 
-Nine items pass the gate for the current slice: `SEC-02`, `SEC-05` (output
-half), `SEC-06`, `GEN-01`, `GEN-02`, `GEN-05`, `GEN-06`, `GEN-07`, `RUN-01`.
-They appear as acceptance criteria in Milestones 3 and 4 or in the
-cross-cutting criteria, not as a separate backlog.
+The current slice tracks `SEC-02`, `SEC-05` (output half), `SEC-06`, `GEN-01`,
+`GEN-06`, `GEN-07`, and `RUN-01` as active acceptance criteria. `GEN-02` (input
+half) and `GEN-05` are done and remain regression checks. They appear as
+acceptance criteria in Milestones 3 and 4 or in the cross-cutting criteria, not
+as a separate backlog.
 
 ## Phase 1 — Security
 
-| ID     | Risk                                                      | Status                                                                                                                                                  | Disposition                | Target or trigger                                       |
-| ------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------- |
-| SEC-01 | Authenticate protected MCP endpoints                      | Not applicable: stdio only, no inbound HTTP                                                                                                             | Defer                      | Before any remote transport (M5)                        |
-| SEC-02 | Translate OpenAPI security schemes correctly              | Open                                                                                                                                                    | **Now**                    | M3                                                      |
-| SEC-03 | Robust OAuth discovery and token refresh                  | Open                                                                                                                                                    | Defer                      | Only when an OAuth-required API is a target (M5)        |
-| SEC-04 | Enforce tenant isolation and resource ownership           | Done in core and server (ADR 0008); gateway coverage open                                                                                               | Done / Defer               | Gateway path in M8                                      |
-| SEC-05 | Argument-level and output-level policy enforcement        | Partial: argument validation, operation scopes, output hook/budget, and built-in field projection are done; generated-tool contract policy remains open | **Now** (generated policy) | Runtime policy in M4; contract-level field policy in M6 |
-| SEC-06 | Block SSRF, unsafe redirects, and private-network targets | Open: no outbound HTTP exists yet                                                                                                                       | **Now**                    | Land with the first outbound HTTP call (M3)             |
-| SEC-07 | Explicit policy-denial errors and audit events            | Partial: typed denials and safe mapping done; audit events open                                                                                         | Defer (audit)              | M6                                                      |
+| ID     | Risk                                                      | Status                                                                                                                                                                          | Disposition                | Target or trigger                                       |
+| ------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------- |
+| SEC-01 | Authenticate protected MCP endpoints                      | Not applicable: stdio only, no inbound HTTP                                                                                                                                     | Defer                      | Before any remote transport (M5)                        |
+| SEC-02 | Translate OpenAPI security schemes correctly              | Partial: explicit OR/AND policy, credential metadata, and scope validation are compiled; enforcement and credentials are open                                                   | Done / Defer (enforcement) | M5 for enforcement                                      |
+| SEC-03 | Robust OAuth discovery and token refresh                  | Open                                                                                                                                                                            | Defer                      | Only when an OAuth-required API is a target (M5)        |
+| SEC-04 | Enforce tenant isolation and resource ownership           | Done in core and server (ADR 0008); gateway coverage open                                                                                                                       | Done / Defer               | Gateway path in M9                                      |
+| SEC-05 | Argument-level and output-level policy enforcement        | Partial: argument validation, operation scopes, output hook/budget, and built-in field projection are done; generated-tool contract policy remains open                         | **Now** (generated policy) | Runtime policy in M4; contract-level field policy in M6 |
+| SEC-06 | Block SSRF, unsafe redirects, and private-network targets | Done in `@chainmcp/executor` for HTTP: exact allowlist, public-address classification, DNS pinning/peer check, same-origin redirects, caps, signal; explicit proxy support open | Done / Defer (proxy)       | Proxy support when required                             |
+| SEC-07 | Explicit policy-denial errors and audit events            | Partial: typed denials and safe mapping done; audit events open                                                                                                                 | Defer (audit)              | M6                                                      |
 
 Notes:
 
@@ -62,15 +63,15 @@ Notes:
 
 ## Phase 2 — Tool generation
 
-| ID     | Risk                                                  | Status                                                           | Disposition | Target or trigger                     |
-| ------ | ----------------------------------------------------- | ---------------------------------------------------------------- | ----------- | ------------------------------------- |
-| GEN-01 | Resolve nested OpenAPI references and definitions     | Open                                                             | **Now**     | M3                                    |
-| GEN-02 | Preserve validation constraints and required fields   | Open: core validates a documented subset; compiler must preserve | **Now**     | M3                                    |
-| GEN-03 | Resolve per-operation server URLs safely              | Open                                                             | Defer       | After M3, tied to the SSRF allowlist  |
-| GEN-04 | Handle JSON, multipart, binary, and media types       | Open                                                             | Defer       | Post-M3; JSON only in the first slice |
-| GEN-05 | Validate MCP protocol conformance                     | Partial: SDK client/server pair tested; Inspector/CI check open  | **Now**     | M3 (conformance test, not a feature)  |
-| GEN-06 | Detect invalid schemas, circular refs, naming clashes | Partial: input-schema audit exists; compiler diagnostics open    | **Now**     | M3                                    |
-| GEN-07 | Make generated output deterministic and reproducible  | Open                                                             | **Now**     | M3; also satisfies ENT-01             |
+| ID     | Risk                                                  | Status                                                                                                                                       | Disposition           | Target or trigger                                   |
+| ------ | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------- |
+| GEN-01 | Resolve nested OpenAPI references and definitions     | Done for local refs with cycle/depth limits; remote refs rejected                                                                            | Done                  | Revisit if remote refs are required                 |
+| GEN-02 | Preserve validation constraints and required fields   | Done for the documented input subset (required, enums, formats, numeric/string/array/object constraints); response schemas are metadata only | Done / Defer (output) | Output validator in M6                              |
+| GEN-03 | Resolve per-operation server URLs safely              | Open                                                                                                                                         | Defer                 | After M3, tied to the SSRF allowlist                |
+| GEN-04 | Handle JSON, multipart, binary, and media types       | Partial: JSON inputs and responses only                                                                                                      | Defer                 | Post-M3; multipart/binary open                      |
+| GEN-05 | Validate MCP protocol conformance                     | Done: SDK client/server tests and an Inspector CLI check for `tools/list` and `tools/call` run in CI                                         | Done                  | Revisit when transports or protocol versions change |
+| GEN-06 | Detect invalid schemas, circular refs, naming clashes | Done for compiler diagnostics and input-schema audit                                                                                         | Done                  | Revisit for Inspector feedback                      |
+| GEN-07 | Make generated output deterministic and reproducible  | Done for compiler manifests and executor tool binding                                                                                        | Done                  | Regeneration CLI remains open                       |
 
 ## Phase 3 — Runtime reliability
 
@@ -81,7 +82,7 @@ Notes:
 | RUN-03 | Retries, backoff, circuit breakers, and health checks | Open                                               | Defer       | Only when a real upstream demonstrates the need |
 | RUN-04 | Clean up orphaned processes and containers            | Open                                               | Defer       | Only if container templates ship (M7)           |
 | RUN-05 | Support and test required HTTP transports             | Open: stdio only                                   | Defer       | With SEC-01 and SEC-03 (M5)                     |
-| RUN-06 | Concurrent startup and supported operating systems    | Open                                               | Defer       | Release hardening (M9)                          |
+| RUN-06 | Concurrent startup and supported operating systems    | Open                                               | Defer       | Release hardening (M10)                         |
 | RUN-07 | Prevent stale OAuth state and refresh failures        | Open                                               | Defer       | With SEC-03 (M5)                                |
 
 Note: `RUN-03` must not introduce implicit retries for non-idempotent
@@ -94,22 +95,23 @@ operations, per `DEVELOPMENT.md`.
 | ENT-01 | Detect and review upstream tool-schema changes | Open   | Next        | Satisfied by the GEN-07 toolset hash; diff in M7 |
 | ENT-02 | Approval gates for sensitive tool calls        | Open   | Defer       | Revisit with a real enterprise user              |
 | ENT-03 | Version tool manifests and record trust checks | Open   | Next        | M7 generation manifest                           |
-| ENT-04 | Pluggable storage and configuration rollback   | Open   | Drop        | No persistence or control plane in scope         |
+| ENT-04 | Pluggable storage and configuration rollback   | Open   | Defer       | Post-1.0 declarative tool builder; requires ADR  |
 | ENT-05 | Audit dashboards, metrics, and usage metering  | Open   | Drop        | Hosted SaaS control plane; `AGENTS.md`           |
-| ENT-06 | Versioned releases and compatibility guidance  | Open   | Next        | M9 and `RELEASES.md`                             |
+| ENT-06 | Versioned releases and compatibility guidance  | Open   | Next        | M10 and `RELEASES.md`                            |
 
 ## Not captured by the triage
 
 These are more important to the current product thesis than most of the items
 above, and the raw issue list contains none of them.
 
-| Gap                                        | Why it matters                                                                                 | Status                                                                                    |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Runnable example and getting-started guide | `docs/getting-started.md` and `examples/README.md` are empty; no evidence a user has succeeded | **Now**                                                                                   |
-| Output projection and token budget         | The quality differentiator; also the open half of SEC-05                                       | Done (runtime hook, budget, and declarative field projection); generated-tool policy Next |
-| Toolset hash and regeneration diff         | Makes GEN-07 and ENT-01 observable in CI                                                       | **Now**                                                                                   |
-| `lint-tools` and a smoke eval in CI        | Turns tool-quality judgment into a repeatable check                                            | Next                                                                                      |
-| Composite/intent tool definitions          | Curation beyond route mapping; cannot be produced by endpoint conversion                       | Next                                                                                      |
+| Gap                                        | Why it matters                                                                                                        | Status                                                                                    |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Runnable example and getting-started guide | `examples/petstore` and `docs/getting-started.md` provide a built, Inspector-verified path from contract to tool call | Done                                                                                      |
+| Code-first authoring for non-OpenAPI tools | The runtime accepts arbitrary tools, but there is no supported scaffold or schema-lowering path                       | **Next** (M8)                                                                             |
+| Output projection and token budget         | The quality differentiator; also the open half of SEC-05                                                              | Done (runtime hook, budget, and declarative field projection); generated-tool policy Next |
+| Toolset hash and regeneration diff         | Makes GEN-07 and ENT-01 observable in CI                                                                              | **Now**                                                                                   |
+| `lint-tools` and a smoke eval in CI        | Turns tool-quality judgment into a repeatable check                                                                   | Next                                                                                      |
+| Composite/intent tool definitions          | Curation beyond route mapping; cannot be produced by endpoint conversion                                              | Next                                                                                      |
 
 ## Re-evaluation triggers
 
@@ -120,6 +122,7 @@ Review the deferred rows when any of these occurs:
 - An OAuth-protected API becomes a target contract.
 - The first generated server is exported (M7).
 - A tenant, enterprise, or hosted-service requirement is raised.
+- A declarative tool builder or admin UI is proposed (post-1.0; requires an ADR).
 - Any deferred risk is reproduced with a failing test.
 
 When a trigger fires, move the item into `ROADMAP.md` as an acceptance

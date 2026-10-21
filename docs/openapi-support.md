@@ -4,9 +4,70 @@
 
 ChainMcp targets OpenAPI 3.0 and 3.1, subject to the support matrix established by implementation and tests.
 
+## Current implementation (2026-10-21)
+
+`@chainmcp/compiler` implements the parsing, validation, and metadata slices
+of Milestone 3, and `@chainmcp/executor` implements the first bounded HTTP
+execution slice.
+
+The compiler:
+
+- Parses one YAML or JSON document with the YAML 1.2 core schema, rejecting
+  duplicate keys, multiple documents, non-JSON values, deep nesting, cycles,
+  and sources above the configured byte limit.
+- Validates the OpenAPI version, `info`, `paths`, path items, operations,
+  parameters, JSON request bodies, response objects, and security structures.
+- Resolves local `$ref`s only, with depth and cycle limits. Remote references
+  are rejected rather than fetched.
+- Enumerates eligible operations in deterministic path and method order.
+- Generates runtime-compatible tool names from `operationId` or a method/path
+  fallback, normalizes invalid characters, and reports collisions. Strict mode
+  rejects a collision; permissive mode renames it with a warning.
+- Builds an object-root input schema from path/query/header parameters and a
+  JSON request body mapped to a `body` property. The root rejects undeclared
+  properties with `additionalProperties: false`. Records sorted parameter
+  bindings and the selected request-body media type for execution.
+- Translates OpenAPI 3.0 `nullable` into a `"null"` type union (and adds `null`
+  to `enum`), preserves OpenAPI 3.1 null unions, normalizes 3.0 boolean
+  exclusive bounds to numeric JSON Schema bounds, and drops `readOnly`
+  properties from request inputs.
+- Preserves supported validation constraints in generated input schemas:
+  `minLength`, `maxLength`, `pattern`, `format`, `minimum`, `maximum`,
+  `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `minItems`, `maxItems`,
+  `uniqueItems`, `minProperties`, and `maxProperties`.
+- Flattens an `allOf` of object schemas into one object schema when the
+  intersection is semantics-preserving, resolving nested local `$ref`s.
+  Incompatible properties, non-object members, sibling validation keywords, and
+  input `oneOf`/`anyOf`/`not`/conditional composition are rejected.
+- Audits every input schema with `auditInputSchema` and refuses to emit an
+  operation the runtime cannot enforce.
+- Maps declared responses as metadata: status keys, descriptions, the selected
+  media type, and translated response schemas. OpenAPI 3.1 status ranges are
+  supported; 3.0 ranges are rejected. Non-JSON-only content is recorded with a
+  warning and no schema. `headers` and `links` are not mapped.
+- Translates response schemas descriptively without generating or applying an
+  output validator: local `$ref`s are resolved, 3.0 nullability is translated,
+  `writeOnly` properties are omitted, and composition keywords such as
+  `oneOf`, `anyOf`, and `not` are preserved.
+- Preserves security schemes and OR/AND requirement structure, and derives an
+  explicit `authentication` policy per operation: OR alternatives, AND scheme
+  sets, copied credential metadata, sorted/deduplicated scopes, and preserved
+  anonymous alternatives. It rejects scopes on non-OAuth/OIDC schemes. It does
+  not enforce the policy or inject credentials yet.
+- Emits `sourceHash`, `contractRevision`, a deterministic manifest with
+  `toolsetHash` and per-tool hashes, and `diffManifests()` for regeneration
+  comparisons.
+
+The compiler output is operation metadata (`CompiledOperation`).
+`@chainmcp/executor` converts it into runnable `ToolDefinition`s with bounded
+Node HTTP/HTTPS, exact host allowlisting, private/metadata range blocking, DNS
+pinning, same-host redirect revalidation, response caps, and `context.signal`
+binding. Credential injection, authentication enforcement, response
+validation, CLI, and generated-server integration remain unimplemented.
+
 ## Compilation behavior
 
-The compiler should:
+The full compiler must:
 
 1. Parse and validate the source document.
 2. Resolve local references safely.
@@ -19,26 +80,29 @@ The compiler should:
 9. Produce a source hash and compiler version.
 10. Bind `context.signal` to generated upstream calls and release executor resources on abort or timeout.
 
+The compiler implements items 1-6 for the documented input subset and items
+8-9, and item 7 as unenforced metadata. `@chainmcp/executor` implements item 10
+for JSON HTTP operations. Response mapping is descriptive; output validation
+and credential injection remain open.
+
 ## Initial mapping
 
-| OpenAPI concept        | Intended MCP representation                 |
-| ---------------------- | ------------------------------------------- |
-| `operationId`          | Preferred tool-name source                  |
-| `summary`              | Tool description                            |
-| Path parameters        | Required input properties                   |
-| Query parameters       | Input properties                            |
-| Header parameters      | Policy-controlled inputs                    |
-| Request body           | Validated input object                      |
-| Security schemes       | Authentication policy                       |
-| Response schema        | Output validation and documentation         |
-| Deprecated operation   | Warning or exclusion based on configuration |
-| `nullable: true` (3.0) | `type` union containing `"null"`            |
+| OpenAPI concept        | Intended MCP representation                  |
+| ---------------------- | -------------------------------------------- |
+| `operationId`          | Preferred tool-name source                   |
+| `summary`              | Tool description                             |
+| Path parameters        | Required input properties                    |
+| Query parameters       | Input properties                             |
+| Header parameters      | Policy-controlled inputs                     |
+| Request body           | Validated input object                       |
+| Security schemes       | Authentication policy                        |
+| Response schema        | Output metadata (validation not implemented) |
+| Deprecated operation   | Warning or exclusion based on configuration  |
+| `nullable: true` (3.0) | `type` union containing `"null"`             |
 
 ### OpenAPI 3.0 `nullable`
 
-The compiler is not implemented yet; this section records the required translation so it is not lost.
-
-OpenAPI 3.0 expresses nullability with `nullable: true`, while the runtime validates only the JSON Schema union form (`type: ["string", "null"]`). `auditInputSchema` rejects `nullable` as an unsupported keyword, so an untranslated schema fails closed at registration with `CONTRACT_INVALID` rather than silently dropping the constraint.
+The compiler implements this translation. OpenAPI 3.0 expresses nullability with `nullable: true`, while the runtime validates only the JSON Schema union form (`type: ["string", "null"]`). `auditInputSchema` rejects `nullable` as an unsupported keyword, so an untranslated schema would fail closed at registration with `CONTRACT_INVALID` rather than silently dropping the constraint.
 
 The compiler must translate before auditing:
 
@@ -55,6 +119,12 @@ Cover the 3.0 and 3.1 forms with fixtures so the two paths are tested separately
 
 The compiler must not silently weaken validation when it encounters unsupported schema features. It should fail in strict mode or emit explicit diagnostics in permissive mode.
 
+Current status: the runtime-supported constraints listed above are preserved and enforced. Strict mode (the default) errors and omits the operation for unsupported input annotations such as `contentEncoding` and `contentMediaType`. Permissive mode drops only annotations that can be omitted without changing the supported subset and records a warning. Input `allOf` is flattened when every member is an object schema and merging is semantics-preserving; nested `$ref`s are resolved first. Incompatible or non-object `allOf` members, sibling validation keywords, `oneOf`, `anyOf`, `not`, conditionals, dependent and pattern schemas, schema-valued `additionalProperties`, tuple/boolean `items`, remote references, and unknown schema keywords remain errors in both modes because dropping or approximating them would accept values the contract rejects.
+
+Asserted `format` values are `date-time`, `date`, `time`, `email`, `hostname`, `ipv4`, `ipv6`, `uri`, and `uuid`. Other format strings are preserved as annotations, matching JSON Schema's default format-annotation behavior. `pattern` uses the linear-time `re2js` engine and is capped at 4,096 characters; invalid or unsupported regular expressions are rejected. `uniqueItems` uses a bounded structural comparison and fails closed when the comparison budget is exceeded.
+
+Response schemas are metadata, not a validation boundary. Their translation preserves composition and constraints that the runtime cannot enforce, because no output validator exists yet. When an output validator is added, it must reject or explicitly document those keywords rather than silently ignore them.
+
 Use `auditInputSchema` from `@chainmcp/core` on every generated tool input schema. It returns the same diagnostics the runtime enforces at registration, including stable codes and JSON-path locations. Do not emit a tool while its audit result is unsupported.
 
 ## Reference resolution
@@ -66,9 +136,48 @@ Use `auditInputSchema` from `@chainmcp/core` on every generated tool input schem
 - Apply SSRF controls to every external fetch.
 - Never execute code embedded in descriptions or extensions.
 
+Current status: local `#/...` references only, with per-compile depth, cycle, source-size, and operation-count limits. A remote or non-local reference is `REF_REMOTE_UNSUPPORTED`; the compiler performs no network or filesystem I/O.
+
+## Authentication policies
+
+Each operation receives `authentication: { alternatives, allowsAnonymous }` derived from the resolved operation-level or global `security` list. The top-level array is an OR list; each alternative's `schemes` array is an AND list. Scheme entries copy the credential-relevant definition (API key name/location, HTTP scheme and bearer format, OIDC URL, OAuth2 flows) and required scopes.
+
+- `{}` in a `security` list is an anonymous alternative and sets `allowsAnonymous: true`; it is never dropped.
+- An empty or absent `security` list produces `alternatives: []`, `allowsAnonymous: true`.
+- Scopes are deduplicated and sorted; scheme names are sorted inside an alternative.
+- Non-OAuth/OIDC schemes with non-empty scopes are rejected.
+- OAuth2 scopes must be declared by at least one flow; strict mode errors, permissive mode warns and preserves them. OIDC scopes cannot be validated offline.
+- The policy is not enforced and no upstream credentials are resolved. `operation.requiredScopes` stays empty because a flat list cannot represent OR/AND semantics.
+
+## Execution
+
+`@chainmcp/executor` maps path, query, header, and JSON body inputs using the
+compiled bindings. Arrays in query parameters are sent as repeated keys; header
+arrays are comma-joined. Scalars are strings, finite numbers, or booleans.
+Objects, arrays of objects, and `null` are rejected because `style`/`explode`
+are not retained. Cookie parameters, reserved credential/transport headers,
+non-JSON request bodies, and non-JSON responses are unsupported.
+
+Outbound controls are mandatory and not configurable per operation:
+
+- HTTPS is the default; plain HTTP requires `allowInsecureHttp`.
+- `allowedHosts` is exact. No wildcards, schemes, ports, or paths.
+- Every resolved IPv4/IPv6 address must be public; any loopback, private,
+  shared, link-local, metadata, multicast, documentation, or reserved answer
+  rejects the resolution.
+- The chosen address is pinned and the connected peer is checked.
+- Redirects stay on the same host, protocol, and port and are re-resolved.
+- Response headers and bytes, request bytes, URL length, request headers, and
+  total duration are capped.
+- `context.signal` aborts the HTTP request; timers and listeners are released.
+- No inbound authorization, cookie, or identity header is forwarded. Upstream
+  credentials are not implemented yet.
+
 ## Tool naming
 
 Names must be deterministic, unique, and compatible with the MCP SDK's validation rules. Resolve collisions predictably and report any renaming.
+
+Current status: `operationId` is preferred, normalized to `[A-Za-z0-9_-]{1,64}` and reported when normalization changes it. Missing IDs fall back to `<method>_<path segments>`. In strict mode a collision is an error and the later operation is omitted; in permissive mode the later operation receives a deterministic numeric suffix and a warning. Collision order follows sorted paths and a fixed method order.
 
 ## Testing
 
@@ -81,5 +190,9 @@ Maintain fixtures for:
 - Authentication schemes.
 - Read and write operations.
 - Invalid documents and unsupported schema constructs.
+
+Current fixtures live in `packages/compiler/tests/fixtures/`. The deterministic compiler suite covers both versions, nullable translation, local and circular references, remote-reference refusal, tool-name collisions, security OR/AND structure and authentication policies (including anonymous alternatives, scope validation, OIDC, and mutual TLS), supported and unsupported schema constructs in both modes, parameter/body mapping, `allOf` flattening, response mapping (including `$ref` responses, 3.1 ranges, non-JSON content, and output composition), limits, and manifest diffs. Core tests cover constraint enforcement, Unicode length counting, structural uniqueness, format assertions, and invalid constraint declarations. Executor tests cover destination classification, DNS pinning inputs, request mapping, redirect rules, response caps, JSON handling, timeouts, cancellation, and a local Node HTTP transport; they do not use production endpoints.
+
+The `examples/petstore` project exercises compilation, executor binding, runtime validation, and stdio MCP serving end to end with a deterministic mock upstream. `pnpm conformance:inspector` runs the MCP Inspector CLI against the built example and asserts both `tools/list` and `tools/call`; CI runs that check in a separate Node.js 22.19.0 job.
 
 Document actual compatibility based on tests rather than assumptions.
