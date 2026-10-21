@@ -287,6 +287,8 @@ const SAFE_RUNTIME_ERROR_MESSAGES: Record<RuntimeErrorCode, string> = {
   INPUT_INVALID: "Invalid tool arguments",
   AUTH_FORBIDDEN: "Access denied",
   RATE_LIMITED: "Rate limit exceeded",
+  OUTPUT_POLICY_VIOLATION: "Tool output was rejected by policy",
+  OUTPUT_LIMIT_EXCEEDED: "Tool output exceeded the configured limit",
   CANCELLED: "Tool call cancelled",
   UPSTREAM_TIMEOUT: "Tool call timed out",
   TOOL_NOT_FOUND: "Tool not found",

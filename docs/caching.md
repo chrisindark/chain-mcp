@@ -3,8 +3,8 @@
 ChainMcp can cache idempotent read results. Caching is **off by default** at
 three levels: a tool must opt in, the runtime must be given a store, and the
 deployment must supply an authorization partition. This page describes the
-implemented Milestone 4 slice; see `ROADMAP.md` for what remains (Redis, field
-projection, output policy, and token accounting).
+implemented Milestone 4 slice; see `ROADMAP.md` for what remains (Redis and
+other shared stores, bulk invalidation, and request coalescing).
 
 ## Enabling caching
 
@@ -58,13 +58,16 @@ do it.
 
 ```
 identity -> authorization -> validation -> rate limit
-         -> cache key -> cache read -> execute -> cache write
+         -> cache key -> cache read -> execute
+         -> output projection -> token budget -> cache write -> measure
 ```
 
 A cache hit never skips identity resolution, authorization, validation, or the
 rate limiter. Those stages run on every call, so a cached response is never
-served to a caller who would have been denied. Output projection and token
-accounting are not implemented yet.
+served to a caller who would have been denied. A hit does skip execution,
+projection, and the budget check because the entry was already projected and
+checked when it was written. Projection and budget failures happen before the
+cache write, so the raw or over-budget result is never stored.
 
 ## What the key includes
 
@@ -110,10 +113,37 @@ Cache problems degrade rather than fail:
 | Cache write rejects (including TTL over a cap) | Return the result; do not cache |
 | Tool throws                                    | Return the error; do not cache. |
 | Tool returns `undefined`                       | Return it; do not cache.        |
+| Output projection fails                        | Fail the call; do not cache.    |
+| Token budget is exceeded or uncountable        | Fail the call; do not cache.    |
 
 A cached value is returned without re-running the tool or its input validation.
 Store adapters must return isolated values so callers cannot mutate retained
 state. `InMemoryCacheStore` parses a fresh JSON copy per hit.
+
+## Projection before caching
+
+A tool that declares `output` is projected by the runtime's `ResultProjector`
+before the cache write. Only the projected value is stored, so a later hit
+cannot expose fields the projector removed. The first invocation returns the
+projected value too: projection is not applied only on writes.
+
+A projection that throws, returns `undefined`, or returns a value that cannot be
+JSON-serialized fails with `OUTPUT_POLICY_VIOLATION`; the raw result is never a
+fallback. A tool with `output.maxTokens` is also counted after projection; an
+over-budget result fails with `OUTPUT_LIMIT_EXCEEDED`, and an unverifiable count
+fails with `OUTPUT_POLICY_VIOLATION`. Neither failure writes to the cache.
+See `docs/token-accounting.md` and ADR 0012.
+
+Projection may depend on the caller context. The cache key already includes the
+tenant, principal, and authorization partition, but if the projector varies with
+any other caller attribute, include it in `authorizationPartition` (or bypass
+caching); otherwise a projected value can be served to a caller whose projection
+should differ.
+
+Projection policy is not part of the cache key. If you enable, change, or remove
+a projector or budget for a tool that uses a shared/persistent store, invalidate
+its namespace or bump `contractRevision`; otherwise an entry written under the
+old policy can still be served until it expires.
 
 ## Observability
 
@@ -189,13 +219,16 @@ accessors, define a callable `toJSON`, nest deeper than 64 levels, or exceed
 - The store is trusted infrastructure. A compromised store can return arbitrary
   values; adapter reads must return isolated values.
 - Do not cache mutations, credentials, or per-request authorization decisions.
+- Cache only projected results for tools that declare `output`. Never write the
+  raw result first and project on read.
+- A shared/persistent store can outlive a projection-policy change. Rotate the
+  namespace or revision when projection changes.
 
 ## Not implemented yet
 
 - Redis or other shared stores.
-- Field projection and output-level policy applied before caching (SEC-05).
-- Token budgeting, tokenizer adapters, and exact-versus-estimated accounting.
-- Token metrics (cache hit/miss/bypass is recorded).
+- A declarative field-selection policy; projection is a deployment-supplied hook.
 - Bulk or predicate cache invalidation.
 - Request coalescing and cache-I/O timeouts (distributed adapters must bound
   their own latency).
+- Per-content-block token measurement and aggregated token/cache exporters.

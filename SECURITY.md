@@ -63,7 +63,10 @@ The implementation must address:
 - Require cache adapters to return isolated values so a caller cannot mutate stored state.
 - Expose cache invalidation only to trusted operator code; it is not an MCP tool and must not become an authorization bypass.
 - Record cache hit/miss/bypass outcomes without including keys, arguments, or cached values in telemetry.
-- Run tokenizer adapters in-process or inside a trusted boundary. Do not forward serialized results to a third party for counting, and never record payload text in telemetry.
+- Apply opt-in output projection and token budgets before writing to the cache or returning a result. Cache only the projected value; never write the raw result first and project on read.
+- Treat projection failures, unserializable projections, and unverifiable budgets as fail-closed errors. Never fall back to the raw result or return an over-budget value.
+- Do not treat output projection as authorization: it runs only after authorization and does not grant access. Define field-level policy in trusted deployment code and test it against unauthorized callers.
+- Run tokenizer and projector adapters in-process or inside a trusted boundary. Do not forward serialized results to a third party for counting, and never record payload text in telemetry.
 - Never label an estimated token count as exact, and never promise savings from an estimate without a documented baseline.
 
 ### Analytics

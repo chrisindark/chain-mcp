@@ -50,6 +50,20 @@ export interface ToolCachePolicy {
   ttlSeconds: number;
 }
 
+export interface ToolOutputPolicy {
+  maxTokens?: number;
+}
+
+export interface ResultProjectionRequest {
+  tool: ToolDefinition;
+  context: ToolContext;
+  result: unknown;
+}
+
+export interface ResultProjector {
+  project(request: ResultProjectionRequest): unknown;
+}
+
 export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   name: string;
   description: string;
@@ -57,6 +71,7 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   operation: OperationPolicy;
   contractRevision?: string;
   cache?: ToolCachePolicy;
+  output?: ToolOutputPolicy;
   ownerTenantId?: string;
   execute(input: TInput, context: ToolContext): Promise<TOutput>;
 }
@@ -74,7 +89,14 @@ blank, or non-finite TTL with `CONTRACT_INVALID`. Declaring `cache` does not
 enable caching by itself: the runtime must also be constructed with
 `RuntimeOptions.cache` (ADR 0010).
 
-`@chainmcp/core` currently provides `InMemoryToolRuntime`, which validates a documented JSON Schema subset, invokes an optional `Authorizer`, then an optional `RateLimiter`, reads the cache for eligible tools, and executes the tool. `RateLimiter.check` returns an explicit decision; only a denial is counted as rate limiting. Cancellation is cooperative: the runtime aborts a per-call signal and stops waiting on caller cancellation or timeout, but executors must bind that signal to their own abortable I/O and release resources. Calls have a 15-second default timeout, configurable through `RuntimeOptions.defaultTimeoutMs` or per tool. `InMemoryCacheStore` is available as a bounded standalone adapter and can be supplied as the runtime cache store; caching still requires per-tool opt-in. Metrics failures are ignored so they do not change tool results.
+`output` opts a tool into deployment-supplied output projection and an optional
+token budget. Presence of `output` is the opt-in; `maxTokens` is optional.
+Registration requires the runtime to have a `ResultProjector` for any declared
+output policy, and a `Tokenizer` when `maxTokens` is set. A missing projector,
+missing tokenizer, or non-positive/non-integer `maxTokens` is
+`CONTRACT_INVALID`, not a silent no-op (ADR 0012).
+
+`@chainmcp/core` currently provides `InMemoryToolRuntime`, which validates a documented JSON Schema subset, invokes an optional `Authorizer`, then an optional `RateLimiter`, reads the cache for eligible tools, executes the tool, applies opt-in output projection and its token budget, writes the projected result to the cache, and measures it. `RateLimiter.check` returns an explicit decision; only a denial is counted as rate limiting. Cancellation is cooperative: the runtime aborts a per-call signal and stops waiting on caller cancellation or timeout, but executors must bind that signal to their own abortable I/O and release resources. Calls have a 15-second default timeout, configurable through `RuntimeOptions.defaultTimeoutMs` or per tool. `InMemoryCacheStore` is available as a bounded standalone adapter and can be supplied as the runtime cache store; caching still requires per-tool opt-in. Metrics failures are ignored so they do not change tool results.
 
 The validator supports `type` (a string or non-empty array of strings), primitive `enum` (string, boolean, null, and finite number values), `required`, `properties`, boolean `additionalProperties`, and object-form `items`. Object keywords (`required`, `properties`, `additionalProperties`) and array `items` are enforced whenever the value has the corresponding JSON kind, including schemas that omit `type`. `additionalProperties` defaults to `true`, so unknown object keys are passed to `execute` untouched; tool implementations must treat them as untrusted input. Keys are compared as own properties, so a key named after an `Object.prototype` member (for example `toString`, `constructor`, or `__proto__`) is treated as undeclared and cannot satisfy `required`. At most 20 issues are reported per call; the message ends with a truncation marker when more were found.
 
@@ -169,23 +191,26 @@ Untyped factory failures fail closed as `AUTH_FORBIDDEN`. A typed
 normal invocation metric; when tenant resolution did not complete, that event
 uses `tenantId: "unknown"`.
 
-`RuntimeError` currently includes `TOOL_NOT_FOUND`, `TOOL_ALREADY_REGISTERED`, `CONFIG_INVALID` (tenant mode, tenant pinning, tenant-binding violations, or malformed runtime cache/tokenizer options), `CONTRACT_INVALID` (registration-time schema or cache-metadata rejection), `INPUT_INVALID`, `AUTH_REQUIRED` (identity missing where it is required, such as a multi-tenant listing), `AUTH_FORBIDDEN`, `RATE_LIMITED`, `CANCELLED`, `UPSTREAM_TIMEOUT`, and `UPSTREAM_FAILURE`. The runtime does not implement a concrete authorization or rate-limit policy, so `OperationPolicy.requiredScopes` remains policy data for adapters to enforce.
+`RuntimeError` currently includes `TOOL_NOT_FOUND`, `TOOL_ALREADY_REGISTERED`, `CONFIG_INVALID` (tenant mode, tenant pinning, tenant-binding violations, or malformed runtime cache/tokenizer/projector options), `CONTRACT_INVALID` (registration-time schema, cache-metadata, or output-policy rejection), `INPUT_INVALID`, `AUTH_REQUIRED` (identity missing where it is required, such as a multi-tenant listing), `AUTH_FORBIDDEN`, `RATE_LIMITED`, `OUTPUT_POLICY_VIOLATION`, `OUTPUT_LIMIT_EXCEEDED`, `CANCELLED`, `UPSTREAM_TIMEOUT`, and `UPSTREAM_FAILURE`. The runtime does not implement a concrete authorization or rate-limit policy, so `OperationPolicy.requiredScopes` remains policy data for adapters to enforce.
 
 Failures are classified by invocation stage:
 
-| Stage               | Adapter outcome                            | Runtime result                                                          |
-| ------------------- | ------------------------------------------ | ----------------------------------------------------------------------- |
-| Identity resolution | throws `RuntimeError`                      | Preserved, including its code and safe message.                         |
-| Identity resolution | throws anything else                       | `AUTH_FORBIDDEN` with the safe message `Access denied`; cause retained. |
-| Authorization       | throws `RuntimeError`                      | Preserved, including its code and safe message.                         |
-| Authorization       | throws anything else                       | `AUTH_FORBIDDEN` with the safe message `Access denied`; cause retained. |
-| Validation          | schema mismatch                            | `INPUT_INVALID`.                                                        |
-| Rate limiting       | returns `{ allowed: false }`               | `RATE_LIMITED`.                                                         |
-| Rate limiting       | returns no decision or a malformed one     | `UPSTREAM_FAILURE`; the call is not allowed.                            |
-| Rate limiting       | throws `RuntimeError` (not `RATE_LIMITED`) | Preserved.                                                              |
-| Rate limiting       | throws `RATE_LIMITED` or anything else     | `UPSTREAM_FAILURE` with a limiter-failure message; cause retained.      |
-| Execution           | throws `RuntimeError`                      | Preserved.                                                              |
-| Execution           | throws anything else                       | `UPSTREAM_FAILURE` with `Tool '<name>' failed`; cause retained.         |
+| Stage               | Adapter outcome                              | Runtime result                                                                  |
+| ------------------- | -------------------------------------------- | ------------------------------------------------------------------------------- |
+| Identity resolution | throws `RuntimeError`                        | Preserved, including its code and safe message.                                 |
+| Identity resolution | throws anything else                         | `AUTH_FORBIDDEN` with the safe message `Access denied`; cause retained.         |
+| Authorization       | throws `RuntimeError`                        | Preserved, including its code and safe message.                                 |
+| Authorization       | throws anything else                         | `AUTH_FORBIDDEN` with the safe message `Access denied`; cause retained.         |
+| Validation          | schema mismatch                              | `INPUT_INVALID`.                                                                |
+| Rate limiting       | returns `{ allowed: false }`                 | `RATE_LIMITED`.                                                                 |
+| Rate limiting       | returns no decision or a malformed one       | `UPSTREAM_FAILURE`; the call is not allowed.                                    |
+| Rate limiting       | throws `RuntimeError` (not `RATE_LIMITED`)   | Preserved.                                                                      |
+| Rate limiting       | throws `RATE_LIMITED` or anything else       | `UPSTREAM_FAILURE` with a limiter-failure message; cause retained.              |
+| Execution           | throws `RuntimeError`                        | Preserved.                                                                      |
+| Execution           | throws anything else                         | `UPSTREAM_FAILURE` with `Tool '<name>' failed`; cause retained.                 |
+| Projection          | returns a non-JSON value or projector throws | `OUTPUT_POLICY_VIOLATION`; cause retained. A typed `RuntimeError` is preserved. |
+| Projection          | token count fails or is invalid              | `OUTPUT_POLICY_VIOLATION` when a budget is enforced.                            |
+| Projection          | count exceeds `maxTokens`                    | `OUTPUT_LIMIT_EXCEEDED`; the result is not returned or cached.                  |
 
 Causes are retained for protected diagnostics and are never included in the client message or in `RuntimeEvent`. Authorization runs before validation so an unauthorized caller cannot probe the tool schema.
 
@@ -294,6 +319,54 @@ caller cannot invalidate another tenant's entry and learns nothing beyond
 cache-eligible, or the partition/key cannot be derived. Store deletion failures
 propagate so an operator can see that invalidation did not succeed.
 
+### Output projection and token budgets
+
+```ts
+export interface ResultProjectionRequest {
+  tool: ToolDefinition;
+  context: ToolContext;
+  result: unknown;
+}
+
+export interface ResultProjector {
+  project(request: ResultProjectionRequest): unknown;
+}
+
+export interface ToolOutputPolicy {
+  maxTokens?: number;
+}
+```
+
+`RuntimeOptions.projector` supplies the deployment's output policy. It runs only
+for tools that declare `output`, after `execute` and before any cache write,
+token measurement, or return. The projector receives the resolved tool, caller
+context, and raw result, and returns the value the caller and model may see —
+typically after removing fields the caller is not authorized to receive. The
+runtime enforces the process; it does not decide which fields are safe.
+
+A projected result must have a JSON representation. `undefined`, cyclic values,
+`BigInt`, a thenable (an `async` projector), and a projector that throws fail
+closed with `OUTPUT_POLICY_VIOLATION`; a thrown `RuntimeError` is preserved. A
+thenable is rejected rather than serialized as `{}`. The raw result is never
+returned as a fallback, and a failed projection is never cached.
+
+When `maxTokens` is present, the runtime counts tokens in the serialized
+projected result with `RuntimeOptions.tokenizer` and rejects a count above the
+budget with `OUTPUT_LIMIT_EXCEEDED`. A tokenizer that throws or returns a
+negative, fractional, non-finite, or unsafe count also fails closed with
+`OUTPUT_POLICY_VIOLATION`, because the budget cannot be verified. The count is
+recorded as `tokenUsage` with the adapter's exact/estimate label. Budgets are
+integers in the adapter's token units; with an `estimate` adapter the limit is
+only as accurate as the estimate.
+
+On a cache hit, the stored value is already projected and budget-checked, so the
+projector and budget are not re-run. Cached entries therefore contain only
+projected output. Changing a projector, a budget, or a tool's `output` policy
+does not change cache keys: invalidate the namespace or bump `contractRevision`
+when deploying a policy change, or a shared cache may serve entries produced
+under the previous policy. A projector and tokenizer run synchronously and
+in-process; see `docs/adr/0012-output-projection-and-token-budgets.md`.
+
 ## Cache interface
 
 ```ts
@@ -378,10 +451,15 @@ uses; a heuristic must declare `estimate`. No tokenizer is bundled.
 Measurement runs on every successful call, including cache hits, and never on
 failures. It is skipped when the result has no JSON representation (for example
 `undefined` or a cycle), when the adapter throws, or when it returns an unusable
-count; the invocation still succeeds and `tokenUsage` is omitted. Tokenizers run
-in-process and synchronously in this milestone, so a remote counter must be
-fronted by a local adapter. Counts are telemetry only: token budgeting and
-response projection are not implemented.
+count; the invocation still succeeds and `tokenUsage` is omitted. Tools that
+opt into `output` are stricter: an unserializable projection fails closed, and a
+budgeted tool's unverifiable count fails closed instead of being omitted.
+Tokenizers run in-process and synchronously in this milestone, so a remote
+counter must be fronted by a local adapter. Counts are telemetry for tools
+without a budget. For a tool with `output.maxTokens`, the same count enforces the
+budget before the result is cached or returned. Projection is applied before
+measurement, so `tokenUsage` describes the value the model would receive, not the
+raw upstream result.
 
 The runtime emits one event for every `callTool` that finds a callable tool, regardless of success or failure. Calls rejected with `TOOL_NOT_FOUND` do not emit an event: single-tenant runtimes reject unknown tools before the event is created, and in multi-tenant mode unresolved tools (unknown or outside the caller's tenant) are the same observable miss, so metrics timing cannot be used to enumerate another tenant's tools. Pinned single-tenant cross-tenant denials do emit an event with `AUTH_FORBIDDEN`. `timestamp` (epoch milliseconds) is read from `RuntimeOptions.now`, which defaults to `Date.now`. `durationMs` is measured with the monotonic `RuntimeOptions.monotonicNow`, which defaults to `performance.now`, so wall-clock adjustments cannot distort or invert a duration. Both clocks are injectable for deterministic tests. See `docs/adr/0007-wall-clock-and-monotonic-duration.md`.
 
@@ -469,6 +547,8 @@ Public-facing errors use stable codes such as:
 - `AUTH_REQUIRED`
 - `AUTH_FORBIDDEN`
 - `RATE_LIMITED`
+- `OUTPUT_POLICY_VIOLATION`
+- `OUTPUT_LIMIT_EXCEEDED`
 - `UPSTREAM_TIMEOUT`
 - `UPSTREAM_FAILURE`
 - `RESPONSE_TOO_LARGE`
