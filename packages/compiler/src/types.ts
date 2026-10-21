@@ -91,8 +91,25 @@ export interface CompiledSecurityScheme {
 }
 
 /**
- * Declared response metadata. Response schemas are descriptive: the runtime
- * does not validate upstream payloads against them yet.
+ * Parameter binding metadata needed to build an upstream request. The schema
+ * itself is represented in `inputSchema`; this record only says where an input
+ * value belongs.
+ */
+export interface CompiledParameter {
+  name: string;
+  in: "path" | "query" | "header";
+  required: boolean;
+}
+
+/** Request-body binding metadata for the `body` input property. */
+export interface CompiledRequestBody {
+  mediaType: string;
+  required: boolean;
+}
+
+/**
+ * Declared response metadata. Response schemas are descriptive: neither the
+ * compiler nor the executor validates upstream payloads against them yet.
  */
 export interface CompiledResponse {
   /** Exact status code, `default`, or a `1XX`-`5XX` range (OpenAPI 3.1). */
@@ -152,9 +169,9 @@ export interface CompiledAuthenticationPolicy {
 }
 
 /**
- * Compiler output metadata for one operation. This is not yet a runnable
- * `ToolDefinition`: upstream execution, credential injection, and outbound
- * destination policy are deferred to later Milestone 3 slices.
+ * Compiler output metadata for one operation. `@chainmcp/executor` can bind it
+ * to a runtime `ToolDefinition`; credential injection and response validation
+ * remain deferred.
  */
 export interface CompiledOperation {
   name: string;
@@ -167,6 +184,10 @@ export interface CompiledOperation {
   /** GET and HEAD are safe to consider for opt-in caching later. */
   readOnly: boolean;
   deprecated: boolean;
+  /** Path, query, and header parameter bindings sorted by input name. */
+  parameters: readonly CompiledParameter[];
+  /** Present when the operation accepts a JSON request body. */
+  requestBody?: CompiledRequestBody;
   /** Declared responses in deterministic status-key order. */
   responses: readonly CompiledResponse[];
   /** Resolved contract-level or operation-level security alternatives. */

@@ -16,6 +16,7 @@ const WORKSPACE_PACKAGES = [
   "packages/compiler/package.json",
   "packages/core/package.json",
   "packages/config/package.json",
+  "packages/executor/package.json",
   "packages/server/package.json",
 ];
 const ROOT_PACKAGE = "package.json";

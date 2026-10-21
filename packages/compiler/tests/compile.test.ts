@@ -105,8 +105,18 @@ describe("OpenAPI 3.0 compilation", () => {
       "limit",
     ]);
     expect(listPets?.inputSchema.required).toEqual([]);
+    expect(listPets?.parameters).toEqual([
+      { name: "X-Request-Id", in: "header", required: false },
+      { name: "limit", in: "query", required: false },
+    ]);
+    expect(listPets?.requestBody).toBeUndefined();
 
     const createPet = result.tools[1];
+    expect(createPet?.parameters).toEqual([]);
+    expect(createPet?.requestBody).toEqual({
+      mediaType: "application/json",
+      required: true,
+    });
     expect(createPet?.readOnly).toBe(false);
     const body = (createPet?.inputSchema.properties as ObjectMap)
       .body as ObjectMap;
@@ -125,6 +135,10 @@ describe("OpenAPI 3.0 compilation", () => {
       allowsAnonymous: true,
     });
     expect(getPet?.inputSchema.required).toEqual(["petId"]);
+    expect(getPet?.parameters).toEqual([
+      { name: "petId", in: "path", required: true },
+    ]);
+    expect(getPet?.requestBody).toBeUndefined();
     expect(getPet?.responses).toEqual([
       {
         status: "200",
@@ -1115,6 +1129,40 @@ describe("parameters and request bodies", () => {
       }),
     );
     expect(codes(authorization)).toContain("PARAMETER_UNSUPPORTED");
+
+    const contentType = compileDocument(
+      baseDocument({
+        "/x": {
+          get: operation({
+            parameters: [
+              {
+                name: "Content-Type",
+                in: "header",
+                schema: { type: "string" },
+              },
+            ],
+          }),
+        },
+      }),
+    );
+    expect(codes(contentType)).toContain("PARAMETER_UNSUPPORTED");
+
+    const expectHeader = compileDocument(
+      baseDocument({
+        "/x": {
+          get: operation({
+            parameters: [
+              {
+                name: "Expect",
+                in: "header",
+                schema: { type: "string" },
+              },
+            ],
+          }),
+        },
+      }),
+    );
+    expect(codes(expectHeader)).toContain("PARAMETER_UNSUPPORTED");
 
     const content = compileDocument(
       baseDocument({

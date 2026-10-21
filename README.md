@@ -15,7 +15,7 @@ is more than an API-to-MCP code generator: it is a reusable execution and policy
 
 ## Core capabilities
 
-- **Contract compilation:** OpenAPI 3.x to MCP tool definitions.
+- **Contract compilation and execution:** OpenAPI 3.x to MCP tool definitions with bounded upstream HTTP.
 - **Generated servers:** Portable projects that run independently.
 - **Dynamic gateway:** Load and serve multiple versioned API contracts.
 - **Token accounting:** Token counts or explicitly labeled estimates.
@@ -65,7 +65,7 @@ These are initial architectural choices and may change through documented archit
 ChainMcp
 begins as an early-stage project. Features are considered implemented only when the code, tests, documentation, and security requirements agree.
 
-The current workspace contains `@chainmcp/core` (an in-memory tool registry/runtime with input validation, injectable policy/telemetry interfaces, hashed cache keys, opt-in per-tool result caching, output projection and token budgets, token measurement, and a bounded in-memory store), `@chainmcp/config` (a strict Zod schema and parser for a small configuration subset), `@chainmcp/auth` (the default authorizer enforcing `operation.requiredScopes` against the caller's principal), `@chainmcp/cache-redis` (an optional shared Redis cache adapter), `@chainmcp/compiler` (an OpenAPI 3.0/3.1 parser and metadata compiler with local reference resolution, deterministic tool names, supported-schema translation, response metadata, explicit authentication policies, and generation manifests), and `@chainmcp/server` (an official TypeScript MCP SDK adapter with local stdio transport). Response schemas and authentication policies are compiled as unvalidated, unenforced metadata; an output validator, credential providers, upstream HTTP execution, CLI, network execution, distributed rate-limit adapters, shared stores other than Redis, remote MCP transports, and the gateway are not implemented.
+The current workspace contains `@chainmcp/core` (an in-memory tool registry/runtime with input validation, injectable policy/telemetry interfaces, hashed cache keys, opt-in per-tool result caching, output projection and token budgets, token measurement, and a bounded in-memory store), `@chainmcp/config` (a strict Zod schema and parser for a small configuration subset), `@chainmcp/auth` (the default authorizer enforcing `operation.requiredScopes` against the caller's principal), `@chainmcp/cache-redis` (an optional shared Redis cache adapter), `@chainmcp/compiler` (an OpenAPI 3.0/3.1 parser and metadata compiler with local reference resolution, deterministic tool names, supported-schema translation, parameter/request-body bindings, response metadata, explicit authentication policies, and generation manifests), `@chainmcp/executor` (a bounded Node HTTP/HTTPS executor with exact host allowlisting, DNS pinning, private/metadata range blocking, redirect revalidation, response caps, and cancellation binding), and `@chainmcp/server` (an official TypeScript MCP SDK adapter with local stdio transport). Response schemas and authentication policies are compiled as unvalidated, unenforced metadata. An output validator, credential providers and authentication enforcement, generated-server/CLI wiring, distributed rate-limit adapters, shared stores other than Redis, remote MCP transports, and the gateway are not implemented.
 
 Run `pnpm install` followed by `pnpm check` from the repository root to run formatting verification, lint, typecheck, unit tests, and builds.
 

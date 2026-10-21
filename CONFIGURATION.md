@@ -66,7 +66,7 @@ analytics:
 
 The implemented `@chainmcp/config` package exports `ChainMcpConfigSchema` and `parseConfig`. The currently supported subset is `version`, `name`, `server`, and `security` as described in the schema source and defaults. Unknown keys are rejected. The schema does not yet load YAML/files or map environment variables. Cache, token metrics, rate-limit, JSON-navigation, and analytics sections in the example remain target configuration and are not accepted by the current parser.
 
-The schema currently validates these values only; no server or network component consumes them yet. The optional `@chainmcp/cache-redis` adapter is constructed in deployment code and is not part of the config schema; `CHAINMCP_REDIS_URL` is not read by the current packages.
+The schema currently validates these values only. In particular, `security.allowedUpstreamHosts` is not wired into `@chainmcp/executor` yet: deployment code passes `allowedHosts` directly to `createUpstreamExecutor`. The optional `@chainmcp/cache-redis` adapter is constructed in deployment code and is not part of the config schema; `CHAINMCP_REDIS_URL` is not read by the current packages.
 
 ## 3. Environment variables
 

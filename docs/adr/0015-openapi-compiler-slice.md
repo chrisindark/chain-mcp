@@ -1,6 +1,6 @@
 # ADR 0015: OpenAPI compiler scope and deterministic manifests
 
-- Status: proposed; extended by ADRs 0016 and 0017
+- Status: proposed; extended by ADRs 0016, 0017, and 0018
 - Date: 2026-10-21
 
 ## Context
@@ -41,9 +41,10 @@ operation. Permissive mode may drop constraints that cannot weaken the
 supported subset, with a warning. Composition, remote references, unknown
 keywords, and schema-valued `additionalProperties` are always errors.
 
-The compiler emits metadata, not runnable `ToolDefinition`s. Executors,
-credential injection, destination policy, response-schema mapping, and
-Inspector conformance remain explicit Milestone 3 work.
+The compiler emits metadata, not runnable `ToolDefinition`s. ADR 0018 adds a
+bounded HTTP executor; credential injection, response-schema validation,
+generated-server wiring, and Inspector conformance remain explicit Milestone
+3/5 work.
 
 ## Alternatives considered
 
@@ -66,7 +67,8 @@ Inspector conformance remain explicit Milestone 3 work.
 ## Consequences
 
 - The compiler can be reviewed and tested without network access.
-- Consumers must not register compiled output as callable tools yet.
+- Consumers can register compiled output through `@chainmcp/executor` for JSON
+  HTTP operations without credentials; authentication enforcement remains open.
 - Response schemas, composed schemas, and explicit authentication policies are
   documented as unsupported or metadata-only.
 - Manifest hashes are stable for the same source and compiler version, so
@@ -84,7 +86,7 @@ Inspector conformance remain explicit Milestone 3 work.
 - Credential-bearing headers (`Authorization`, `Cookie`, and similar) are never
   exposed as tool inputs.
 - Security requirements are preserved, not silently discarded, but they are not
-  enforced until Milestone 5 and the executor slice.
+  enforced until the Milestone 5 credential slice.
 - Input size, document depth, node count, reference depth, and operation count
   are bounded.
 
@@ -96,6 +98,6 @@ Inspector conformance remain explicit Milestone 3 work.
 4. Generate explicit authentication policies from OR/AND requirements.
 5. Add an upstream executor with destination allowlisting, private-range and
    metadata blocking, redirect revalidation, response caps, and
-   `context.signal` binding.
+   `context.signal` binding. Implemented for JSON HTTP by ADR 0018.
 6. Validate generated tools with an MCP client and Inspector conformance.
 7. Add a runnable end-to-end example and CLI integration.

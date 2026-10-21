@@ -1,6 +1,6 @@
 # ADR 0017: Explicit authentication policy mapping
 
-- Status: proposed
+- Status: proposed; executor added by ADR 0018 without credential enforcement
 - Date: 2026-10-21
 
 ## Context
@@ -76,15 +76,16 @@ Derive a `CompiledAuthenticationPolicy` for every compiled operation:
 - Scopes and credential metadata are non-secret contract data. Actual
   credentials must remain separate from inbound identity and must never be
   embedded in generated metadata.
-- The policy does not authenticate anyone. Registering compiler output as a
-  callable tool still requires an executor and an authentication design.
+- The policy does not authenticate anyone. ADR 0018 adds an executor, but an
+  authentication and credential design is still required before callable tools
+  can use these alternatives.
 
 ## Follow-up actions
 
 1. Define how the executor consumes `authentication` and where credentials come
    from per scheme.
 2. Add outbound destination policy, redirect revalidation, response caps, and
-   `context.signal` binding.
+   `context.signal` binding. Implemented by ADR 0018 without credentials.
 3. Decide whether the runtime authorizer should enforce selected alternatives
    using principal scopes, or whether authentication belongs entirely to the
    executor.

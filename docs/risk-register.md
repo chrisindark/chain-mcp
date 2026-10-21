@@ -40,15 +40,15 @@ cross-cutting criteria, not as a separate backlog.
 
 ## Phase 1 — Security
 
-| ID     | Risk                                                      | Status                                                                                                                                                  | Disposition                | Target or trigger                                       |
-| ------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------- |
-| SEC-01 | Authenticate protected MCP endpoints                      | Not applicable: stdio only, no inbound HTTP                                                                                                             | Defer                      | Before any remote transport (M5)                        |
-| SEC-02 | Translate OpenAPI security schemes correctly              | Open                                                                                                                                                    | **Now**                    | M3                                                      |
-| SEC-03 | Robust OAuth discovery and token refresh                  | Open                                                                                                                                                    | Defer                      | Only when an OAuth-required API is a target (M5)        |
-| SEC-04 | Enforce tenant isolation and resource ownership           | Done in core and server (ADR 0008); gateway coverage open                                                                                               | Done / Defer               | Gateway path in M8                                      |
-| SEC-05 | Argument-level and output-level policy enforcement        | Partial: argument validation, operation scopes, output hook/budget, and built-in field projection are done; generated-tool contract policy remains open | **Now** (generated policy) | Runtime policy in M4; contract-level field policy in M6 |
-| SEC-06 | Block SSRF, unsafe redirects, and private-network targets | Open: no outbound HTTP exists yet                                                                                                                       | **Now**                    | Land with the first outbound HTTP call (M3)             |
-| SEC-07 | Explicit policy-denial errors and audit events            | Partial: typed denials and safe mapping done; audit events open                                                                                         | Defer (audit)              | M6                                                      |
+| ID     | Risk                                                      | Status                                                                                                                                                                          | Disposition                | Target or trigger                                       |
+| ------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------- |
+| SEC-01 | Authenticate protected MCP endpoints                      | Not applicable: stdio only, no inbound HTTP                                                                                                                                     | Defer                      | Before any remote transport (M5)                        |
+| SEC-02 | Translate OpenAPI security schemes correctly              | Partial: explicit OR/AND policy, credential metadata, and scope validation are compiled; enforcement and credentials are open                                                   | Done / Defer (enforcement) | M5 for enforcement                                      |
+| SEC-03 | Robust OAuth discovery and token refresh                  | Open                                                                                                                                                                            | Defer                      | Only when an OAuth-required API is a target (M5)        |
+| SEC-04 | Enforce tenant isolation and resource ownership           | Done in core and server (ADR 0008); gateway coverage open                                                                                                                       | Done / Defer               | Gateway path in M8                                      |
+| SEC-05 | Argument-level and output-level policy enforcement        | Partial: argument validation, operation scopes, output hook/budget, and built-in field projection are done; generated-tool contract policy remains open                         | **Now** (generated policy) | Runtime policy in M4; contract-level field policy in M6 |
+| SEC-06 | Block SSRF, unsafe redirects, and private-network targets | Done in `@chainmcp/executor` for HTTP: exact allowlist, public-address classification, DNS pinning/peer check, same-origin redirects, caps, signal; explicit proxy support open | Done / Defer (proxy)       | Proxy support when required                             |
+| SEC-07 | Explicit policy-denial errors and audit events            | Partial: typed denials and safe mapping done; audit events open                                                                                                                 | Defer (audit)              | M6                                                      |
 
 Notes:
 
@@ -62,15 +62,15 @@ Notes:
 
 ## Phase 2 — Tool generation
 
-| ID     | Risk                                                  | Status                                                           | Disposition | Target or trigger                     |
-| ------ | ----------------------------------------------------- | ---------------------------------------------------------------- | ----------- | ------------------------------------- |
-| GEN-01 | Resolve nested OpenAPI references and definitions     | Open                                                             | **Now**     | M3                                    |
-| GEN-02 | Preserve validation constraints and required fields   | Open: core validates a documented subset; compiler must preserve | **Now**     | M3                                    |
-| GEN-03 | Resolve per-operation server URLs safely              | Open                                                             | Defer       | After M3, tied to the SSRF allowlist  |
-| GEN-04 | Handle JSON, multipart, binary, and media types       | Open                                                             | Defer       | Post-M3; JSON only in the first slice |
-| GEN-05 | Validate MCP protocol conformance                     | Partial: SDK client/server pair tested; Inspector/CI check open  | **Now**     | M3 (conformance test, not a feature)  |
-| GEN-06 | Detect invalid schemas, circular refs, naming clashes | Partial: input-schema audit exists; compiler diagnostics open    | **Now**     | M3                                    |
-| GEN-07 | Make generated output deterministic and reproducible  | Open                                                             | **Now**     | M3; also satisfies ENT-01             |
+| ID     | Risk                                                  | Status                                                             | Disposition | Target or trigger                    |
+| ------ | ----------------------------------------------------- | ------------------------------------------------------------------ | ----------- | ------------------------------------ |
+| GEN-01 | Resolve nested OpenAPI references and definitions     | Done for local refs with cycle/depth limits; remote refs rejected  | Done        | Revisit if remote refs are required  |
+| GEN-02 | Preserve validation constraints and required fields   | Partial: input subset enforced; response schemas are metadata only | **Now**     | Output validator in M3/M6            |
+| GEN-03 | Resolve per-operation server URLs safely              | Open                                                               | Defer       | After M3, tied to the SSRF allowlist |
+| GEN-04 | Handle JSON, multipart, binary, and media types       | Partial: JSON inputs and responses only                            | Defer       | Post-M3; multipart/binary open       |
+| GEN-05 | Validate MCP protocol conformance                     | Partial: SDK client/server pair tested; Inspector/CI check open    | **Now**     | M3 (conformance test, not a feature) |
+| GEN-06 | Detect invalid schemas, circular refs, naming clashes | Done for compiler diagnostics and input-schema audit               | Done        | Revisit for Inspector feedback       |
+| GEN-07 | Make generated output deterministic and reproducible  | Done for compiler manifests and executor tool binding              | Done        | Regeneration CLI remains open        |
 
 ## Phase 3 — Runtime reliability
 

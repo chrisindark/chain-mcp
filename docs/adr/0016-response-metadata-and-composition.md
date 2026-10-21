@@ -1,6 +1,6 @@
 # ADR 0016: Response metadata and object composition
 
-- Status: proposed
+- Status: proposed; executor added by ADR 0018, output validation remains open
 - Date: 2026-10-21
 
 ## Context
@@ -9,8 +9,9 @@ ADR 0015 established an offline compiler slice that emitted operation metadata
 without response schemas or composed schemas. Contracts commonly declare
 response bodies, `writeOnly` fields, and `allOf` models. Leaving responses
 unmapped hides useful contract information, while pretending to validate
-outputs would overstate the runtime's capabilities: there is no executor, no
-output validator, and no response-cap policy yet.
+outputs would overstate the runtime's capabilities: at the time there was no
+executor, no output validator, and no response-cap policy. ADR 0018 later added
+an executor with response caps, but output validation is still unimplemented.
 
 The runtime validator supports only a small JSON Schema subset (objects,
 arrays, primitives, `enum`, `required`, `properties`, boolean
@@ -53,7 +54,7 @@ arrays, primitives, `enum`, `required`, `properties`, boolean
 
 ## Alternatives considered
 
-- **Generate an output validator now:** rejected because there is no executor,
+- **Generate an output validator now:** rejected because there was no executor,
   response-size cap, or output trust boundary yet. Adding a validator without
   those would create a false guarantee and a new denial-of-service surface.
 - **Preserve response schemas verbatim:** rejected because local references,
@@ -93,8 +94,8 @@ arrays, primitives, `enum`, `required`, `properties`, boolean
 
 ## Follow-up actions
 
-1. Add an output validator and apply it only after an executor with response caps
-   exists.
+1. Add an output validator and apply it after the executor response caps added
+   by ADR 0018.
 2. Extend the runtime validator to `oneOf`/`anyOf`/`not` if the product needs
    union inputs, then allow them in the compiler.
 3. Preserve supported numeric, string, and format constraints when the runtime
@@ -102,4 +103,4 @@ arrays, primitives, `enum`, `required`, `properties`, boolean
 4. Map explicit authentication policies from OR/AND requirements.
 5. Add the upstream executor with destination allowlisting, private-range and
    metadata blocking, redirect revalidation, response caps, and
-   `context.signal` binding.
+   `context.signal` binding. Implemented by ADR 0018.

@@ -87,10 +87,12 @@ Timeout and cancellation are cooperative. The runtime creates a per-call `AbortC
 ## 5. OpenAPI compiler
 
 `@chainmcp/compiler` converts one OpenAPI 3.0 or 3.1 document into deterministic
-operation metadata, including declared response schemas. The current slice is
-offline and emits `CompiledOperation` records, not runnable `ToolDefinition`s;
-execution, credentials, response validation, and outbound policy remain future
-work.
+operation metadata, including parameter bindings, request-body metadata,
+declared response schemas, and authentication policies. The compiler is offline
+and emits `CompiledOperation` records. `@chainmcp/executor` is the separate
+runtime slice that turns them into `ToolDefinition`s with bounded upstream HTTP
+I/O. Credentials, response validation, and generated-server wiring remain
+future work.
 
 The pipeline is:
 
@@ -104,9 +106,10 @@ The pipeline is:
    collisions, diagnostics, and hashes do not depend on source key order.
 5. Build an object-root input schema from path, query, and header parameters
    plus a JSON body mapped to a `body` property. Operation-level parameters
-   override path-level parameters by `(name, in)`. Flatten an `allOf` of object
-   schemas into one object schema only when properties, `required`, and
-   `additionalProperties` can be merged without changing the intersection.
+   override path-level parameters by `(name, in)`. Record sorted parameter
+   bindings and request-body media metadata for the executor. Flatten an `allOf`
+   of object schemas into one object schema only when properties, `required`,
+   and `additionalProperties` can be merged without changing the intersection.
 6. Translate OpenAPI 3.0 `nullable` and `readOnly` input semantics, preserve
    3.1 null unions, and audit the result with `auditInputSchema`.
 7. Map declared responses in status-key order with their selected media type and
@@ -115,8 +118,9 @@ The pipeline is:
    used to validate upstream payloads yet.
 8. Derive an explicit authentication policy: OR alternatives, AND scheme sets,
    copied credential metadata, required scopes, and preserved anonymous
-   alternatives. It is metadata; authentication, scope checks, and credential
-   injection are not enforced until the auth and executor slices exist.
+   alternatives. It is metadata; authentication and credential injection remain
+   unimplemented, while the executor added by ADR 0018 performs no credential
+   lookup or scope enforcement.
 9. Emit `sourceHash`, a canonical-document `contractRevision`, per-tool hashes,
    a `toolsetHash`, and `diffManifests()` output.
 
@@ -133,6 +137,34 @@ warning in permissive mode.
 Compilation performs no filesystem or network I/O and runs on the normal
 asynchronous request path without blocking APIs. The `chainmcp/no-blocking-io`
 lint rule enforces that invariant for runtime source.
+
+### Upstream executor
+
+`@chainmcp/executor` binds compiled metadata to the runtime. For each
+`CompiledOperation` it creates a `ToolDefinition` whose `execute`:
+
+1. Builds a URL from the configured base URL and the compiled path, filling path
+   parameters and appending query/header inputs according to the recorded
+   bindings. Inputs that cannot be serialized deterministically are rejected
+   rather than guessed at.
+2. Applies an exact destination allowlist, fixed protocol/port, and URL and
+   header size limits.
+3. Resolves every hostname, rejects the resolution if any IPv4/IPv6 answer is
+   non-public, pins one address in the HTTP lookup, and verifies the connected
+   peer.
+4. Sends a bounded request with no inbound credentials and no compression
+   request.
+5. Follows only same-host, same-protocol, same-port redirects, revalidating and
+   re-resolving every hop.
+6. Caps response headers and body bytes while streaming, requires UTF-8 JSON on
+   2xx, and maps failures to safe runtime errors.
+7. Binds `context.signal` and a total time budget to DNS waiting and HTTP I/O,
+   releasing listeners and timers in `finally`.
+
+The executor does not resolve upstream credentials, validate response schemas,
+retry requests, or honor proxy environment variables. A custom transport is
+trusted adapter code; the default Node transport is the component that pins DNS
+and verifies the peer.
 
 ## 6. Generated server mode
 

@@ -76,6 +76,15 @@ importers:
 
   packages/core: {}
 
+  packages/executor:
+    dependencies:
+      "@chainmcp/compiler":
+        specifier: workspace:*
+        version: link:../compiler
+      "@chainmcp/core":
+        specifier: workspace:*
+        version: link:../core
+
   packages/server:
     dependencies:
       "@chainmcp/core":

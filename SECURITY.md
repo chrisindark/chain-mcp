@@ -40,6 +40,14 @@ The implementation must address:
 - Enforce request and response byte limits.
 - Avoid forwarding inbound credentials to upstream hosts without explicit policy.
 
+Current implementation: `@chainmcp/executor` enforces exact host allowlists,
+HTTPS by default, public-address classification for every DNS answer, pinned
+lookups with peer verification, same-origin redirect revalidation, request and
+response caps, and cancellation binding. It performs no credential injection or
+authentication. The default transport does not honor proxy environment
+variables or decompress responses. These controls are covered by unit and local
+transport tests, not by a production security review.
+
 ### Authentication
 
 - Separate inbound MCP identity from upstream API credentials.

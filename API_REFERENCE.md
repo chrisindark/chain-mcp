@@ -537,7 +537,7 @@ The earlier target shape included `outcome: "cache_hit"` and optional `durationM
 
 ## `@chainmcp/compiler`
 
-`@chainmcp/compiler` parses and validates OpenAPI 3.0 and 3.1 documents and emits deterministic operation metadata, including declared response schemas. It does **not** emit runnable `ToolDefinition`s yet: upstream execution, credential injection, response validation, and outbound destination policy remain Milestone 3 work. Do not register compiler output as a callable tool until an executor slice exists.
+`@chainmcp/compiler` parses and validates OpenAPI 3.0 and 3.1 documents and emits deterministic operation metadata, including parameter bindings, request-body metadata, response schemas, and authentication policies. The compiler itself does not execute anything. `@chainmcp/executor` turns an emitted `CompiledOperation` into a runnable `ToolDefinition` with bounded upstream I/O and an explicit destination policy. Credential injection, response validation, and generated-server/CLI wiring remain unimplemented.
 
 ```ts
 export type OpenApiVersion = "3.0" | "3.1";
@@ -595,6 +595,17 @@ export interface CompiledAuthenticationPolicy {
   allowsAnonymous: boolean;
 }
 
+export interface CompiledParameter {
+  name: string;
+  in: "path" | "query" | "header";
+  required: boolean;
+}
+
+export interface CompiledRequestBody {
+  mediaType: string;
+  required: boolean;
+}
+
 export interface CompiledResponse {
   status: string;
   description: string;
@@ -612,6 +623,8 @@ export interface CompiledOperation {
   operationId?: string;
   readOnly: boolean;
   deprecated: boolean;
+  parameters: readonly CompiledParameter[];
+  requestBody?: CompiledRequestBody;
   responses: readonly CompiledResponse[];
   security: readonly SecurityRequirement[];
   authentication: CompiledAuthenticationPolicy;
@@ -671,6 +684,7 @@ Supported input construction:
 - JSON request bodies (`application/json` or an `application/*+json` media type) become one `body` input property, required when `requestBody.required` is true. A parameter named `body` collides and is rejected.
 - The root input schema is always `type: "object"` with `additionalProperties: false`; property and `required` ordering is sorted for determinism.
 - `readOnly` properties are omitted from inputs and from `required`.
+- Each operation records `parameters` (name, `path`/`query`/`header` location, and required flag) sorted by input name. When a JSON request body exists, `requestBody` records the selected media type and required flag. These bindings are metadata for an executor; the input schema remains the validation boundary.
 
 Response mapping:
 
@@ -689,11 +703,139 @@ Security schemes and raw requirements are preserved, and each operation also rec
 - A non-OAuth/OIDC scheme that declares scopes is rejected with `SECURITY_REQUIREMENT_INVALID`. OAuth2 scopes must appear in at least one declared flow in strict mode (error) or produce a warning in permissive mode. OpenID Connect scopes cannot be checked offline and are preserved.
 - If the document-level `security` list is invalid, no operations are emitted. Every operation inherits it, so emitting tools would silently drop authentication.
 
-The policy is compiler metadata, not enforcement. `operation.requiredScopes` remains empty because flattening OR alternatives or AND scopes into one list would misrepresent the contract; auth adapters and the future executor must interpret `authentication`.
+The policy is compiler metadata, not enforcement. `operation.requiredScopes` remains empty because flattening OR alternatives or AND scopes into one list would misrepresent the contract; auth adapters must interpret `authentication`. The current executor does not resolve credentials or enforce this policy.
 
-`sourceHash` hashes the exact source text. `contractRevision` hashes the canonical parsed document plus `COMPILER_VERSION`; semantically equivalent key ordering therefore produces the same revision, while compiler changes produce a new revision. `manifest.tools` records a hash per emitted operation (including response metadata), `toolsetHash` hashes the compiler version, contract revision, and all tool hashes, and `diffManifests` reports added, removed, changed, and unchanged names between two manifests. No timestamps are included, so the same source and compiler version produce the same manifest.
+`sourceHash` hashes the exact source text. `contractRevision` hashes the canonical parsed document plus `COMPILER_VERSION`; semantically equivalent key ordering therefore produces the same revision, while compiler changes produce a new revision. `manifest.tools` records a hash per emitted operation (including parameter bindings, request-body metadata, response metadata, and authentication), `toolsetHash` hashes the compiler version, contract revision, and all tool hashes, and `diffManifests` reports added, removed, changed, and unchanged names between two manifests. No timestamps are included, so the same source and compiler version produce the same manifest.
 
-Known limitations: response schemas are unvalidated metadata and no output validator is generated; authentication policies are not enforced and no credentials are injected; no executor or upstream HTTP policy; no remote references; input `oneOf`, `anyOf`, `not`, conditional, dependent, and pattern composition is rejected; `allOf` supports object intersections only; no numeric/string/format constraint enforcement beyond the runtime subset; no YAML merge-key support; and no regeneration command that reads/writes a manifest. The compiler is not wired into the CLI or generated-server flow yet.
+Known limitations: response schemas are unvalidated metadata and no output validator is generated; authentication policies are not enforced and no credentials are injected; no remote references; input `oneOf`, `anyOf`, `not`, conditional, dependent, and pattern composition is rejected; `allOf` supports object intersections only; no numeric/string/format constraint enforcement beyond the runtime subset; no YAML merge-key support; and no regeneration command that reads/writes a manifest. The compiler is not wired into the CLI or generated-server flow yet. See `@chainmcp/executor` for the implemented upstream HTTP slice.
+
+## `@chainmcp/executor`
+
+`@chainmcp/executor` turns a compiled operation into a runnable `ToolDefinition` with bounded Node HTTP/HTTPS I/O. It is the first upstream execution slice; authentication, credential injection, response-schema validation, retries, and generated-server wiring are not implemented.
+
+```ts
+export interface UpstreamExecutorOptions {
+  baseUrl: string;
+  allowedHosts: readonly string[];
+  allowInsecureHttp?: boolean;
+  maxResponseBytes?: number;
+  maxRequestBytes?: number;
+  maxRedirects?: number;
+  timeoutMs?: number;
+  contractRevision?: string;
+  ownerTenantId?: string;
+  resolveHost?: HostResolver;
+  transport?: UpstreamTransport;
+}
+
+export type HostResolver = (hostname: string) => Promise<readonly string[]>;
+
+export interface ResolvedDestination {
+  url: URL;
+  hostname: string;
+  address: string;
+  family: 4 | 6;
+}
+
+export interface UpstreamTransportRequest {
+  url: URL;
+  hostname: string;
+  address: string;
+  family: 4 | 6;
+  method: string;
+  headers: Readonly<Record<string, string>>;
+  body?: Uint8Array;
+  maxResponseBytes: number;
+  signal: AbortSignal;
+}
+
+export interface UpstreamTransportResponse {
+  status: number;
+  headers: Readonly<Record<string, string | string[] | undefined>>;
+  body: Uint8Array;
+}
+
+export interface UpstreamTransport {
+  request(
+    request: UpstreamTransportRequest,
+  ): Promise<UpstreamTransportResponse>;
+}
+
+export interface UpstreamExecutor {
+  createTool(operation: CompiledOperation): ToolDefinition;
+  createTools(
+    operations: readonly CompiledOperation[],
+  ): readonly ToolDefinition[];
+}
+
+export function createUpstreamExecutor(
+  options: UpstreamExecutorOptions,
+): UpstreamExecutor;
+
+export function createNodeUpstreamTransport(): UpstreamTransport;
+
+export const EXECUTOR_VERSION: "0.1.0";
+export const DEFAULT_MAX_RESPONSE_BYTES: 1_000_000;
+export const MAX_RESPONSE_BYTES_LIMIT: 10_000_000;
+export const DEFAULT_MAX_REQUEST_BYTES: 1_000_000;
+export const MAX_REQUEST_BYTES_LIMIT: 10_000_000;
+export const DEFAULT_MAX_REDIRECTS: 3;
+export const MAX_REDIRECTS_LIMIT: 5;
+export const DEFAULT_TIMEOUT_MS: 15_000;
+export const MAX_TIMEOUT_MS: 120_000;
+export const MAX_REQUEST_HEADER_BYTES: 16_384;
+export const MAX_RESPONSE_HEADER_BYTES: 16_384;
+```
+
+Typical use:
+
+```ts
+const result = compileOpenApi(source);
+if (!result.ok) throw new Error(JSON.stringify(result.diagnostics));
+
+const executor = createUpstreamExecutor({
+  baseUrl: "https://api.example.com/v1",
+  allowedHosts: ["api.example.com"],
+  contractRevision: result.contractRevision,
+});
+const runtime = new InMemoryToolRuntime();
+for (const tool of executor.createTools(result.tools)) runtime.register(tool);
+```
+
+#### Request mapping
+
+- The base URL's path prefix is prepended to the compiled path. `baseUrl` must be absolute, must not contain a query, fragment, or credentials, and its host must be allowlisted.
+- Path parameters are substituted and percent-encoded. Missing path values, undeclared placeholders, unfilled braces, and literal or percent-encoded `.`/`..` segments are request-construction failures, so a value cannot walk out of the declared path.
+- Query parameters are appended by name. Arrays are sent as repeated keys. Scalars may be strings, finite numbers, or booleans; objects, arrays of objects, and `null` are rejected because OpenAPI serialization styles are not retained.
+- Header parameters are sent as declared. Array values are comma-joined. Control characters, invalid header names, and reserved transport/credential headers are rejected. Compiler `parameters` metadata never includes cookie parameters or the forbidden headers listed for the compiler.
+- A JSON `body` input is serialized as UTF-8 with the selected request media type. The body is required only when `requestBody.required` is true.
+- Requests set `accept: application/json`, `accept-encoding: identity`, and a package user agent. No inbound identity, token, cookie, or authorization header is forwarded.
+- URL length is capped at 8 KiB and request headers at 16 KiB. The request body defaults to a 1 MiB cap.
+
+#### Response and redirect behavior
+
+- Only 2xx responses are returned. An empty body returns `null`; otherwise the body must be UTF-8 JSON (`application/json` or `application/*+json`) and is parsed. Non-2xx statuses become `RuntimeError("UPSTREAM_FAILURE", "Upstream request failed with status <code>")`; the response body is never included.
+- A streamed body is capped while reading. Declared oversized `content-length` and compressed (`content-encoding` other than `identity`) responses are rejected before use. Response headers are capped at 16 KiB.
+- Redirects 301, 302, 303, 307, and 308 are followed only within the same host, protocol, and port. Every hop is re-resolved, revalidated against `allowedHosts`, and classified again. Cross-host redirects are rejected even when both hosts are allowlisted. 303, and 301/302 on POST, switch to GET and drop the body and content headers; 307/308 preserve them. The default limit is three redirects.
+- The total call budget defaults to 15 seconds and covers DNS, connect, redirects, and reading. `context.signal` and the executor timeout abort the transport; `UPSTREAM_TIMEOUT` and `CANCELLED` are preserved.
+- Failures use safe `RuntimeError` messages: destination denial, request construction, upstream status, oversized response, unsupported media type, invalid JSON, timeout, cancellation, or a generic upstream failure. Causes stay local for diagnostics.
+
+#### Outbound security
+
+- `allowedHosts` is an exact, normalized hostname allowlist. Wildcards, schemes, ports, paths, credentials, and whitespace are rejected. One trailing dot and IDN spelling are normalized; matching is case-insensitive.
+- HTTPS is required by default. `allowInsecureHttp: true` permits plain HTTP but does not permit private destinations.
+- Every DNS answer is classified. If any IPv4 or IPv6 address is loopback, private, shared (CGNAT), link-local, multicast, metadata, documentation, unspecified, or reserved, the whole resolution is rejected. IPv4-mapped IPv6 forms are classified as their IPv4 address.
+- The selected address is pinned in the Node DNS lookup; the transport verifies `socket.remoteAddress` against it, disables connection reuse, and does not honor proxy environment variables. TLS certificate validation is left at Node's secure default.
+- Redirects are origin-locked and re-resolved, so a hostname cannot change network location mid-chain. The transport never decompresses responses.
+
+#### Limitations
+
+- No authentication or credential provider: `CompiledOperation.authentication` is not interpreted.
+- No response schema validation, no retries, no multipart/binary bodies, no OpenAPI `style`/`explode` serialization, no cookie parameters, and no per-operation `servers` resolution.
+- A custom `UpstreamTransport` is trusted adapter code. The executor rechecks response size and JSON shape, but cannot verify that an injected transport connected to the pinned address.
+- DNS resolution is not cancellable at the OS level; an aborted call stops waiting and aborts the HTTP request, but the resolver promise may settle later.
+- Request-body serialization uses `JSON.stringify` before checking the byte cap, so a very large in-memory body can allocate before rejection. The runtime's input schema may also allow large strings or arrays.
+- `maxResponseBytes`, `maxRequestBytes`, `maxRedirects`, and `timeoutMs` are executor options, not `@chainmcp/config` fields yet.
 
 ## `@chainmcp/cache-redis`
 

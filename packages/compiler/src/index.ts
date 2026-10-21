@@ -26,6 +26,8 @@ export type {
   CompiledAuthenticationPolicy,
   CompiledAuthenticationScheme,
   CompiledOperation,
+  CompiledParameter,
+  CompiledRequestBody,
   CompiledResponse,
   CompiledSecurityScheme,
   ContractCompiler,

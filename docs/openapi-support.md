@@ -6,8 +6,11 @@ ChainMcp targets OpenAPI 3.0 and 3.1, subject to the support matrix established 
 
 ## Current implementation (2026-10-21)
 
-`@chainmcp/compiler` currently implements the parsing and catalog slice of
-Milestone 3. It:
+`@chainmcp/compiler` implements the parsing, validation, and metadata slices
+of Milestone 3, and `@chainmcp/executor` implements the first bounded HTTP
+execution slice.
+
+The compiler:
 
 - Parses one YAML or JSON document with the YAML 1.2 core schema, rejecting
   duplicate keys, multiple documents, non-JSON values, deep nesting, cycles,
@@ -22,7 +25,8 @@ Milestone 3. It:
   rejects a collision; permissive mode renames it with a warning.
 - Builds an object-root input schema from path/query/header parameters and a
   JSON request body mapped to a `body` property. The root rejects undeclared
-  properties with `additionalProperties: false`.
+  properties with `additionalProperties: false`. Records sorted parameter
+  bindings and the selected request-body media type for execution.
 - Translates OpenAPI 3.0 `nullable` into a `"null"` type union (and adds `null`
   to `enum`), preserves OpenAPI 3.1 null unions, and drops `readOnly`
   properties from request inputs.
@@ -49,10 +53,12 @@ Milestone 3. It:
   `toolsetHash` and per-tool hashes, and `diffManifests()` for regeneration
   comparisons.
 
-The output is operation metadata (`CompiledOperation`), not runnable
-`ToolDefinition`s. There is no upstream executor, outbound destination policy,
-credential injection, response validation, CLI, or generated-server integration
-yet.
+The compiler output is operation metadata (`CompiledOperation`).
+`@chainmcp/executor` converts it into runnable `ToolDefinition`s with bounded
+Node HTTP/HTTPS, exact host allowlisting, private/metadata range blocking, DNS
+pinning, same-host redirect revalidation, response caps, and `context.signal`
+binding. Credential injection, authentication enforcement, response
+validation, CLI, and generated-server integration remain unimplemented.
 
 ## Compilation behavior
 
@@ -69,9 +75,10 @@ The full compiler must:
 9. Produce a source hash and compiler version.
 10. Bind `context.signal` to generated upstream calls and release executor resources on abort or timeout.
 
-The current slice implements items 1-5 and 8-9 for operation metadata, part of
-item 6 (input validation only), and item 7 as unenforced metadata. Response
-mapping is descriptive; output validation, item 10, and execution remain open.
+The compiler implements items 1-5 and 8-9, part of item 6 (input validation
+only), and item 7 as unenforced metadata. `@chainmcp/executor` implements item
+10 for JSON HTTP operations. Response mapping is descriptive; output validation
+and credential injection remain open.
 
 ## Initial mapping
 
@@ -135,6 +142,30 @@ Each operation receives `authentication: { alternatives, allowsAnonymous }` deri
 - OAuth2 scopes must be declared by at least one flow; strict mode errors, permissive mode warns and preserves them. OIDC scopes cannot be validated offline.
 - The policy is not enforced and no upstream credentials are resolved. `operation.requiredScopes` stays empty because a flat list cannot represent OR/AND semantics.
 
+## Execution
+
+`@chainmcp/executor` maps path, query, header, and JSON body inputs using the
+compiled bindings. Arrays in query parameters are sent as repeated keys; header
+arrays are comma-joined. Scalars are strings, finite numbers, or booleans.
+Objects, arrays of objects, and `null` are rejected because `style`/`explode`
+are not retained. Cookie parameters, reserved credential/transport headers,
+non-JSON request bodies, and non-JSON responses are unsupported.
+
+Outbound controls are mandatory and not configurable per operation:
+
+- HTTPS is the default; plain HTTP requires `allowInsecureHttp`.
+- `allowedHosts` is exact. No wildcards, schemes, ports, or paths.
+- Every resolved IPv4/IPv6 address must be public; any loopback, private,
+  shared, link-local, metadata, multicast, documentation, or reserved answer
+  rejects the resolution.
+- The chosen address is pinned and the connected peer is checked.
+- Redirects stay on the same host, protocol, and port and are re-resolved.
+- Response headers and bytes, request bytes, URL length, request headers, and
+  total duration are capped.
+- `context.signal` aborts the HTTP request; timers and listeners are released.
+- No inbound authorization, cookie, or identity header is forwarded. Upstream
+  credentials are not implemented yet.
+
 ## Tool naming
 
 Names must be deterministic, unique, and compatible with the MCP SDK's validation rules. Resolve collisions predictably and report any renaming.
@@ -153,6 +184,6 @@ Maintain fixtures for:
 - Read and write operations.
 - Invalid documents and unsupported schema constructs.
 
-Current fixtures live in `packages/compiler/tests/fixtures/`. The deterministic test suite covers both versions, nullable translation, local and circular references, remote-reference refusal, tool-name collisions, security OR/AND structure and authentication policies (including anonymous alternatives, scope validation, OIDC, and mutual TLS), unsupported constructs in both modes, parameter/body mapping, `allOf` flattening, response mapping (including `$ref` responses, 3.1 ranges, non-JSON content, and output composition), limits, and manifest diffs.
+Current fixtures live in `packages/compiler/tests/fixtures/`. The deterministic compiler suite covers both versions, nullable translation, local and circular references, remote-reference refusal, tool-name collisions, security OR/AND structure and authentication policies (including anonymous alternatives, scope validation, OIDC, and mutual TLS), unsupported constructs in both modes, parameter/body mapping, `allOf` flattening, response mapping (including `$ref` responses, 3.1 ranges, non-JSON content, and output composition), limits, and manifest diffs. Executor tests cover destination classification, DNS pinning inputs, request mapping, redirect rules, response caps, JSON handling, timeouts, cancellation, and a local Node HTTP transport; they do not use production endpoints.
 
 Document actual compatibility based on tests rather than assumptions.

@@ -1,0 +1,651 @@
+import { InMemoryToolRuntime, RuntimeError } from "@chainmcp/core";
+import type { CompiledOperation } from "@chainmcp/compiler";
+import { describe, expect, it } from "vitest";
+
+import {
+  createUpstreamExecutor,
+  type UpstreamExecutorOptions,
+  type UpstreamTransport,
+  type UpstreamTransportRequest,
+  type UpstreamTransportResponse,
+} from "../src/index.js";
+
+function operation(
+  overrides: Partial<CompiledOperation> = {},
+): CompiledOperation {
+  return {
+    name: "testOp",
+    description: "Test operation",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+    operation: {},
+    method: "get",
+    path: "/x",
+    readOnly: true,
+    deprecated: false,
+    parameters: [],
+    responses: [],
+    security: [],
+    authentication: { alternatives: [], allowsAnonymous: true },
+    sourceLocation: "#/paths/~1x/get",
+    ...overrides,
+  };
+}
+
+function jsonResponse(
+  body: unknown,
+  status = 200,
+  headers: Record<string, string> = {},
+): UpstreamTransportResponse {
+  return {
+    status,
+    headers: { "content-type": "application/json", ...headers },
+    body: new TextEncoder().encode(JSON.stringify(body)),
+  };
+}
+
+class FakeTransport implements UpstreamTransport {
+  readonly requests: UpstreamTransportRequest[] = [];
+  private readonly responses: Array<
+    | UpstreamTransportResponse
+    | ((
+        request: UpstreamTransportRequest,
+      ) => Promise<UpstreamTransportResponse>)
+  >;
+
+  constructor(
+    responses: Array<
+      | UpstreamTransportResponse
+      | ((
+          request: UpstreamTransportRequest,
+        ) => Promise<UpstreamTransportResponse>)
+    >,
+  ) {
+    this.responses = responses;
+  }
+
+  async request(
+    request: UpstreamTransportRequest,
+  ): Promise<UpstreamTransportResponse> {
+    this.requests.push(request);
+    const next = this.responses.shift();
+    if (next === undefined) throw new Error("unexpected upstream request");
+    return typeof next === "function" ? next(request) : next;
+  }
+}
+
+const context = {
+  requestId: "req-1",
+  tenantId: "tenant-1",
+  principal: { id: "user-1", scopes: [] },
+};
+
+function options(
+  transport: UpstreamTransport,
+  overrides: Partial<UpstreamExecutorOptions> = {},
+): UpstreamExecutorOptions {
+  return {
+    baseUrl: "https://api.example.com/v1",
+    allowedHosts: ["api.example.com"],
+    resolveHost: async () => ["8.8.8.8"],
+    transport,
+    contractRevision: "rev-1",
+    ...overrides,
+  };
+}
+
+async function expectRuntimeError(
+  promise: Promise<unknown>,
+  code: string,
+  message?: string,
+): Promise<RuntimeError> {
+  const error = await promise.then(
+    () => {
+      throw new Error("expected the call to reject");
+    },
+    (caught: unknown) => caught,
+  );
+  expect(error).toBeInstanceOf(RuntimeError);
+  expect(error).toMatchObject({ code, ...(message ? { message } : {}) });
+  return error as RuntimeError;
+}
+
+describe("upstream executor request mapping", () => {
+  it("maps path, query, header, and body inputs", async () => {
+    const transport = new FakeTransport([jsonResponse({ ok: true })]);
+    const tool = createUpstreamExecutor(options(transport)).createTool(
+      operation({
+        method: "post",
+        path: "/pets/{petId}",
+        parameters: [
+          { name: "petId", in: "path", required: true },
+          { name: "filter", in: "query", required: false },
+          { name: "tags", in: "query", required: false },
+          { name: "X-Trace", in: "header", required: false },
+        ],
+        requestBody: { mediaType: "application/json", required: true },
+      }),
+    );
+
+    const result = await tool.execute(
+      {
+        petId: "a/b",
+        filter: "hi there",
+        tags: ["x", "y"],
+        "X-Trace": "trace-1",
+        body: { name: "Ada" },
+      },
+      context,
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(transport.requests).toHaveLength(1);
+    const request = transport.requests[0];
+    expect(request?.url.href).toBe(
+      "https://api.example.com/v1/pets/a%2Fb?filter=hi+there&tags=x&tags=y",
+    );
+    expect(request?.method).toBe("POST");
+    expect(request?.headers["x-trace"]).toBeUndefined();
+    expect(request?.headers["X-Trace"]).toBe("trace-1");
+    expect(request?.headers["content-type"]).toBe("application/json");
+    expect(request?.headers["authorization"]).toBeUndefined();
+    expect(new TextDecoder().decode(request?.body ?? new Uint8Array())).toBe(
+      '{"name":"Ada"}',
+    );
+  });
+
+  it("exports tool metadata and the contract revision", () => {
+    const tool = createUpstreamExecutor(
+      options(new FakeTransport([]), { ownerTenantId: "tenant-1" }),
+    ).createTool(operation());
+    expect(tool).toMatchObject({
+      name: "testOp",
+      description: "Test operation",
+      operation: {},
+      contractRevision: "rev-1",
+      ownerTenantId: "tenant-1",
+    });
+    expect(tool.cache).toBeUndefined();
+  });
+
+  it("returns null for an empty successful response", async () => {
+    const transport = new FakeTransport([
+      { status: 204, headers: {}, body: new Uint8Array() },
+    ]);
+    const tool = createUpstreamExecutor(options(transport)).createTool(
+      operation(),
+    );
+    await expect(tool.execute({}, context)).resolves.toBeNull();
+  });
+
+  it("rejects object query values, nulls, and header injection", async () => {
+    const tool = createUpstreamExecutor(
+      options(new FakeTransport([])),
+    ).createTool(
+      operation({
+        parameters: [
+          { name: "q", in: "query", required: false },
+          { name: "X-Test", in: "header", required: false },
+        ],
+      }),
+    );
+
+    await expectRuntimeError(
+      tool.execute({ q: { nested: true } }, context),
+      "UPSTREAM_FAILURE",
+      "Upstream request could not be constructed",
+    );
+    await expectRuntimeError(
+      tool.execute({ q: null }, context),
+      "UPSTREAM_FAILURE",
+      "Upstream request could not be constructed",
+    );
+    await expectRuntimeError(
+      tool.execute({ "X-Test": "a\r\nb" }, context),
+      "UPSTREAM_FAILURE",
+      "Upstream request could not be constructed",
+    );
+  });
+
+  it("bounds query strings and request headers", async () => {
+    const transport = new FakeTransport([]);
+    const tool = createUpstreamExecutor(options(transport)).createTool(
+      operation({
+        parameters: [
+          { name: "q", in: "query", required: false },
+          { name: "X-Big", in: "header", required: false },
+        ],
+      }),
+    );
+
+    await expectRuntimeError(
+      tool.execute({ q: "x".repeat(9_000) }, context),
+      "UPSTREAM_FAILURE",
+      "Upstream request could not be constructed",
+    );
+    await expectRuntimeError(
+      tool.execute({ "X-Big": "x".repeat(17_000) }, context),
+      "UPSTREAM_FAILURE",
+      "Upstream request could not be constructed",
+    );
+    expect(transport.requests).toHaveLength(0);
+  });
+
+  it("rejects path traversal, prototype header names, and media-type injection", async () => {
+    const transport = new FakeTransport([]);
+    const traversal = createUpstreamExecutor(options(transport)).createTool(
+      operation({
+        path: "/pets/{id}",
+        parameters: [{ name: "id", in: "path", required: true }],
+      }),
+    );
+    await expectRuntimeError(
+      traversal.execute({ id: ".." }, context),
+      "UPSTREAM_FAILURE",
+      "Upstream request could not be constructed",
+    );
+    await expectRuntimeError(
+      traversal.execute({ id: "." }, context),
+      "UPSTREAM_FAILURE",
+      "Upstream request could not be constructed",
+    );
+    await expectRuntimeError(
+      traversal.execute({ id: "\uD800" }, context),
+      "UPSTREAM_FAILURE",
+      "Upstream request could not be constructed",
+    );
+
+    const prototypeHeader = createUpstreamExecutor(
+      options(transport),
+    ).createTool(
+      operation({
+        parameters: [{ name: "__proto__", in: "header", required: false }],
+      }),
+    );
+    await expectRuntimeError(
+      prototypeHeader.execute({ ["__proto__"]: "value" }, context),
+      "UPSTREAM_FAILURE",
+      "Upstream request could not be constructed",
+    );
+
+    const mediaInjection = createUpstreamExecutor(
+      options(transport),
+    ).createTool(
+      operation({
+        method: "post",
+        requestBody: {
+          mediaType: "application/json\r\nX-Evil: 1",
+          required: true,
+        },
+      }),
+    );
+    await expectRuntimeError(
+      mediaInjection.execute({ body: {} }, context),
+      "UPSTREAM_FAILURE",
+      "Upstream request could not be constructed",
+    );
+    expect(transport.requests).toHaveLength(0);
+  });
+
+  it("rejects missing path/body values and oversized bodies", async () => {
+    const transport = new FakeTransport([]);
+    const tool = createUpstreamExecutor(
+      options(transport, { maxRequestBytes: 4 }),
+    ).createTool(
+      operation({
+        method: "post",
+        path: "/pets/{petId}",
+        parameters: [{ name: "petId", in: "path", required: true }],
+        requestBody: { mediaType: "application/json", required: true },
+      }),
+    );
+
+    await expectRuntimeError(
+      tool.execute({ body: {} }, context),
+      "UPSTREAM_FAILURE",
+      "Upstream request could not be constructed",
+    );
+    await expectRuntimeError(
+      tool.execute({ petId: "1" }, context),
+      "UPSTREAM_FAILURE",
+      "Upstream request could not be constructed",
+    );
+    await expectRuntimeError(
+      tool.execute({ petId: "1", body: { long: "value" } }, context),
+      "UPSTREAM_FAILURE",
+      "Upstream request could not be constructed",
+    );
+    expect(transport.requests).toHaveLength(0);
+  });
+});
+
+describe("upstream executor redirects", () => {
+  it("follows a same-origin redirect", async () => {
+    const transport = new FakeTransport([
+      {
+        status: 302,
+        headers: { location: "/v1/next" },
+        body: new Uint8Array(),
+      },
+      jsonResponse({ ok: true }),
+    ]);
+    const tool = createUpstreamExecutor(options(transport)).createTool(
+      operation(),
+    );
+
+    await expect(tool.execute({}, context)).resolves.toEqual({ ok: true });
+    expect(transport.requests.map((request) => request.url.href)).toEqual([
+      "https://api.example.com/v1/x",
+      "https://api.example.com/v1/next",
+    ]);
+  });
+
+  it("rejects redirects to another host, port, or protocol", async () => {
+    const cases = [
+      "https://evil.example.com/x",
+      "https://api.example.com:8443/x",
+      "http://api.example.com/x",
+    ];
+    for (const location of cases) {
+      const transport = new FakeTransport([
+        { status: 302, headers: { location }, body: new Uint8Array() },
+      ]);
+      const tool = createUpstreamExecutor(options(transport)).createTool(
+        operation(),
+      );
+      await expectRuntimeError(
+        tool.execute({}, context),
+        "UPSTREAM_FAILURE",
+        "Upstream destination is not permitted",
+      );
+      expect(transport.requests).toHaveLength(1);
+    }
+  });
+
+  it("rejects cross-host redirects even when both hosts are allowlisted", async () => {
+    const transport = new FakeTransport([
+      {
+        status: 302,
+        headers: { location: "https://cdn.example.com/asset" },
+        body: new Uint8Array(),
+      },
+    ]);
+    const tool = createUpstreamExecutor(
+      options(transport, {
+        allowedHosts: ["api.example.com", "cdn.example.com"],
+      }),
+    ).createTool(operation());
+
+    await expectRuntimeError(
+      tool.execute({}, context),
+      "UPSTREAM_FAILURE",
+      "Upstream destination is not permitted",
+    );
+    expect(transport.requests).toHaveLength(1);
+  });
+
+  it("enforces the redirect limit", async () => {
+    const transport = new FakeTransport([
+      { status: 302, headers: { location: "/a" }, body: new Uint8Array() },
+      { status: 302, headers: { location: "/b" }, body: new Uint8Array() },
+    ]);
+    const tool = createUpstreamExecutor(
+      options(transport, { maxRedirects: 1 }),
+    ).createTool(operation());
+
+    await expectRuntimeError(
+      tool.execute({}, context),
+      "UPSTREAM_FAILURE",
+      "Upstream redirect limit exceeded",
+    );
+    expect(transport.requests).toHaveLength(2);
+  });
+
+  it("rewrites 303 to GET and drops the body", async () => {
+    const transport = new FakeTransport([
+      { status: 303, headers: { location: "/done" }, body: new Uint8Array() },
+      jsonResponse({ ok: true }),
+    ]);
+    const tool = createUpstreamExecutor(options(transport)).createTool(
+      operation({
+        method: "post",
+        requestBody: { mediaType: "application/json", required: true },
+      }),
+    );
+
+    await tool.execute({ body: { value: 1 } }, context);
+    expect(transport.requests[1]?.method).toBe("GET");
+    expect(transport.requests[1]?.body).toBeUndefined();
+    expect(transport.requests[1]?.headers["content-type"]).toBeUndefined();
+  });
+
+  it("preserves method and body across 307", async () => {
+    const transport = new FakeTransport([
+      { status: 307, headers: { location: "/retry" }, body: new Uint8Array() },
+      jsonResponse({ ok: true }),
+    ]);
+    const tool = createUpstreamExecutor(options(transport)).createTool(
+      operation({
+        method: "post",
+        requestBody: { mediaType: "application/json", required: true },
+      }),
+    );
+
+    await tool.execute({ body: { value: 1 } }, context);
+    expect(transport.requests[1]?.method).toBe("POST");
+    expect(
+      new TextDecoder().decode(transport.requests[1]?.body ?? new Uint8Array()),
+    ).toBe('{"value":1}');
+  });
+});
+
+describe("upstream executor responses and failures", () => {
+  it("rejects non-2xx statuses without exposing the response body", async () => {
+    const transport = new FakeTransport([
+      {
+        status: 500,
+        headers: { "content-type": "text/plain" },
+        body: new TextEncoder().encode("secret upstream detail"),
+      },
+    ]);
+    const tool = createUpstreamExecutor(options(transport)).createTool(
+      operation(),
+    );
+    const error = await expectRuntimeError(
+      tool.execute({}, context),
+      "UPSTREAM_FAILURE",
+      "Upstream request failed with status 500",
+    );
+    expect(error.message).not.toContain("secret");
+  });
+
+  it("requires a JSON response media type and valid JSON", async () => {
+    const text = new FakeTransport([
+      {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+        body: new TextEncoder().encode("ok"),
+      },
+    ]);
+    await expectRuntimeError(
+      createUpstreamExecutor(options(text))
+        .createTool(operation())
+        .execute({}, context),
+      "UPSTREAM_FAILURE",
+      "Upstream response is not a JSON media type",
+    );
+
+    const invalid = new FakeTransport([
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body: new TextEncoder().encode("{not json"),
+      },
+    ]);
+    await expectRuntimeError(
+      createUpstreamExecutor(options(invalid))
+        .createTool(operation())
+        .execute({}, context),
+      "UPSTREAM_FAILURE",
+      "Upstream response was invalid",
+    );
+  });
+
+  it("defensively enforces the response cap on injected transports", async () => {
+    const transport = new FakeTransport([
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body: new Uint8Array(32),
+      },
+    ]);
+    const tool = createUpstreamExecutor(
+      options(transport, { maxResponseBytes: 8 }),
+    ).createTool(operation());
+
+    await expectRuntimeError(
+      tool.execute({}, context),
+      "UPSTREAM_FAILURE",
+      "Upstream response exceeded the size limit",
+    );
+  });
+
+  it("rejects a non-public resolved destination before requesting", async () => {
+    const transport = new FakeTransport([]);
+    const tool = createUpstreamExecutor(
+      options(transport, { resolveHost: async () => ["10.0.0.1"] }),
+    ).createTool(operation());
+
+    await expectRuntimeError(
+      tool.execute({}, context),
+      "UPSTREAM_FAILURE",
+      "Upstream destination is not permitted",
+    );
+    expect(transport.requests).toHaveLength(0);
+  });
+
+  it("enforces a total timeout and aborts the transport signal", async () => {
+    let seenSignal: AbortSignal | undefined;
+    const transport: UpstreamTransport = {
+      request: (request) => {
+        seenSignal = request.signal;
+        return new Promise((_resolve, reject) => {
+          request.signal.addEventListener(
+            "abort",
+            () => reject(new Error("aborted")),
+            { once: true },
+          );
+        });
+      },
+    };
+    const tool = createUpstreamExecutor(
+      options(transport, { timeoutMs: 5 }),
+    ).createTool(operation());
+
+    await expectRuntimeError(
+      tool.execute({}, context),
+      "UPSTREAM_TIMEOUT",
+      "Upstream request timed out",
+    );
+    expect(seenSignal?.aborted).toBe(true);
+  });
+
+  it("maps caller cancellation to CANCELLED and aborts the transport", async () => {
+    const controller = new AbortController();
+    let started: (() => void) | undefined;
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const transport: UpstreamTransport = {
+      request: (request) => {
+        started?.();
+        return new Promise((_resolve, reject) => {
+          request.signal.addEventListener(
+            "abort",
+            () => reject(new Error("aborted")),
+            { once: true },
+          );
+        });
+      },
+    };
+    const tool = createUpstreamExecutor(options(transport)).createTool(
+      operation(),
+    );
+    const pending = tool.execute({}, { ...context, signal: controller.signal });
+    await ready;
+    controller.abort();
+
+    await expectRuntimeError(pending, "CANCELLED", "Tool call was cancelled");
+  });
+
+  it("works through the shared runtime and emits no credentials", async () => {
+    const transport = new FakeTransport([jsonResponse({ ok: true })]);
+    const tool = createUpstreamExecutor(options(transport)).createTool(
+      operation({ name: "lookup" }),
+    );
+    const runtime = new InMemoryToolRuntime();
+    runtime.register(tool);
+
+    await expect(
+      runtime.callTool(
+        "lookup",
+        {},
+        { ...context, principal: { id: "user-1", scopes: [] } },
+      ),
+    ).resolves.toEqual({ ok: true });
+    expect(transport.requests[0]?.headers["authorization"]).toBeUndefined();
+  });
+});
+
+describe("executor option validation", () => {
+  it("requires HTTPS unless explicitly allowed", () => {
+    expect(() =>
+      createUpstreamExecutor(
+        options(new FakeTransport([]), { baseUrl: "http://api.example.com" }),
+      ),
+    ).toThrow(TypeError);
+  });
+
+  it("requires the base host in the allowlist", () => {
+    expect(() =>
+      createUpstreamExecutor(
+        options(new FakeTransport([]), { allowedHosts: ["other.example.com"] }),
+      ),
+    ).toThrow(TypeError);
+  });
+
+  it("rejects a zero base URL port", () => {
+    expect(() =>
+      createUpstreamExecutor(
+        options(new FakeTransport([]), {
+          baseUrl: "https://api.example.com:0",
+        }),
+      ),
+    ).toThrow(TypeError);
+  });
+
+  it("rejects invalid limits and metadata", () => {
+    expect(() =>
+      createUpstreamExecutor(
+        options(new FakeTransport([]), { maxRedirects: -1 }),
+      ),
+    ).toThrow(TypeError);
+    expect(() =>
+      createUpstreamExecutor(
+        options(new FakeTransport([]), { maxResponseBytes: 10_000_001 }),
+      ),
+    ).toThrow(TypeError);
+    expect(() =>
+      createUpstreamExecutor(options(new FakeTransport([]), { timeoutMs: 0 })),
+    ).toThrow(TypeError);
+    expect(() =>
+      createUpstreamExecutor(
+        options(new FakeTransport([]), { contractRevision: " " }),
+      ),
+    ).toThrow(TypeError);
+  });
+});

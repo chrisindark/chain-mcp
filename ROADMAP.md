@@ -70,8 +70,8 @@ are not re-argued per milestone. Deferred risks and their triggers live in
 - [ ] Translate supported JSON Schema constructs into validators.
 - [x] Map authentication schemes to explicit policies, including alternative (OR) and combined (AND) requirements; never silently drop a requirement.
 - [x] Report unsupported constructs and ambiguous mappings.
-- [ ] Enforce outbound destination policy (allowlist, private-range and metadata blocking, redirect revalidation) on generated executors.
-- [ ] Bind `context.signal` to generated upstream calls and release executor resources on timeout or cancellation.
+- [x] Enforce outbound destination policy (allowlist, private-range and metadata blocking, redirect revalidation) in `@chainmcp/executor`; generated-server wiring remains open.
+- [x] Bind `context.signal` to upstream calls in `@chainmcp/executor` and release executor resources on timeout or cancellation.
 - [x] Emit a deterministic generation manifest with a toolset hash and a regeneration diff.
 - [ ] Validate compiled output with an MCP client and an Inspector conformance check.
 - [ ] Document one end-to-end example in `docs/getting-started.md` and `examples/`.
@@ -79,28 +79,34 @@ are not re-argued per milestone. Deferred risks and their triggers live in
 
 **Exit criteria:** a representative API contract compiles into validated tools with documented limitations; generated executors bind the cancellation signal and the outbound destination policy to upstream I/O; output is byte-identical for the same contract and compiler version; and a runnable example is documented in `docs/getting-started.md`.
 
-**Status (2026-10-21):** the compiler package and its first two vertical slices
-are implemented. It parses one YAML/JSON OpenAPI 3.0 or 3.1 document, validates
-document structure, resolves local references, enumerates operations, builds
-audited object-root input schemas from path/query/header parameters and JSON
-request bodies, translates 3.0 nullability, preserves security OR/AND
-metadata, and emits deterministic source/contract/toolset hashes plus
-`diffManifests()`. It maps declared responses in status-key order with their
-description, selected media type, and translated response schema. Response
-schemas are descriptive metadata: `writeOnly` fields are omitted, local
-references are resolved, and composition is preserved, but upstream payloads
-are not validated against them. Object `allOf` intersections are flattened
-deterministically for inputs. Security requirements are expanded into explicit
-OR alternatives and AND scheme sets with copied credential metadata and
-required scopes; anonymous alternatives are preserved. Authentication is not
-enforced and no credentials are injected. Unsupported input constraints are
-rejected in strict mode and reported when droppable in permissive mode; input
-`oneOf`/`anyOf`/`not`, conditional/dependent/pattern composition, and remote
-references are always rejected. Output is metadata, not runnable tools. Input
-union composition, an output validator, authentication enforcement, upstream
-execution, outbound destination policy, cancellation binding, Inspector
-conformance, and an end-to-end example remain open, so the exit criteria are
-not yet met.
+**Status (2026-10-21):** the compiler and the first upstream executor slice are
+implemented. The compiler parses one YAML/JSON OpenAPI 3.0 or 3.1 document,
+validates document structure, resolves local references, enumerates operations,
+builds audited object-root input schemas from path/query/header parameters and
+JSON request bodies, translates 3.0 nullability, and emits deterministic
+source/contract/toolset hashes plus `diffManifests()`. It records parameter and
+request-body bindings, maps declared responses in status-key order with their
+description, selected media type, and translated response schema, and expands
+security requirements into explicit OR alternatives and AND scheme sets with
+copied credential metadata and required scopes. Response schemas are
+descriptive metadata, and authentication is not enforced. Object `allOf`
+intersections are flattened deterministically for inputs; unsupported input
+constraints are rejected in strict mode and reported when droppable in
+permissive mode; input `oneOf`/`anyOf`/`not`, conditional/dependent/pattern
+composition, and remote references are always rejected.
+
+`@chainmcp/executor` converts compiled operations into runnable tools. It maps
+path, query, header, and JSON body inputs; enforces an exact host allowlist,
+HTTPS by default, fixed protocol/port, and same-host redirects; rejects any DNS
+answer in loopback, private, shared, link-local, metadata, multicast,
+documentation, or reserved ranges; pins the resolved address and verifies the
+peer; rejects compressed and oversized responses; and binds `context.signal`
+plus a total timeout to upstream I/O. It does not inject credentials, validate
+response schemas, retry, or resolve per-operation `servers`.
+
+Input union composition, an output validator, authentication enforcement,
+generated-server/CLI wiring, Inspector conformance, and an end-to-end example
+remain open, so the exit criteria are not yet met.
 
 ## Milestone 4 — Smart caching and token accounting
 

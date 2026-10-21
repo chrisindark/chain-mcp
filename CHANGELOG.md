@@ -23,6 +23,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Document the first Milestone 3 compiler slice, its supported/rejected OpenAPI surface, deterministic manifest hashes, and its metadata-only boundary in `API_REFERENCE.md`, `ARCHITECTURE.md`, `docs/openapi-support.md`, and ADR 0015.
 - Document response metadata mapping and object `allOf` flattening, including the unvalidated status of response schemas and the remaining input union-composition limits, in `API_REFERENCE.md`, `ARCHITECTURE.md`, `docs/openapi-support.md`, and ADR 0016.
 - Document explicit OR/AND authentication policy mapping, anonymous alternatives, scope validation, and the unenforced boundary in `API_REFERENCE.md`, `ARCHITECTURE.md`, `docs/openapi-support.md`, and ADR 0017.
+- Document the upstream executor, request/response mapping, destination policy, cancellation binding, and remaining credential/validation limits in `API_REFERENCE.md`, `ARCHITECTURE.md`, `SECURITY.md`, `docs/openapi-support.md`, `docs/generated-servers.md`, and ADR 0018.
 - Document the `chainmcp/no-blocking-io` lint rule and its runtime-source scope in `DEVELOPMENT.md`.
 
 ### Implementation
@@ -69,6 +70,8 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Map declared OpenAPI responses into deterministic metadata with status keys, descriptions, selected media types, and translated schemas. Response schemas resolve local `$ref`s, drop `writeOnly` fields, preserve composition, and are explicitly not applied as output validation. Flatten object `allOf` intersections for inputs, rejecting incompatible properties, non-object members, and sibling validation keywords. Include responses in per-tool hashes.
 - Derive `CompiledOperation.authentication` as explicit OR alternatives and AND scheme sets with credential metadata and sorted, deduplicated scopes. Preserve anonymous alternatives, reject scopes on non-OAuth/OIDC schemes, and diagnose undeclared OAuth2 scopes. Include authentication details in per-tool hashes. Policies are metadata only; no credentials are resolved or enforced.
 - Add the compiler package to the fixed release group and root version-sync check.
+- Record sorted path/query/header parameter bindings and JSON request-body media metadata on `CompiledOperation`, include them in per-tool hashes, and reject transport/credential headers such as `Content-Type` and `User-Agent` as tool inputs.
+- Add `@chainmcp/executor` with `createUpstreamExecutor()`: compile output becomes runnable tools with bounded path/query/header/JSON-body mapping; exact host allowlists; HTTPS by default; fixed protocol/port; same-host redirect revalidation; rejection of any loopback, private, shared, link-local, metadata, multicast, documentation, or reserved DNS answer; pinned lookups with peer verification; no proxy environment or connection reuse; compression refusal; URL/header/request/response/redirect/time caps; and `context.signal`/total-timeout binding. It does not inject credentials, enforce authentication, validate response schemas, or retry.
 
 ### Breaking changes
 
@@ -79,7 +82,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Limitations
 
-- No OpenAPI response-schema mapping, upstream HTTP executor, CLI, gateway, credential provider, or concrete cache/auth/rate-limit adapter is included.
-- `@chainmcp/compiler` output is operation metadata, not runnable tools. Response schemas and authentication policies are not enforced, input `oneOf`/`anyOf`/`not` composition is rejected, remote references and format/numeric/string constraint enforcement remain unsupported, and upstream execution plus Inspector conformance remain Milestone 3 work.
+- No OpenAPI response-schema validation, CLI, gateway, credential provider, authentication enforcement, generated-server wiring, or concrete cache/auth/rate-limit adapter is included.
+- `@chainmcp/compiler` output is operation metadata; `@chainmcp/executor` turns it into runnable tools. Response schemas and authentication policies are not enforced, input `oneOf`/`anyOf`/`not` composition is rejected, remote references and format/numeric/string constraint enforcement remain unsupported, and authentication plus Inspector conformance remain Milestone 3/5 work.
 - The core input validator supports only the subset documented in `API_REFERENCE.md`.
 - License selection remains unresolved; the existing `LICENSE` file is empty.

@@ -36,6 +36,7 @@ Create an ADR before making a substantial change to public APIs, tenant isolatio
 | [0015](0015-openapi-compiler-slice.md)              | OpenAPI compiler slice and manifests   | proposed |
 | [0016](0016-response-metadata-and-composition.md)   | Response metadata and object allOf     | proposed |
 | [0017](0017-authentication-policy-mapping.md)       | Explicit authentication policy mapping | proposed |
+| [0018](0018-upstream-executor.md)                   | Upstream executor and outbound policy  | proposed |
 
 ADRs 0001–0003 were recorded retroactively from existing documentation and
 implementation. They describe decisions already reflected in the project, not

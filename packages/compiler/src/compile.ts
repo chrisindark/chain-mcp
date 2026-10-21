@@ -92,14 +92,23 @@ const RESPONSE_KEYS = new Set(["description", "headers", "links", "content"]);
  * identity (Milestone 5), so these are never exposed as tool arguments.
  */
 const FORBIDDEN_HEADER_PARAMETERS = new Set([
+  "accept",
   "authorization",
   "connection",
+  "content-encoding",
   "content-length",
+  "content-type",
   "cookie",
+  "expect",
   "host",
   "proxy-authorization",
+  "proxy-connection",
   "set-cookie",
+  "te",
+  "trailer",
   "transfer-encoding",
+  "upgrade",
+  "user-agent",
 ]);
 
 interface NormalizedOptions {
@@ -112,6 +121,7 @@ interface NormalizedOptions {
 
 interface ParameterInfo {
   name: string;
+  in: "path" | "query" | "header";
   schema: JsonSchema;
   required: boolean;
   description?: string;
@@ -119,6 +129,7 @@ interface ParameterInfo {
 
 interface CompiledRequestBody {
   schema: JsonSchema;
+  mediaType: string;
   required: boolean;
   description?: string;
 }
@@ -580,6 +591,18 @@ function compileOperation(
   const operation: OperationPolicy = {};
   if (hasError(diagnostics, operationStart)) return undefined;
 
+  const parameters = [...merged.values()]
+    .map((parameter) => ({
+      name: parameter.name,
+      in: parameter.in,
+      required: parameter.required,
+    }))
+    .sort(
+      (left, right) =>
+        compareCodeUnits(left.name, right.name) ||
+        compareCodeUnits(left.in, right.in),
+    );
+
   return {
     name,
     description,
@@ -592,6 +615,15 @@ function compileOperation(
       : {}),
     readOnly: method === "get" || method === "head",
     deprecated,
+    parameters,
+    ...(body === undefined
+      ? {}
+      : {
+          requestBody: {
+            mediaType: body.mediaType,
+            required: body.required,
+          },
+        }),
     responses,
     security,
     authentication,
@@ -748,6 +780,7 @@ function collectParameters(
     }
     parameters.set(key, {
       name: parameter.name,
+      in: parameterIn,
       schema,
       required,
       ...(typeof parameter.description === "string"
@@ -842,6 +875,7 @@ function compileRequestBody(
 
   return {
     schema,
+    mediaType,
     required,
     ...(typeof requestBody.description === "string"
       ? { description: requestBody.description }
@@ -1202,6 +1236,8 @@ function hashTool(tool: CompiledOperation): string {
       operationId: tool.operationId ?? null,
       readOnly: tool.readOnly,
       deprecated: tool.deprecated,
+      parameters: tool.parameters,
+      requestBody: tool.requestBody ?? null,
       responses: tool.responses,
       security: tool.security,
       authentication: tool.authentication,

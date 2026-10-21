@@ -7,8 +7,10 @@ Generated servers provide portable deployments for developers who do not want a 
 ## Generation workflow
 
 1. Load and validate the contract.
-2. Compile it into a deterministic tool registry.
-3. Generate project configuration and source files.
+2. Compile it into deterministic operation metadata and bind it through
+   `@chainmcp/executor` to a tool registry.
+3. Generate project configuration and source files, including the upstream base
+   URL and exact host allowlist.
 4. Pin the runtime and compiler versions.
 5. Produce a manifest containing the contract hash and generator version.
 6. Run validation and build checks.

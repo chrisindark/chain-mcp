@@ -19,8 +19,7 @@ with copied credential metadata and required scopes. Anonymous alternatives are
 preserved, and OAuth2 scope mismatches are diagnosed. It emits deterministic
 source/contract/toolset hashes plus manifest diffs. Response schemas are
 metadata only and are not used to validate upstream payloads; authentication
-policies are not enforced. It does not emit runnable executors or inject
-credentials yet.
+policies are not enforced. The compiler does not inject credentials.
 
 The repository now enforces `chainmcp/no-blocking-io` on runtime source paths,
 rejecting synchronous `fs` and `child_process` APIs, with RuleTester coverage.
