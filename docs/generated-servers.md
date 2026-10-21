@@ -40,6 +40,20 @@ chainmcp export --output ./generated-server
 
 Their exact argument semantics must be implemented, tested, and documented.
 
+Milestone 8 extends the same CLI with a code-first path: `chainmcp init --blank`
+scaffolds a project with no contract, and `chainmcp dev` provides a local
+authoring loop. Those commands share the runtime and policy pipeline with
+generated servers; they are specified in `ROADMAP.md`, not implemented yet.
+
+## Milestone 3 evidence
+
+`examples/petstore` is a hand-wired project that performs steps 1, 2, 5 (via
+the compiler manifest), 6, and 7 for a small contract. It is not produced by a
+generator and does not claim to be a generated project. It exists to prove the
+compiler, executor, runtime, and stdio adapter compose end to end.
+`pnpm conformance:inspector` checks `tools/list` and `tools/call` through the
+MCP Inspector CLI, and `docs/getting-started.md` documents the flow.
+
 ## Acceptance criteria
 
 A generated project must build and run from a clean checkout, expose expected tools to an MCP client, and enforce the same authorization and caching invariants as the shared runtime.

@@ -43,4 +43,21 @@ if (item?.id !== "42" || item?.name !== "Demo item 42") {
   throw new Error(`Unexpected getItem result: ${String(text)}`);
 }
 
+const created = run("tools/call", [
+  "--tool-name",
+  "createItem",
+  "--tool-args-json",
+  '{"body":{"name":"Widget","quantity":2}}',
+]);
+const createdText = created.result.content[0]?.text;
+const createdItem =
+  typeof createdText === "string" ? JSON.parse(createdText) : undefined;
+if (
+  createdItem?.id !== "item-1" ||
+  createdItem?.name !== "Widget" ||
+  createdItem?.quantity !== 2
+) {
+  throw new Error(`Unexpected createItem result: ${String(createdText)}`);
+}
+
 console.log("Inspector conformance passed: tools/list and tools/call");

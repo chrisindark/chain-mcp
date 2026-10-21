@@ -70,7 +70,7 @@ npx --yes @modelcontextprotocol/inspector@2.11.0 --cli \
 ```
 
 The same checks run through `pnpm conformance:inspector` after `pnpm build`.
-That script asserts the tool list and one tool call, and CI runs it in a separate
+That script asserts the tool list and both tool calls, and CI runs it in a separate
 job with Node.js 22.19.0.
 
 ## How the pieces fit

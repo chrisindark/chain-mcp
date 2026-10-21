@@ -8,6 +8,12 @@ An API specification that defines operations, schemas, parameters, responses, an
 
 An MCP-callable operation compiled from a contract or registered programmatically. Every tool has a stable name, description, input schema, and execution policy.
 
+## Tool source
+
+A producer of tool definitions. OpenAPI compilation is one source; application
+code registered through the authoring facade is another. Every source feeds the
+same runtime and policy pipeline, and none may bypass registration audits.
+
 ## Contract revision
 
 An immutable, validated version of an API contract. A revision has a source hash and compiler version.
@@ -15,6 +21,12 @@ An immutable, validated version of an API contract. A revision has a source hash
 ## Generated server
 
 A standalone MCP server project created from a specific contract revision. It uses the shared runtime and can be deployed independently.
+
+## Code-first server
+
+A standalone MCP server whose tools are defined in application code rather than
+compiled from an API contract. It uses the same runtime, transports, and policy
+as a generated server; its tools are not described by a contract manifest.
 
 ## Dynamic gateway
 

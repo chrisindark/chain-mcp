@@ -2,30 +2,32 @@
 
 ## 1. Overview
 
-The target architecture consists of a contract compiler, shared runtime, MCP adapters, optional infrastructure adapters, and two deployment modes. The current implementation contains `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, and `@chainmcp/server`; remaining components shown below are planned.
+The target architecture consists of tool sources, a shared runtime, MCP adapters, optional infrastructure adapters, and two deployment modes. The current implementation contains `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, and `@chainmcp/server`; remaining components shown below are planned. OpenAPI compilation is one tool source; tools may also be registered from application code through the authoring facade described in section 4.1.
 
 ```text
-                    API contract
-                         |
-                  Contract compiler
-                         |
-                   Tool definitions
-                         |
-             +-----------+-----------+
-             |                       |
-       Generated server        Dynamic gateway
-             |                       |
-             +-----------+-----------+
-                         |
-                   Shared runtime
-                         |
-      +------------------+------------------+
-      |          |          |        |      |
-     Auth       Cache    Rate limit Metrics JSON
-      |          |          |        |    navigation
-      +------------------+------------------+
-                         |
-                  Upstream HTTP API
+             API contract                 Code-defined tools
+                  |                              |
+          Contract compiler              Authoring facade
+                  |                              |
+                  +--------------+---------------+
+                                 |
+                          Tool definitions
+                                 |
+                  +--------------+---------------+
+                  |                              |
+          Generated server                Dynamic gateway
+                  |                              |
+                  +--------------+---------------+
+                                 |
+                           Shared runtime
+                                 |
+          +------------------+------------------+
+          |          |          |        |      |
+         Auth       Cache    Rate limit Metrics JSON
+          |          |          |        |    navigation
+          +------------------+------------------+
+                                 |
+                          Upstream HTTP API
 ```
 
 ## 2. Design goals
@@ -45,6 +47,7 @@ Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config
 | --------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `@chainmcp/core`            | Runtime interfaces, registry, execution pipeline, errors                                               |
 | `@chainmcp/compiler`        | OpenAPI parsing, validation, tool generation                                                           |
+| `@chainmcp/authoring`       | Code-first tool definitions, schema lowering, and scaffold support (planned, Milestone 8)              |
 | `@chainmcp/server`          | Official MCP SDK tool adapter and local stdio transport                                                |
 | `@chainmcp/cache-redis`     | Optional shared Redis cache adapter; cache interfaces remain in core                                   |
 | `@chainmcp/auth`            | Identity, authorization, and credential abstractions, including the default operation-scope authorizer |
@@ -84,6 +87,37 @@ The runtime supports two tenancy modes (ADR 0008). **Single-tenant** deployments
 
 Timeout and cancellation are cooperative. The runtime creates a per-call `AbortController`, aborts it when the caller cancels or the timeout elapses, and rejects the caller with `CANCELLED` or `UPSTREAM_TIMEOUT`. This does not forcibly terminate `execute` or release resources it has acquired. Tool and executor implementations must observe `context.signal`, bind it to abortable I/O, and release resources in `finally`. A tool that ignores the signal may continue running after the caller has been rejected.
 
+Argument validation uses the audited JSON Schema subset described in
+`API_REFERENCE.md`. It enforces required fields, primitive enums, string
+length/pattern/format constraints, numeric bounds and multiples, array
+length/uniqueness, and object property counts. Patterns use the linear-time
+`re2js` engine so a contract pattern cannot cause catastrophic backtracking;
+unsupported patterns and malformed constraint values fail registration.
+Structural `uniqueItems` comparison has a bounded depth/node budget and fails
+closed when exceeded. Unsupported composition is rejected rather than ignored.
+
+## 4.1 Tool sources and code-first authoring
+
+`ToolDefinition` is the runtime boundary; the OpenAPI compiler is one producer,
+not part of the runtime. Milestone 8 adds a `ToolSource` interface and a manual
+source:
+
+- **OpenAPI source.** The compiler and executor produce tools with deterministic
+  manifests and a pinned contract revision.
+- **Manual source.** Application code registers tools through an authoring
+  facade (working name `defineTool()`). Input schemas are lowered to the same
+  audited JSON Schema subset, and every invocation goes through the same
+  authorization, validation, cache, rate-limit, timeout, and output-policy
+  pipeline.
+- **Declarative source (post-1.0).** A versioned descriptor executed by the
+  bounded HTTP executor, with no user-supplied code evaluation.
+
+Compiled tools preserve deterministic manifests and contract hashes. Manual
+tools are application code owned by the deploying developer and are not covered
+by a contract manifest; they remain subject to the same runtime policy. No
+source may bypass registration audits, and no source evaluates user-supplied
+source code.
+
 ## 5. OpenAPI compiler
 
 `@chainmcp/compiler` converts one OpenAPI 3.0 or 3.1 document into deterministic
@@ -110,8 +144,10 @@ The pipeline is:
    bindings and request-body media metadata for the executor. Flatten an `allOf`
    of object schemas into one object schema only when properties, `required`,
    and `additionalProperties` can be merged without changing the intersection.
-6. Translate OpenAPI 3.0 `nullable` and `readOnly` input semantics, preserve
-   3.1 null unions, and audit the result with `auditInputSchema`.
+6. Translate OpenAPI 3.0 `nullable`, `readOnly`, and boolean exclusive-bound
+   semantics, preserve 3.1 null unions and numeric exclusive bounds, preserve
+   the supported validation constraints, and audit the result with
+   `auditInputSchema`.
 7. Map declared responses in status-key order with their selected media type and
    a descriptive response schema. Response schemas resolve local references,
    omit `writeOnly` properties, and preserve composition keywords; they are not
@@ -124,9 +160,10 @@ The pipeline is:
 9. Emit `sourceHash`, a canonical-document `contractRevision`, per-tool hashes,
    a `toolsetHash`, and `diffManifests()` output.
 
-Strict mode is the default: unsupported input validation constraints are errors
-and the operation is omitted. Permissive mode may drop constraints that cannot
-weaken the supported subset, with a warning. Input `oneOf`, `anyOf`, `not`,
+Strict mode is the default: unsupported input annotations are errors and the
+operation is omitted. Permissive mode may drop annotations that cannot weaken
+the supported subset, with a warning. Supported constraints are enforced, not
+dropped. Input `oneOf`, `anyOf`, `not`,
 conditional, dependent, and pattern composition, remote references, unknown
 schema keywords, and schema-valued `additionalProperties` are always errors
 because dropping them would accept values the contract rejects. `allOf` is
@@ -165,6 +202,17 @@ The executor does not resolve upstream credentials, validate response schemas,
 retry requests, or honor proxy environment variables. A custom transport is
 trusted adapter code; the default Node transport is the component that pins DNS
 and verifies the peer.
+
+### End-to-end example
+
+`examples/petstore` wires the compiler, executor, runtime, and stdio MCP adapter
+into one runnable project. It compiles a small OpenAPI contract, binds the
+operations with an exact allowlist and pinned resolver, and uses an in-process
+`UpstreamTransport` fixture so no network or credentials are required. The
+example is deliberately not a loopback HTTP server: the destination policy
+rejects loopback and private addresses even when allowlisted. `docs/getting-started.md`
+documents the Inspector CLI commands, and `pnpm conformance:inspector` asserts
+`tools/list` and `tools/call` against the built example.
 
 ## 6. Generated server mode
 

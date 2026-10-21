@@ -63,18 +63,18 @@ are not re-argued per milestone. Deferred risks and their triggers live in
 
 - [x] Parse and validate OpenAPI 3.0 and 3.1.
 - [x] Map operations, parameters, request bodies, and response schemas.
-- [ ] Resolve nested and composed `$ref` schemas deterministically.
-- [ ] Preserve required fields, enums, formats, and numeric and string constraints in generated validators.
+- [x] Resolve nested and composed `$ref` schemas deterministically.
+- [x] Preserve required fields, enums, formats, and numeric and string constraints in generated validators.
 - [x] Generate stable tool names and descriptions.
 - [x] Detect circular references, invalid schemas, and tool-name collisions; fail with actionable diagnostics.
-- [ ] Translate supported JSON Schema constructs into validators.
+- [x] Translate supported JSON Schema constructs into validators.
 - [x] Map authentication schemes to explicit policies, including alternative (OR) and combined (AND) requirements; never silently drop a requirement.
 - [x] Report unsupported constructs and ambiguous mappings.
 - [x] Enforce outbound destination policy (allowlist, private-range and metadata blocking, redirect revalidation) in `@chainmcp/executor`; generated-server wiring remains open.
 - [x] Bind `context.signal` to upstream calls in `@chainmcp/executor` and release executor resources on timeout or cancellation.
 - [x] Emit a deterministic generation manifest with a toolset hash and a regeneration diff.
-- [ ] Validate compiled output with an MCP client and an Inspector conformance check.
-- [ ] Document one end-to-end example in `docs/getting-started.md` and `examples/`.
+- [x] Validate compiled output with an MCP client and an Inspector conformance check.
+- [x] Document one end-to-end example in `docs/getting-started.md` and `examples/`.
 - [x] Add deterministic compiler tests and fixtures.
 
 **Exit criteria:** a representative API contract compiles into validated tools with documented limitations; generated executors bind the cancellation signal and the outbound destination policy to upstream I/O; output is byte-identical for the same contract and compiler version; and a runnable example is documented in `docs/getting-started.md`.
@@ -90,10 +90,12 @@ description, selected media type, and translated response schema, and expands
 security requirements into explicit OR alternatives and AND scheme sets with
 copied credential metadata and required scopes. Response schemas are
 descriptive metadata, and authentication is not enforced. Object `allOf`
-intersections are flattened deterministically for inputs; unsupported input
-constraints are rejected in strict mode and reported when droppable in
-permissive mode; input `oneOf`/`anyOf`/`not`, conditional/dependent/pattern
-composition, and remote references are always rejected.
+intersections are flattened deterministically for inputs; nested and composed
+local references are resolved with cycle/depth limits; the runtime-supported
+constraints are preserved and enforced; unsupported input annotations are
+rejected in strict mode and reported when droppable in permissive mode; input
+`oneOf`/`anyOf`/`not`, conditional/dependent/pattern composition, and remote
+references are always rejected.
 
 `@chainmcp/executor` converts compiled operations into runnable tools. It maps
 path, query, header, and JSON body inputs; enforces an exact host allowlist,
@@ -104,9 +106,14 @@ peer; rejects compressed and oversized responses; and binds `context.signal`
 plus a total timeout to upstream I/O. It does not inject credentials, validate
 response schemas, retry, or resolve per-operation `servers`.
 
-Input union composition, an output validator, authentication enforcement,
-generated-server/CLI wiring, Inspector conformance, and an end-to-end example
-remain open, so the exit criteria are not yet met.
+The `examples/petstore` project compiles a contract, binds the executor,
+registers the tools in the shared runtime, and serves them over stdio. The MCP
+Inspector CLI lists and calls those tools; `pnpm conformance:inspector` asserts
+both operations and runs in CI.
+
+Input union composition, an output validator, authentication enforcement, and
+generated-server/CLI wiring remain open. They are documented limitations, not
+part of this milestone's exit criteria.
 
 ## Milestone 4 — Smart caching and token accounting
 
@@ -167,7 +174,25 @@ Redis adapter is published as `@chainmcp/cache-redis`.
 
 **Exit criteria:** an exported server builds and runs independently.
 
-## Milestone 8 — Dynamic gateway
+## Milestone 8 — Tool sources and code-first authoring
+
+OpenAPI compilation is the default tool source, not the only one. This
+milestone makes a blank, code-first project a supported deployment without
+forking the runtime or bypassing policy.
+
+- [ ] Define a `ToolSource` boundary that produces `ToolDefinition`s, with OpenAPI compilation as one implementation.
+- [ ] Add a manual tool source whose tools pass through the same validation, authorization, caching, rate-limit, cancellation, and output-policy pipeline as compiled tools.
+- [ ] Add an authoring facade (working name `defineTool()`) that accepts a supported `JsonSchema` and an optional Zod adapter, lowering to the audited schema subset and rejecting unsupported schemas at definition time.
+- [ ] Add `chainmcp init --blank` (or equivalent) that scaffolds a project with one hand-written example tool and no contract.
+- [ ] Add `chainmcp dev` for a local authoring loop, using stdio first and HTTP once the transport lands.
+- [ ] Document the code-first path in `docs/getting-started.md`, `API_REFERENCE.md`, and `CONFIGURATION.md`, and add a runnable example.
+- [ ] Test policy parity between manual and compiled tools, including error mapping, cancellation, and response caps.
+
+**Exit criteria:** a developer can scaffold a project without an OpenAPI document, define a tool in code, and call it from an MCP client with the same authorization, validation, and output guarantees as a compiled tool. Tool handlers are trusted application code shipped by the deploying developer; the server never evaluates user-supplied source.
+
+**Non-goals:** a visual tool editor, arbitrary code upload, and a hosted control plane. The declarative builder is tracked post-1.0.
+
+## Milestone 9 — Dynamic gateway
 
 - [ ] Add versioned contract registry.
 - [ ] Bind each contract revision to tenant policy.
@@ -178,7 +203,7 @@ Redis adapter is published as `@chainmcp/cache-redis`.
 
 **Exit criteria:** multiple contracts can be served safely without cross-tenant access.
 
-## Milestone 9 — Stable release
+## Milestone 10 — Stable release
 
 - [ ] Complete public API review.
 - [ ] Publish supported-version matrix.
@@ -187,6 +212,22 @@ Redis adapter is published as `@chainmcp/cache-redis`.
 - [ ] Document migration and rollback procedures.
 - [ ] Configure signed releases and software bill of materials.
 - [ ] Meet all 1.0 release gates in `RELEASES.md`.
+
+## Post-1.0 — Declarative tool builder and admin UI
+
+Not part of the 1.0 critical path. A visual builder is a separate product
+surface that requires persistence, an admin identity model, and a dynamic
+registry. It must reopen the persistence and control-plane decisions recorded
+as ENT-04/ENT-05 in `docs/risk-register.md`, and it requires an ADR before
+implementation.
+
+- [ ] Define a versioned declarative tool descriptor (name, schema, method, URL, auth reference, policy) executed by the bounded HTTP executor.
+- [ ] Add a self-hosted admin API and local UI for creating, validating, previewing, and publishing descriptors.
+- [ ] Persist descriptors with tenant ownership, revision history, and rollback.
+- [ ] Route descriptor-backed tools through the same policy, SSRF, redaction, and audit paths as compiled tools.
+- [ ] Exclude arbitrary code upload, hosted SaaS control plane, and unaudited execution.
+
+**Exit criteria:** a self-hosted operator can publish a declarative HTTP tool through an admin surface without editing code, and the tool is indistinguishable from a compiled tool at invocation time.
 
 ## Deferred and out of scope
 

@@ -25,6 +25,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Document explicit OR/AND authentication policy mapping, anonymous alternatives, scope validation, and the unenforced boundary in `API_REFERENCE.md`, `ARCHITECTURE.md`, `docs/openapi-support.md`, and ADR 0017.
 - Document the upstream executor, request/response mapping, destination policy, cancellation binding, and remaining credential/validation limits in `API_REFERENCE.md`, `ARCHITECTURE.md`, `SECURITY.md`, `docs/openapi-support.md`, `docs/generated-servers.md`, and ADR 0018.
 - Document the `chainmcp/no-blocking-io` lint rule and its runtime-source scope in `DEVELOPMENT.md`.
+- Add Milestone 8 (tool sources and code-first authoring), renumber the dynamic gateway and stable release to Milestones 9 and 10, and record ADR 0019. Scaffold, `defineTool()`, `chainmcp dev`, and code-first docs are in the 1.0 path; the declarative tool builder and admin UI are explicitly post-1.0 and are not a 1.0 release gate.
 
 ### Implementation
 
@@ -72,6 +73,8 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Add the compiler package to the fixed release group and root version-sync check.
 - Record sorted path/query/header parameter bindings and JSON request-body media metadata on `CompiledOperation`, include them in per-tool hashes, and reject transport/credential headers such as `Content-Type` and `User-Agent` as tool inputs.
 - Add `@chainmcp/executor` with `createUpstreamExecutor()`: compile output becomes runnable tools with bounded path/query/header/JSON-body mapping; exact host allowlists; HTTPS by default; fixed protocol/port; same-host redirect revalidation; rejection of any loopback, private, shared, link-local, metadata, multicast, documentation, or reserved DNS answer; pinned lookups with peer verification; no proxy environment or connection reuse; compression refusal; URL/header/request/response/redirect/time caps; and `context.signal`/total-timeout binding. It does not inject credentials, enforce authentication, validate response schemas, or retry.
+- Extend the runtime validator and compiler with bounded schema constraints: string `minLength`/`maxLength`/`pattern` and asserted formats, numeric bounds and `multipleOf`, array length and structural `uniqueItems`, and object property counts. Patterns use the linear-time `re2js` engine; invalid or oversized patterns fail registration. OpenAPI 3.0 boolean exclusive bounds are normalized to numeric JSON Schema bounds.
+- Add `examples/petstore`, a compiled stdio MCP server that wires the compiler, executor, shared runtime, and server adapter to a deterministic mock upstream. Add `docs/getting-started.md` and `pnpm conformance:inspector`, which runs the MCP Inspector CLI against `tools/list` and `tools/call`; CI runs the Inspector check in a separate Node.js 22.19.0 job.
 
 ### Breaking changes
 
@@ -83,6 +86,6 @@ The project is pre-release. Versions and release dates must reflect actual publi
 ### Limitations
 
 - No OpenAPI response-schema validation, CLI, gateway, credential provider, authentication enforcement, generated-server wiring, or concrete cache/auth/rate-limit adapter is included.
-- `@chainmcp/compiler` output is operation metadata; `@chainmcp/executor` turns it into runnable tools. Response schemas and authentication policies are not enforced, input `oneOf`/`anyOf`/`not` composition is rejected, remote references and format/numeric/string constraint enforcement remain unsupported, and authentication plus Inspector conformance remain Milestone 3/5 work.
+- `@chainmcp/compiler` output is operation metadata; `@chainmcp/executor` turns it into runnable tools. Response schemas and authentication policies are not enforced; input `oneOf`/`anyOf`/`not` composition, `const`, remote references, and formats outside the asserted set remain unsupported. Authentication enforcement remains Milestone 5 work; generated-server/CLI wiring remains Milestone 7 work.
 - The core input validator supports only the subset documented in `API_REFERENCE.md`.
 - License selection remains unresolved; the existing `LICENSE` file is empty.
