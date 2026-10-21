@@ -87,9 +87,10 @@ Open questions:
 - Budget enforcement cannot be built on estimates alone. When budgeting lands,
   estimates must be labeled in limits and UI, and exact adapters should be
   preferred for enforcement.
-- Projection is not implemented, so measured counts may later decrease when
-  projection is introduced. Baselines must record whether projection applied;
-  the current event does not yet carry that flag.
+- At recording time, projection was not implemented, so measured counts could
+  later decrease when projection was introduced. ADR 0012 and ADR 0013 now
+  implement projection and budgets. Baselines must still record whether
+  projection applied; the current event does not yet carry that flag.
 
 ## Security implications
 
@@ -107,7 +108,9 @@ Open questions:
 
 ## Follow-up actions
 
-- Token-budgeted projection and output-level policy enforcement (M4, SEC-05).
+- ~~Token-budgeted projection and output-level policy enforcement (M4, SEC-05).~~
+  Implemented in ADR 0012 and ADR 0013; contract-level rules for generated tools
+  remain open.
 - Share serialization between measurement and the MCP adapter to avoid duplicate
   work.
 - Add model-specific adapter examples and a supported-tokenizer matrix.

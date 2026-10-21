@@ -3,8 +3,8 @@
 ChainMcp can cache idempotent read results. Caching is **off by default** at
 three levels: a tool must opt in, the runtime must be given a store, and the
 deployment must supply an authorization partition. This page describes the
-implemented Milestone 4 slice; see `ROADMAP.md` for what remains (Redis and
-other shared stores, bulk invalidation, and request coalescing).
+implemented Milestone 4 slice; see `ROADMAP.md` for what remains (bulk
+invalidation, request coalescing, and other shared stores).
 
 ## Enabling caching
 
@@ -209,6 +209,45 @@ temporary string before it is rejected. Values that are non-JSON, cyclic, have
 accessors, define a callable `toJSON`, nest deeper than 64 levels, or exceed
 50,000 nodes are rejected rather than normalized.
 
+## Shared Redis cache
+
+`@chainmcp/cache-redis` provides a shared `CacheStore` without coupling core to
+a Redis client:
+
+```ts
+import { RedisCacheStore } from "@chainmcp/cache-redis";
+import { createClient } from "redis";
+
+const client = createClient({ url: process.env.REDIS_URL });
+await client.connect();
+
+const runtime = new InMemoryToolRuntime({
+  cache: {
+    store: new RedisCacheStore({
+      client: {
+        get: (key) => client.get(key),
+        set: (key, value, ttlMs) => client.set(key, value, { PX: ttlMs }),
+        delete: (key) => client.del(key),
+      },
+      keyPrefix: "chainmcp:prod:",
+      commandTimeoutMs: 500,
+    }),
+    authorizationPartition,
+  },
+});
+```
+
+The adapter accepts only current-version hashed keys, serializes and validates
+values itself, applies a millisecond TTL, and bounds entry size, TTL, and every
+command. It does not manage the connection, TLS, credentials, retries, eviction,
+or cluster topology; the supplied client does. A Redis outage or corrupt value
+rejects the cache operation, which the runtime already treats as a bypass or miss.
+
+Use a deployment-specific `keyPrefix` so environments sharing Redis cannot read
+each other's entries. Changing the prefix makes old entries unreachable; rotate
+it deliberately. The adapter's command timeout rejects the cache call but does
+not cancel the client's command, so configure client socket timeouts too.
+
 ## Security notes
 
 - Authorization always runs before a cache read (ADR 0003, ADR 0010).
@@ -223,12 +262,15 @@ accessors, define a callable `toJSON`, nest deeper than 64 levels, or exceed
   raw result first and project on read.
 - A shared/persistent store can outlive a projection-policy change. Rotate the
   namespace or revision when projection changes.
+- Redis credentials belong in the client configuration, never in cache keys,
+  partitions, or telemetry. Use TLS and a private network for a shared store,
+  and treat the stored payloads as sensitive.
+- `keyPrefix` separates deployments; it is not an authorization boundary. The
+  hashed key and authorization partition remain the isolation mechanism.
 
 ## Not implemented yet
 
-- Redis or other shared stores.
-- A declarative field-selection policy; projection is a deployment-supplied hook.
+- Shared stores other than the optional Redis adapter.
 - Bulk or predicate cache invalidation.
-- Request coalescing and cache-I/O timeouts (distributed adapters must bound
-  their own latency).
+- Request coalescing.
 - Per-content-block token measurement and aggregated token/cache exporters.

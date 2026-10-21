@@ -1,5 +1,6 @@
 ---
 "@chainmcp/core": minor
+"@chainmcp/cache-redis": minor
 ---
 
 Add a bounded in-memory LRU `CacheStore` adapter and move cache keys to v2
@@ -15,5 +16,9 @@ output projection and token budgets: `ToolDefinition.output` opts into a
 deployment-supplied `ResultProjector`, and `maxTokens` rejects over-budget or
 uncountable results before caching or returning them. Projected output must be
 JSON, cached entries contain only the projection, and projection/budget failures
-never fall back to the raw result. Runtime caching, measurement, projection, and
-budgets remain disabled unless the deployment configures them and a tool opts in.
+never fall back to the raw result. Add `createFieldProjector()` with bounded
+declarative `output.fields` include/exclude paths. Add `@chainmcp/cache-redis`,
+an optional shared cache adapter with validated keys/values, bounded TTL and
+entry size, and per-command timeouts. Runtime caching, measurement, projection,
+and budgets remain disabled unless the deployment configures them and a tool
+opts in.

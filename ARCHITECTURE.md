@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-The target architecture consists of a contract compiler, shared runtime, MCP adapters, optional infrastructure adapters, and two deployment modes. The current implementation contains `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, and `@chainmcp/server`; remaining components shown below are planned.
+The target architecture consists of a contract compiler, shared runtime, MCP adapters, optional infrastructure adapters, and two deployment modes. The current implementation contains `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, and `@chainmcp/server`; remaining components shown below are planned.
 
 ```text
                     API contract
@@ -39,14 +39,14 @@ The target architecture consists of a contract compiler, shared runtime, MCP ada
 
 ## 3. Monorepo package boundaries
 
-Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, and `@chainmcp/server`. Remaining rows describe planned boundaries; no empty packages are created for them.
+Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, and `@chainmcp/server`. Remaining rows describe planned boundaries; no empty packages are created for them.
 
 | Package                     | Responsibility                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `@chainmcp/core`            | Runtime interfaces, registry, execution pipeline, errors                                               |
 | `@chainmcp/compiler`        | OpenAPI parsing, validation, tool generation                                                           |
 | `@chainmcp/server`          | Official MCP SDK tool adapter and local stdio transport                                                |
-| `@chainmcp/cache`           | Cache interfaces and adapters                                                                          |
+| `@chainmcp/cache-redis`     | Optional shared Redis cache adapter; cache interfaces remain in core                                   |
 | `@chainmcp/auth`            | Identity, authorization, and credential abstractions, including the default operation-scope authorizer |
 | `@chainmcp/rate-limit`      | Quotas and concurrency limits                                                                          |
 | `@chainmcp/analytics`       | Events, metrics, tracing                                                                               |
@@ -216,14 +216,19 @@ authorization, validation, and rate limiting, so a hit cannot bypass those
 stages. Cache read, write, partition, and key-derivation failures degrade to a
 miss or bypass; they never fail the invocation or serve data across partitions.
 There is no request coalescing, and cache I/O is not covered by the per-call
-timeout, so distributed adapters must bound their own latency. Writes are not
-cached by default. Cache failures must never result in serving data from another
-tenant or authorization context.
+execution timeout, so distributed adapters must bound their own latency. The
+optional `@chainmcp/cache-redis` adapter bounds each Redis command with
+`commandTimeoutMs`, but does not cancel the underlying client command; clients
+must configure their own socket timeouts. Writes are not cached by default.
+Cache failures must never result in serving data from another tenant or
+authorization context.
 
 Output projection and token-budget enforcement happen after execution and
 before a cache write. A tool that opts into `output` must be projected; the
 runtime rejects an unserializable projection and never falls back to the raw
-result. The entry written to the cache is the projected value, so a hit cannot
+result. `createFieldProjector()` supplies declarative `include`/`exclude` paths
+with bounded depth and traversal; custom `ResultProjector` implementations
+remain the extension point for computed policy. The entry written to the cache is the projected value, so a hit cannot
 serve unprojected fields and does not re-run projection. Budgets are checked on
 the serialized projected value; a count that cannot be verified fails closed.
 Because projection policy is not part of the key, changing a projector, budget,

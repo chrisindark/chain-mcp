@@ -81,20 +81,21 @@ are not re-argued per milestone. Deferred risks and their triggers live in
 ## Milestone 4 — Smart caching and token accounting
 
 - [x] Add bounded in-memory cache for development (LRU, bounded retained bytes/entries, per-entry cap, TTL cap, and JSON value depth/node limits).
-- [ ] Add optional Redis adapter.
+- [x] Add optional Redis adapter (`@chainmcp/cache-redis`, with bounded commands, validated keys/values, TTLs, and an injectable client).
 - [x] Implement safe, versioned, hashed cache key construction and tenant/principal/authorization-context partitioning.
 - [x] Cache eligible read operations only by default (opt-in `ToolDefinition.cache`; authorization, validation, and rate limiting still run on hits; key/partition/store failures bypass instead of failing the call).
-- [ ] Add TTL, invalidation, and field projection (TTL and exact-match invalidation are implemented; declarative field projection remains open).
-- [x] Enforce output-level policy and a token-budgeted projection on tool results (per-tool opt-in `ResultProjector`, mandatory JSON output, and `output.maxTokens` enforced before caching and measurement; deployment supplies the field policy).
+- [x] Add TTL, invalidation, and field projection (TTL and exact-match invalidation are implemented; `createFieldProjector()` provides bounded declarative include/exclude paths).
+- [x] Enforce output-level policy and a token-budgeted projection on tool results (per-tool opt-in `ResultProjector` or built-in `createFieldProjector()`, mandatory JSON output, and `output.maxTokens` enforced before caching and measurement).
 - [x] Integrate tokenizer adapters (optional synchronous `Tokenizer` with id, exact/estimate declaration, and count).
 - [x] Distinguish exact counts from estimates (recorded as `tokenUsage.measurement`; estimates are never relabeled).
 - [x] Record cache hit ratio and token metrics (per-invocation hit/miss/bypass and `tokenUsage`; aggregated ratios are computed by exporters).
 
 **Exit criteria:** tests demonstrate cache isolation and accurate labeling of token measurements.
 
-**Status (2026-10-21):** caching, measurement, and runtime output enforcement
-are implemented and covered by tests. The optional Redis adapter and declarative
-field projection remain unimplemented.
+**Status (2026-10-21):** all Milestone 4 items are implemented and covered by
+tests. Remaining distributed concerns (bulk invalidation, request coalescing) are
+tracked outside M4; declarative field projection is in core and the optional
+Redis adapter is published as `@chainmcp/cache-redis`.
 
 ## Milestone 5 — Authentication and rate limiting
 

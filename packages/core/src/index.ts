@@ -12,6 +12,8 @@ import {
   MAX_SCHEMA_DEPTH,
   type JsonSchema,
 } from "./schema.js";
+import { assertFieldSelection } from "./field-projection.js";
+import type { FieldSelection } from "./field-projection.js";
 
 export type {
   JsonSchema,
@@ -57,6 +59,13 @@ export interface ToolOutputPolicy {
    * Omitting it still opts into projection, without a budget.
    */
   maxTokens?: number;
+  /**
+   * Declarative include/exclude rules for the built-in field projector. Use
+   * `createFieldProjector()` as the runtime projector to apply them. Paths are
+   * dot-separated keys and traverse arrays element-wise. Registration validates
+   * the selection; see `FieldSelection`.
+   */
+  fields?: FieldSelection;
 }
 
 export interface ResultProjectionRequest {
@@ -1050,6 +1059,19 @@ function assertOutputMetadata(
       `Tool '${tool.name}' must declare a positive integer output maxTokens`,
     );
   }
+  if (tool.output.fields !== undefined) {
+    try {
+      assertFieldSelection(tool.output.fields);
+    } catch (error) {
+      throw new RuntimeError(
+        "CONTRACT_INVALID",
+        `Tool '${tool.name}' has an invalid field selection: ${
+          error instanceof Error ? error.message : "invalid selection"
+        }`,
+        { cause: error },
+      );
+    }
+  }
   if (options.projector === undefined) {
     throw new RuntimeError(
       "CONTRACT_INVALID",
@@ -1457,5 +1479,22 @@ function canonicalize(value: unknown, ancestors: Set<object>): unknown {
   return value;
 }
 
-export { InMemoryCacheStore } from "./cache.js";
+export {
+  assertJsonCacheValue,
+  DEFAULT_CACHE_MAX_ENTRY_BYTES,
+  DEFAULT_CACHE_MAX_TTL_SECONDS,
+  InMemoryCacheStore,
+} from "./cache.js";
 export type { InMemoryCacheStoreOptions } from "./cache.js";
+export { isCurrentCacheKey } from "./cache-key.js";
+export {
+  assertFieldSelection,
+  createFieldProjector,
+  FieldSelectionError,
+  MAX_FIELD_PATHS,
+  MAX_FIELD_PATH_DEPTH,
+  MAX_FIELD_PATH_LENGTH,
+  MAX_FIELD_PROJECTION_DEPTH,
+  MAX_FIELD_PROJECTION_NODES,
+} from "./field-projection.js";
+export type { FieldSelection } from "./field-projection.js";

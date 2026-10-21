@@ -89,8 +89,9 @@ blank, or non-finite TTL with `CONTRACT_INVALID`. Declaring `cache` does not
 enable caching by itself: the runtime must also be constructed with
 `RuntimeOptions.cache` (ADR 0010).
 
-`output` opts a tool into deployment-supplied output projection and an optional
-token budget. Presence of `output` is the opt-in; `maxTokens` is optional.
+`output` opts a tool into output projection (built-in field rules or a
+deployment-supplied projector) and an optional token budget. Presence of
+`output` is the opt-in; `maxTokens` and `fields` are optional.
 Registration requires the runtime to have a `ResultProjector` for any declared
 output policy, and a `Tokenizer` when `maxTokens` is set. A missing projector,
 missing tokenizer, or non-positive/non-integer `maxTokens` is
@@ -332,9 +333,27 @@ export interface ResultProjector {
   project(request: ResultProjectionRequest): unknown;
 }
 
+export interface FieldSelection {
+  include?: readonly string[];
+  exclude?: readonly string[];
+}
+
 export interface ToolOutputPolicy {
   maxTokens?: number;
+  fields?: FieldSelection;
 }
+
+export function createFieldProjector(): ResultProjector;
+export function assertFieldSelection(
+  fields: unknown,
+): asserts fields is FieldSelection;
+export class FieldSelectionError extends Error {}
+
+export const MAX_FIELD_PATHS = 64;
+export const MAX_FIELD_PATH_DEPTH = 16;
+export const MAX_FIELD_PATH_LENGTH = 256;
+export const MAX_FIELD_PROJECTION_DEPTH = 64;
+export const MAX_FIELD_PROJECTION_NODES = 50_000;
 ```
 
 `RuntimeOptions.projector` supplies the deployment's output policy. It runs only
@@ -358,6 +377,41 @@ negative, fractional, non-finite, or unsafe count also fails closed with
 recorded as `tokenUsage` with the adapter's exact/estimate label. Budgets are
 integers in the adapter's token units; with an `estimate` adapter the limit is
 only as accurate as the estimate.
+
+`output.fields` selects the built-in field projector:
+
+```ts
+runtime = new InMemoryToolRuntime({
+  projector: createFieldProjector(),
+});
+
+runtime.register({
+  // ...
+  output: { fields: { include: ["id", "profile.email"] } },
+});
+```
+
+`include` keeps only named paths; `exclude` removes named paths and retains
+everything else. Exactly one must be provided, with 1-64 unique paths. A path is
+one or more dot-separated object keys (maximum 16 segments and 256 characters);
+arrays encountered along a path are traversed element-wise, so `items.id`
+applies to each element and `id` applies to a root array. No array indices,
+wildcards, escapes, or keys containing dots are supported. `__proto__`,
+`prototype`, and `constructor` segments are rejected.
+
+`include` builds a new object from plain JSON objects and arrays. Array elements
+that do not match the remaining path, and non-plain objects, become `null`;
+missing fields are omitted. `exclude` clones only modified branches, leaves
+unmatched values as-is, and fails with `OUTPUT_POLICY_VIOLATION` if a selected
+path reaches a non-plain object. Neither mode mutates the original result.
+Projection is bounded to 64 levels and 50,000 visited nodes; exceeding either
+fails the call rather than truncating silently. Path validation is enforced at
+registration with `CONTRACT_INVALID` and re-checked at projection time.
+
+`createFieldProjector` passes through tools without `output.fields`, so it can be
+installed runtime-wide. A custom projector can also read `output.fields`, but
+the runtime cannot enforce that a custom projector honors them; use the built-in
+one for declarative policy. See `docs/field-projection.md`.
 
 On a cache hit, the stored value is already projected and budget-checked, so the
 projector and budget are not re-run. Cached entries therefore contain only
@@ -387,9 +441,19 @@ export interface InMemoryCacheStoreOptions {
 export class InMemoryCacheStore implements CacheStore {
   constructor(options?: InMemoryCacheStoreOptions);
 }
+
+export function isCurrentCacheKey(key: unknown): key is string;
+export function assertJsonCacheValue(root: unknown): void;
+
+export const DEFAULT_CACHE_MAX_ENTRY_BYTES = 256 * 1024;
+export const DEFAULT_CACHE_MAX_TTL_SECONDS = 3_600;
 ```
 
 Adapters must enforce bounded TTLs and entry sizes. Shared caches must partition data by tenant and authorization context. `get` must return a value the caller may mutate without affecting stored state, and must return `undefined` for a miss.
+
+Adapter authors can use `isCurrentCacheKey` to reject non-current hashed keys
+and `assertJsonCacheValue` to apply the same JSON, depth, node, accessor, and
+callable-`toJSON` validation as the in-memory and Redis stores.
 
 `InMemoryCacheStore` is a process-local LRU implementation for development and
 tests. Its options default to 1,000 entries, 16 MiB retained key/value bytes,
@@ -500,6 +564,62 @@ export interface ContractCompiler {
 ```
 
 The final compiler contract must be validated against the actual parser and schema support.
+
+## `@chainmcp/cache-redis`
+
+Optional Redis-backed `CacheStore` for shared caches:
+
+```ts
+export interface RedisCacheClient {
+  get(key: string): Promise<string | null | undefined>;
+  set(key: string, value: string, ttlMilliseconds: number): Promise<unknown>;
+  delete(key: string): Promise<unknown>;
+}
+
+export interface RedisCacheStoreOptions {
+  client: RedisCacheClient;
+  keyPrefix?: string;
+  maxEntryBytes?: number;
+  maxTtlSeconds?: number;
+  commandTimeoutMs?: number;
+}
+
+export class RedisCacheStore implements CacheStore {
+  constructor(options: RedisCacheStoreOptions);
+}
+
+export const DEFAULT_REDIS_COMMAND_TIMEOUT_MS = 1_000;
+```
+
+The client is a narrow command wrapper, not a connection manager. It must
+implement `get`, `set`, and `delete`, with `set` receiving a TTL in milliseconds.
+For `node-redis`:
+
+```ts
+const store = new RedisCacheStore({
+  client: {
+    get: (key) => client.get(key),
+    set: (key, value, ttlMs) => client.set(key, value, { PX: ttlMs }),
+    delete: (key) => client.del(key),
+  },
+});
+```
+
+The adapter accepts only current-version hashed keys from `createCacheKey`,
+serializes and validates values with `assertJsonCacheValue`, and enforces entry
+size (default 256 KiB) and TTL (default 3,600 seconds). `get` returns `undefined`
+for a Redis `null`/`undefined` and parses each value into an isolated object; a
+corrupt, oversized, or non-JSON value rejects, and the runtime treats that as a
+cache bypass. `delete` removes one exact entry.
+
+`keyPrefix` is an optional literal namespace of 1-128 printable ASCII
+characters, prepended to every storage key. Changing it makes old entries
+unreachable, so rotate it deliberately. Each Redis command is bounded by
+`commandTimeoutMs` (default 1,000 ms). The timeout rejects the adapter promise
+but does not cancel the underlying client command; configure socket and command
+timeouts in the client as well. The adapter does not manage connections,
+credentials, TLS, retries, eviction policy, or cluster topology. See
+`docs/caching.md` and ADR 0014.
 
 ## `@chainmcp/auth`
 

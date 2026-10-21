@@ -99,7 +99,7 @@ export class InMemoryCacheStore implements CacheStore {
       );
     }
 
-    assertJsonValue(value);
+    assertJsonCacheValue(value);
     let serializedValue: string | undefined;
     try {
       serializedValue = JSON.stringify(value);
@@ -172,7 +172,7 @@ function assertHashedCacheKey(key: string): void {
   }
 }
 
-function assertJsonValue(root: unknown): void {
+export function assertJsonCacheValue(root: unknown): void {
   const ancestors = new Set<object>();
   const stack: Array<{ value: unknown; depth: number } | { exit: object }> = [
     { value: root, depth: 0 },

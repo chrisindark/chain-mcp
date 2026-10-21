@@ -73,8 +73,8 @@ Additional rules:
 
 ## Follow-up actions
 
-- Implement bounded in-memory and optional Redis adapters with isolation tests
-  (Milestone 4).
+- ~~Implement bounded in-memory and optional Redis adapters with isolation tests
+  (Milestone 4).~~ Implemented in ADR 0010 and ADR 0014.
 - Add tests for tenant, principal, scope, revision, and argument partitioning.
 - Verify mutation bypass and cache-outage behavior.
 - Maintain the key-format version when canonicalization or included fields

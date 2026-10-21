@@ -27,8 +27,9 @@ silently bypasses output policy.
 
 1. **Projection is a deployment-supplied, synchronous adapter.**
    `ResultProjector.project({ tool, context, result })` returns the exact value
-   the caller and model may receive. The runtime does not implement a field
-   policy or guess which fields are safe.
+   the caller and model may receive. The runtime does not guess which fields are
+   safe. ADR 0013 later adds an opt-in declarative field projector, but there is
+   still no implicit default policy or generic denylist.
 2. **Per-tool opt-in, registration-time enforcement.** `ToolDefinition.output`
    opts a tool in; `maxTokens` is optional. A declared output policy without a
    configured projector, or a budget without a tokenizer, is rejected at
@@ -75,10 +76,10 @@ silently bypasses output policy.
 - **Make `output` optional and skip projection when no projector is configured.**
   Rejected: a policy declaration that silently does nothing is worse than a
   startup error. The same reasoning applies to a budget without a tokenizer.
-- **Ship a default projector that strips known sensitive keys.** Rejected for
-  now: field sensitivity is contract- and caller-specific, and a generic
-  denylist invites false confidence. JSON navigation and declarative selection
-  are a later milestone.
+- **Ship a default projector that strips known sensitive keys.** Rejected: field
+  sensitivity is contract- and caller-specific, and a generic denylist invites
+  false confidence. ADR 0013 adds declarative include/exclude rules, but a tool
+  must opt in and the deployment must install the projector.
 - **Check the budget on the raw result.** Rejected: projection can shrink or
   expand the payload; the model receives the projection, so that is what must be
   bounded.
@@ -143,7 +144,9 @@ silently bypasses output policy.
 
 - SEC-05: define and test concrete output policies for generated tools,
   including field-level authorization and redaction rules.
-- JSON navigation and declarative selection in Milestone 6.
+- ~~JSON navigation and declarative selection in Milestone 6.~~ Implemented as
+  bounded include/exclude field projection in ADR 0013; general JSON navigation
+  remains a later milestone.
 - Per-content-block measurement and budgeting for multipart results.
 - Share one serialization between projection validation, measurement, caching,
   and the transport.

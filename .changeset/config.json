@@ -7,7 +7,13 @@
   "commit": false,
   "ignore": [],
   "fixed": [
-    ["@chainmcp/auth", "@chainmcp/core", "@chainmcp/config", "@chainmcp/server"]
+    [
+      "@chainmcp/auth",
+      "@chainmcp/cache-redis",
+      "@chainmcp/core",
+      "@chainmcp/config",
+      "@chainmcp/server"
+    ]
   ],
   "linked": [],
   "updateInternalDependencies": "patch"

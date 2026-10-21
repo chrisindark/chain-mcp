@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 const WORKSPACE_PACKAGES = [
   "packages/auth/package.json",
+  "packages/cache-redis/package.json",
   "packages/core/package.json",
   "packages/config/package.json",
   "packages/server/package.json",

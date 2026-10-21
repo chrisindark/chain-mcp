@@ -66,6 +66,9 @@ The implementation must address:
 - Apply opt-in output projection and token budgets before writing to the cache or returning a result. Cache only the projected value; never write the raw result first and project on read.
 - Treat projection failures, unserializable projections, and unverifiable budgets as fail-closed errors. Never fall back to the raw result or return an over-budget value.
 - Do not treat output projection as authorization: it runs only after authorization and does not grant access. Define field-level policy in trusted deployment code and test it against unauthorized callers.
+- Prefer declarative `include` selections for sensitive objects. Bound paths, projection depth, and visited nodes; reject `__proto__`, `prototype`, and `constructor` segments, and copy arbitrary keys with `Object.defineProperty` so JSON data cannot alter prototypes.
+- For shared Redis caches, keep credentials and TLS configuration in the client, never in keys, partitions, or telemetry. Use a deployment-specific key prefix, but do not treat it as an authorization boundary; the hashed key and partition remain the isolation mechanism.
+- Bound Redis commands with a short timeout. A timed-out command is not necessarily cancelled, so configure client socket/command timeouts and avoid unbounded retries.
 - Run tokenizer and projector adapters in-process or inside a trusted boundary. Do not forward serialized results to a third party for counting, and never record payload text in telemetry.
 - Never label an estimated token count as exact, and never promise savings from an estimate without a documented baseline.
 
