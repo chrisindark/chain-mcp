@@ -1,9 +1,10 @@
 # Token accounting
 
 ChainMcp records how many tokens a tool result costs when it is presented to a
-model. Measurement is implemented; token budgeting and response projection are
-not. This page covers the measurement contract and how to read the numbers
-without overstating them.
+model. Measurement and per-tool token budgets are implemented; general-purpose
+field projection remains deployment-supplied. This page covers the measurement
+contract, how budgets interact with projection and caching, and how to read the
+numbers without overstating them.
 
 ## What is measured
 
@@ -80,24 +81,72 @@ counts that are negative, fractional, `NaN`, infinite, or beyond
 
 ## When measurement runs
 
-| Situation                                          | Result                                          |
-| -------------------------------------------------- | ----------------------------------------------- |
-| Successful call with a tokenizer                   | `tokenUsage` recorded.                          |
-| Successful call served from cache                  | `tokenUsage` recorded; `cacheOutcome` is `hit`. |
-| No tokenizer configured                            | No `tokenUsage` field.                          |
-| Tool or validation error                           | No measurement.                                 |
-| Result is `undefined`, cyclic, or has no JSON form | No measurement; the call still succeeds.        |
-| Tokenizer throws or returns an invalid count       | No measurement; the call still succeeds.        |
+| Situation                                          | Result                                              |
+| -------------------------------------------------- | --------------------------------------------------- |
+| Successful call with a tokenizer                   | `tokenUsage` recorded.                              |
+| Successful call served from cache                  | `tokenUsage` recorded; `cacheOutcome` is `hit`.     |
+| No tokenizer configured                            | No `tokenUsage` field.                              |
+| Tool or validation error                           | No measurement.                                     |
+| Result is `undefined`, cyclic, or has no JSON form | No measurement; succeeds unless projection opts in. |
+| Tokenizer throws or returns an invalid count       | No measurement; succeeds unless a budget needs it.  |
 
 Measurement runs on every successful call, including cache hits, so token totals
-cover both executed and cached responses. The tokenizer runs synchronously,
-in-process, after the result is produced (and after an eligible cache write). A
-remote counter must be fronted by a local adapter; the runtime does not perform
-network I/O for measurement.
+cover both executed and cached responses. The tokenizer runs synchronously and
+in-process. For a tool without a budget, it runs after execution and any
+eligible cache write. For a tool with `output.maxTokens`, projection and the
+budget count run before the cache write; that same count is recorded as
+`tokenUsage` for the event. Either way the recorded count describes exactly what
+was stored and returned. A remote counter must be fronted by a local adapter;
+the runtime does not perform network I/O for measurement.
 
-Measurement is observability and must never change a result. A failing
-tokenizer, an unserializable result, or an invalid count omits `tokenUsage`
-rather than failing the call or substituting a guess.
+When a tool has no budget, measurement is observability and must never change a
+result. A failing tokenizer, an unserializable result, or an invalid count omits
+`tokenUsage` rather than failing the call or substituting a guess.
+
+## Projection and budgets
+
+A tool opts into output policy with `output`. The runtime must have a
+`ResultProjector` from `RuntimeOptions.projector`; otherwise registration fails
+with `CONTRACT_INVALID`. Projection runs after execution and before caching or
+measurement, and its result must be JSON-serializable. The raw result is never
+returned as a fallback when projection fails.
+
+`output.maxTokens` turns the token count into an enforced budget:
+
+```ts
+const lookupItem: ToolDefinition = {
+  // ...
+  output: { maxTokens: 800 },
+  async execute(input) {
+    return { id: "a", name: "Example" };
+  },
+};
+
+const runtime = new InMemoryToolRuntime({
+  projector: {
+    project({ result }) {
+      // Deployment policy: remove fields this caller must not see.
+      return result;
+    },
+  },
+  tokenizer, // required for maxTokens
+});
+```
+
+The runtime projects, serializes the projection, and counts it. A valid count at
+or below `maxTokens` is recorded as `tokenUsage` and the projected value is
+cached and returned. A count above the budget fails with
+`OUTPUT_LIMIT_EXCEEDED`. A tokenizer that throws or returns an invalid count
+fails with `OUTPUT_POLICY_VIOLATION`, because the budget cannot be verified.
+Both failures happen before the cache write, so the cache never holds an
+over-budget value, and neither failure includes the raw result in the error.
+
+Budgets are expressed in the adapter's token units. With an `estimate` adapter
+the enforcement point is only as precise as the estimate; the event still labels
+it `estimate`. A cache hit is not re-projected or re-budgeted: the stored value
+was projected and checked when written. Changing a projector or budget does not
+change the cache key, so rotate the namespace or bump `contractRevision` when a
+shared cache could still hold entries from the old policy.
 
 ## Reading the numbers
 
@@ -117,14 +166,13 @@ unless the baseline and measurement method are documented.
 
 ## Not implemented yet
 
-- Token-budgeted projection of tool results.
-- Output-level policy enforcement on the projected result (SEC-05).
+- A built-in projector or a declarative field-selection policy. Projection is a
+  deployment-supplied hook; JSON navigation tools remain a later milestone.
 - Per-content-block measurement (the current count covers the whole serialized
   result).
 - Async or remote tokenizers.
 - Bundled tokenizer implementations and model-specific defaults.
 - Aggregated dashboards, exporters, and retention rules for token telemetry.
 - Measurement of error messages, prompts, or tool metadata.
-
-When projection lands, it must run before the result is cached or measured so
-that counts and cached values reflect what the model actually receives.
+- Sharing one serialization between projection, measurement, and the transport,
+  which currently each serialize separately.

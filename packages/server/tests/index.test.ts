@@ -308,6 +308,33 @@ describe("MCP runtime adapter", () => {
     ).toThrow("must declare an object input schema");
   });
 
+  it("maps an output projection failure to a safe policy error", async () => {
+    const runtime = new InMemoryToolRuntime({
+      projector: { project: () => undefined },
+    });
+    runtime.register({
+      name: "projected_tool",
+      description: "Returns a projection that is not JSON",
+      inputSchema: { type: "object", additionalProperties: false },
+      operation: {},
+      output: {},
+      execute: async () => ({ secret: "must not leak" }),
+    });
+    const client = await connected(runtime);
+
+    const result = await client.callTool({
+      name: "projected_tool",
+      arguments: {},
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([
+      {
+        type: "text",
+        text: "OUTPUT_POLICY_VIOLATION: Tool output was rejected by policy",
+      },
+    ]);
+  });
+
   it("maps a non-JSON result to a safe upstream failure", async () => {
     const runtime = new InMemoryToolRuntime();
     runtime.register({

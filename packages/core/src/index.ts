@@ -50,6 +50,32 @@ export interface ToolCachePolicy {
   ttlSeconds: number;
 }
 
+export interface ToolOutputPolicy {
+  /**
+   * Maximum tokens allowed in the projected result. Requires a runtime
+   * tokenizer and is enforced before the result is cached or returned.
+   * Omitting it still opts into projection, without a budget.
+   */
+  maxTokens?: number;
+}
+
+export interface ResultProjectionRequest {
+  tool: ToolDefinition;
+  context: ToolContext;
+  result: unknown;
+}
+
+/**
+ * Deployment-supplied output policy. A projector returns the exact value the
+ * caller and model may see, typically by removing unauthorized or
+ * unpresentable fields. The runtime enforces that a projected result has a
+ * JSON representation and meets the tool's token budget; it does not decide
+ * which fields are safe.
+ */
+export interface ResultProjector {
+  project(request: ResultProjectionRequest): unknown;
+}
+
 export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   name: string;
   description: string;
@@ -63,6 +89,11 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   contractRevision?: string;
   /** Opt-in caching for an idempotent read operation. Omit for mutations. */
   cache?: ToolCachePolicy;
+  /**
+   * Opt-in output projection and optional token budget. Requires the runtime
+   * to be constructed with a projector; a budget also requires a tokenizer.
+   */
+  output?: ToolOutputPolicy;
   /**
    * Tenant that owns this tool, bound at registration time. In multi-tenant
    * mode the binding is required. In single-tenant mode an omitted value is
@@ -218,6 +249,8 @@ export type RuntimeErrorCode =
   | "AUTH_REQUIRED"
   | "AUTH_FORBIDDEN"
   | "RATE_LIMITED"
+  | "OUTPUT_POLICY_VIOLATION"
+  | "OUTPUT_LIMIT_EXCEEDED"
   | "CANCELLED"
   | "UPSTREAM_TIMEOUT"
   | "UPSTREAM_FAILURE";
@@ -276,6 +309,13 @@ export interface RuntimeOptions {
    * `tokenUsage` and never change the tool result.
    */
   tokenizer?: Tokenizer;
+  /**
+   * Applies output policy to tools that declare `ToolDefinition.output`.
+   * Projection runs after execution and before caching or token measurement.
+   * A projector failure, an unserializable result, or a token budget that
+   * cannot be verified fails the call closed; it never returns the raw result.
+   */
+  projector?: ResultProjector;
 }
 
 export class InMemoryToolRuntime implements ToolRuntime {
@@ -372,6 +412,15 @@ export class InMemoryToolRuntime implements ToolRuntime {
         );
       }
     }
+    if (
+      options.projector !== undefined &&
+      typeof options.projector.project !== "function"
+    ) {
+      throw new RuntimeError(
+        "CONFIG_INVALID",
+        "Runtime projector requires a project function",
+      );
+    }
   }
 
   register(tool: ToolDefinition): void {
@@ -395,6 +444,7 @@ export class InMemoryToolRuntime implements ToolRuntime {
     }
     assertSupportedInputSchema(tool.inputSchema);
     assertCacheMetadata(tool);
+    assertOutputMetadata(tool, this.options);
     const bucket = this.tenantTools.get(tenantId);
     if (bucket) {
       bucket.set(tool.name, tool);
@@ -580,16 +630,32 @@ export class InMemoryToolRuntime implements ToolRuntime {
         context,
         this.options.defaultTimeoutMs ?? 15_000,
       );
+      // Output policy runs before the cache write and before measurement so
+      // that neither a cached entry nor telemetry ever contains a result that
+      // failed projection or exceeded its budget.
+      stage = "projection";
+      const output = this.applyOutputPolicy(tool, result, context);
       if (
         cache !== undefined &&
         cacheKey !== undefined &&
         tool.cache !== undefined &&
-        result !== undefined
+        output.result !== undefined
       ) {
-        await writeCached(cache.store, cacheKey, result, tool.cache.ttlSeconds);
+        await writeCached(
+          cache.store,
+          cacheKey,
+          output.result,
+          tool.cache.ttlSeconds,
+        );
       }
-      tokenUsage = this.measureTokens(result);
-      return result;
+      // A budgeted tool already counted its projected result for enforcement;
+      // reuse that count. Otherwise measurement is best-effort and runs after
+      // the write, matching the non-projected path.
+      tokenUsage =
+        tool.output !== undefined && tool.output.maxTokens !== undefined
+          ? output.tokenUsage
+          : this.measureTokens(output.result);
+      return output.result;
     } catch (error) {
       const failure = classifyFailure(name, stage, error, rateLimitDenied);
       outcome = failure.outcome;
@@ -660,6 +726,96 @@ export class InMemoryToolRuntime implements ToolRuntime {
   }
 
   /**
+   * Applies the deployment's output policy to a tool that opted in. Projection
+   * must return a JSON-serializable value; when the tool declares a budget, an
+   * unverifiable count or an over-budget result fails closed. A projected value
+   * never falls back to the raw result.
+   */
+  private applyOutputPolicy(
+    tool: ToolDefinition,
+    result: unknown,
+    context: ToolContext,
+  ): { result: unknown; tokenUsage?: RuntimeEvent["tokenUsage"] } {
+    const policy = tool.output;
+    if (policy === undefined) return { result };
+    const projector = this.options.projector;
+    if (projector === undefined) {
+      // Registration rejects this combination; keep the call path fail-closed
+      // rather than silently returning unprojected output.
+      throw new RuntimeError(
+        "OUTPUT_POLICY_VIOLATION",
+        `Tool '${tool.name}' requires output projection but no projector is configured`,
+      );
+    }
+    let projected: unknown;
+    try {
+      projected = projector.project({ tool, context, result });
+    } catch (error) {
+      if (error instanceof RuntimeError) throw error;
+      throw new RuntimeError(
+        "OUTPUT_POLICY_VIOLATION",
+        `Output policy for tool '${tool.name}' failed`,
+        { cause: error },
+      );
+    }
+    // An async projector is a likely deployment mistake: JSON.stringify would
+    // turn its Promise into `{}` and silently return the wrong value. The
+    // adapter contract is synchronous, so fail closed rather than serialize it.
+    if (isThenable(projected)) {
+      throw new RuntimeError(
+        "OUTPUT_POLICY_VIOLATION",
+        `Output policy for tool '${tool.name}' must return synchronously`,
+      );
+    }
+    const text = serializeOutput(tool.name, projected);
+    const tokenizer = this.options.tokenizer;
+    if (policy.maxTokens === undefined) {
+      // Without a budget, projection is still mandatory. Measurement remains
+      // best-effort telemetry and runs after the cache write, like a tool that
+      // does not opt into projection.
+      return { result: projected };
+    }
+    if (tokenizer === undefined) {
+      // Registration rejects this combination; fail closed on the call path.
+      throw new RuntimeError(
+        "OUTPUT_POLICY_VIOLATION",
+        `Tool '${tool.name}' declares a token budget but no tokenizer is configured`,
+      );
+    }
+    let count: number;
+    try {
+      count = tokenizer.count(text);
+    } catch (error) {
+      throw new RuntimeError(
+        "OUTPUT_POLICY_VIOLATION",
+        `Token counting for tool '${tool.name}' failed`,
+        { cause: error },
+      );
+    }
+    if (!Number.isSafeInteger(count) || count < 0) {
+      throw new RuntimeError(
+        "OUTPUT_POLICY_VIOLATION",
+        `Token counting for tool '${tool.name}' returned an invalid count`,
+      );
+    }
+    if (count > policy.maxTokens) {
+      throw new RuntimeError(
+        "OUTPUT_LIMIT_EXCEEDED",
+        `Tool '${tool.name}' output exceeds the token budget`,
+      );
+    }
+    return {
+      result: projected,
+      tokenUsage: {
+        count,
+        measurement: tokenizer.measurement,
+        tokenizer: tokenizer.id,
+        payloadBytes: Buffer.byteLength(text, "utf8"),
+      },
+    };
+  }
+
+  /**
    * Measures the serialized result the MCP adapter will present to the model.
    * Returns `undefined` when no tokenizer is configured, the value has no JSON
    * representation, the adapter throws, or the adapter returns a count that is
@@ -671,14 +827,7 @@ export class InMemoryToolRuntime implements ToolRuntime {
     try {
       const text = JSON.stringify(value);
       if (text === undefined) return undefined;
-      const count = tokenizer.count(text);
-      if (!Number.isSafeInteger(count) || count < 0) return undefined;
-      return {
-        count,
-        measurement: tokenizer.measurement,
-        tokenizer: tokenizer.id,
-        payloadBytes: Buffer.byteLength(text, "utf8"),
-      };
+      return tryMeasureSerialized(tokenizer, text);
     } catch {
       return undefined;
     }
@@ -719,7 +868,8 @@ type InvocationStage =
   | "validation"
   | "rate_limit"
   | "cache"
-  | "execution";
+  | "execution"
+  | "projection";
 
 function tryCreateCacheKey(
   cache: RuntimeCacheOptions,
@@ -871,6 +1021,104 @@ function assertCacheMetadata(tool: ToolDefinition): void {
       "CONTRACT_INVALID",
       `Cacheable tool '${tool.name}' must declare a non-empty contractRevision`,
     );
+  }
+}
+
+/**
+ * Output policy is opt-in per tool, but an opt-in that the runtime cannot
+ * enforce is a configuration error, not a silent no-op. Registration therefore
+ * requires a projector for any declared policy and a tokenizer for any budget.
+ */
+function assertOutputMetadata(
+  tool: ToolDefinition,
+  options: RuntimeOptions,
+): void {
+  if (tool.output === undefined) return;
+  if (typeof tool.output !== "object" || tool.output === null) {
+    throw new RuntimeError(
+      "CONTRACT_INVALID",
+      `Tool '${tool.name}' must declare an output policy object`,
+    );
+  }
+  const maxTokens = tool.output.maxTokens;
+  if (
+    maxTokens !== undefined &&
+    (!Number.isSafeInteger(maxTokens) || maxTokens <= 0)
+  ) {
+    throw new RuntimeError(
+      "CONTRACT_INVALID",
+      `Tool '${tool.name}' must declare a positive integer output maxTokens`,
+    );
+  }
+  if (options.projector === undefined) {
+    throw new RuntimeError(
+      "CONTRACT_INVALID",
+      `Tool '${tool.name}' declares an output policy but the runtime has no projector`,
+    );
+  }
+  if (maxTokens !== undefined && options.tokenizer === undefined) {
+    throw new RuntimeError(
+      "CONTRACT_INVALID",
+      `Tool '${tool.name}' declares an output token budget but the runtime has no tokenizer`,
+    );
+  }
+}
+
+/**
+ * The projected value is what the caller and model may receive, so it must
+ * have a JSON representation. `undefined` and cyclic values fail closed instead
+ * of being cached or silently converted by a transport.
+ */
+function isThenable(value: unknown): boolean {
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function")
+  ) {
+    return false;
+  }
+  try {
+    return typeof (value as { then?: unknown }).then === "function";
+  } catch {
+    // An unreadable `then` would also make serialization unpredictable.
+    return true;
+  }
+}
+
+function serializeOutput(toolName: string, value: unknown): string {
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(value);
+  } catch (error) {
+    throw new RuntimeError(
+      "OUTPUT_POLICY_VIOLATION",
+      `Output policy for tool '${toolName}' returned an unserializable result`,
+      { cause: error },
+    );
+  }
+  if (text === undefined) {
+    throw new RuntimeError(
+      "OUTPUT_POLICY_VIOLATION",
+      `Output policy for tool '${toolName}' returned a result without a JSON representation`,
+    );
+  }
+  return text;
+}
+
+function tryMeasureSerialized(
+  tokenizer: Tokenizer,
+  text: string,
+): RuntimeEvent["tokenUsage"] {
+  try {
+    const count = tokenizer.count(text);
+    if (!Number.isSafeInteger(count) || count < 0) return undefined;
+    return {
+      count,
+      measurement: tokenizer.measurement,
+      tokenizer: tokenizer.id,
+      payloadBytes: Buffer.byteLength(text, "utf8"),
+    };
+  } catch {
+    return undefined;
   }
 }
 

@@ -220,6 +220,15 @@ timeout, so distributed adapters must bound their own latency. Writes are not
 cached by default. Cache failures must never result in serving data from another
 tenant or authorization context.
 
+Output projection and token-budget enforcement happen after execution and
+before a cache write. A tool that opts into `output` must be projected; the
+runtime rejects an unserializable projection and never falls back to the raw
+result. The entry written to the cache is the projected value, so a hit cannot
+serve unprojected fields and does not re-run projection. Budgets are checked on
+the serialized projected value; a count that cannot be verified fails closed.
+Because projection policy is not part of the key, changing a projector, budget,
+or `output` declaration requires a new cache namespace or contract revision.
+
 Eligible invocations report `cacheOutcome` (`hit`, `miss`, or `bypass`) on the
 `tool_invocation` event; the hit ratio is `hit / (hit + miss)` with bypass
 reported separately. Invalidation is exact-match only:
@@ -247,12 +256,20 @@ exact. No tokenizer is bundled, because a generic heuristic is not a faithful
 count for a specific model. Deployments that only have an approximation must
 label it `estimate` and must not promise savings from it.
 
-The following remain required before token budgeting is complete:
+A tool that declares `output.maxTokens` gets a hard budget on the serialized
+projected result. The runtime applies projection first, then counts, then
+rejects over-budget or uncountable results with `OUTPUT_LIMIT_EXCEEDED` or
+`OUTPUT_POLICY_VIOLATION` before caching or returning anything. A budget checked
+with an `estimate` adapter is only as precise as that estimate; enforcement does
+not upgrade the label. The same count is recorded as `tokenUsage`, so the
+measured value is the value that passed the budget.
 
-- A token-budgeted projection applied before the result is cached or returned.
-- Output-level policy enforcement on the projected result (SEC-05).
-- Per-content-block measurement if multimodal results are added.
+The following remain required before token accounting is complete:
+
+- Per-content-block measurement if multimodal or multi-part results are added.
 - Aggregated hit-ratio and token dashboards or exporters.
+- A shared serialization path so measurement and the transport do not serialize
+  the same result separately.
 
 Token counts are metadata; adapters receive the serialized result, so they must
 run in-process or in a trusted boundary and must not forward payload text.
