@@ -50,6 +50,7 @@ These are initial architectural choices and may change through documented archit
 ## Repository documentation
 
 - `ROADMAP.md`: milestones and acceptance criteria
+- `docs/getting-started.md`: runnable end-to-end example and Inspector commands
 - `ARCHITECTURE.md`: system design and component boundaries
 - `CONFIGURATION.md`: configuration contract
 - `DEVELOPMENT.md`: development and testing workflows

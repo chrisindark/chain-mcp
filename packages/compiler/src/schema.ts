@@ -56,14 +56,21 @@ const UNSUPPORTED_COMPOSITION_KEYWORDS = new Set([
 ]);
 
 /**
- * Supported JSON Schema constraints the runtime validator does not implement.
- * Strict mode rejects them; permissive mode drops them with a warning instead
- * of silently weakening validation.
+ * Schema annotations the runtime does not use. Strict mode rejects them;
+ * permissive mode drops them with a warning instead of silently weakening
+ * validation.
  */
 const UNSUPPORTED_CONSTRAINTS = new Set([
   "const",
   "contentEncoding",
   "contentMediaType",
+]);
+
+/**
+ * Validation constraints preserved in compiled input schemas. The runtime
+ * enforces these; unsupported values are rejected by the final schema audit.
+ */
+const SUPPORTED_CONSTRAINTS = new Set([
   "exclusiveMaximum",
   "exclusiveMinimum",
   "format",
@@ -151,6 +158,9 @@ function translateSchema(
       return translateAllOf(schema, context, depth, ancestors, refStack);
     }
 
+    const bounds = normalizeBounds(schema, context);
+    if (bounds === undefined) return undefined;
+
     const result: Record<string, unknown> = {};
     const droppedProperties = new Set<string>();
 
@@ -228,6 +238,20 @@ function translateSchema(
           nullable && Array.isArray(value) && !value.some((e) => e === null)
             ? [...value, null]
             : value;
+        continue;
+      }
+      if (
+        keyword === "minimum" ||
+        keyword === "maximum" ||
+        keyword === "exclusiveMinimum" ||
+        keyword === "exclusiveMaximum"
+      ) {
+        const normalized = bounds[keyword];
+        if (normalized !== undefined) result[keyword] = normalized;
+        continue;
+      }
+      if (SUPPORTED_CONSTRAINTS.has(keyword)) {
+        result[keyword] = value;
         continue;
       }
       if (keyword === "additionalProperties") {
@@ -962,6 +986,91 @@ function readNullable(
     return undefined;
   }
   return true;
+}
+
+/**
+ * Normalizes OpenAPI 3.0 boolean exclusive bounds to JSON Schema numeric
+ * exclusive bounds. OpenAPI 3.1 already uses the numeric form.
+ */
+function normalizeBounds(
+  schema: Record<string, unknown>,
+  context: SchemaTranslationContext,
+): Record<string, unknown> | undefined {
+  const result: Record<string, unknown> = {};
+  for (const [inclusive, exclusive] of [
+    ["minimum", "exclusiveMinimum"],
+    ["maximum", "exclusiveMaximum"],
+  ] as const) {
+    const hasInclusive = Object.hasOwn(schema, inclusive);
+    const hasExclusive = Object.hasOwn(schema, exclusive);
+    if (!hasInclusive && !hasExclusive) continue;
+
+    const inclusiveValue = schema[inclusive];
+    if (
+      hasInclusive &&
+      (typeof inclusiveValue !== "number" || !Number.isFinite(inclusiveValue))
+    ) {
+      report(
+        context,
+        "error",
+        "SCHEMA_INVALID",
+        `Schema '${inclusive}' must be a finite number`,
+      );
+      return undefined;
+    }
+
+    if (context.version === "3.1") {
+      if (hasInclusive) result[inclusive] = inclusiveValue;
+      if (hasExclusive) {
+        const exclusiveValue = schema[exclusive];
+        if (
+          typeof exclusiveValue !== "number" ||
+          !Number.isFinite(exclusiveValue)
+        ) {
+          report(
+            context,
+            "error",
+            "SCHEMA_INVALID",
+            `Schema '${exclusive}' must be a finite number in OpenAPI 3.1`,
+          );
+          return undefined;
+        }
+        result[exclusive] = exclusiveValue;
+      }
+      continue;
+    }
+
+    if (!hasExclusive) {
+      if (hasInclusive) result[inclusive] = inclusiveValue;
+      continue;
+    }
+
+    const exclusiveValue = schema[exclusive];
+    if (typeof exclusiveValue !== "boolean") {
+      report(
+        context,
+        "error",
+        "SCHEMA_INVALID",
+        `Schema '${exclusive}' must be a boolean in OpenAPI 3.0`,
+      );
+      return undefined;
+    }
+    if (exclusiveValue) {
+      if (!hasInclusive) {
+        report(
+          context,
+          "error",
+          "SCHEMA_INVALID",
+          `Schema '${exclusive}: true' requires a sibling '${inclusive}'`,
+        );
+        return undefined;
+      }
+      result[exclusive] = inclusiveValue;
+    } else if (hasInclusive) {
+      result[inclusive] = inclusiveValue;
+    }
+  }
+  return result;
 }
 
 function translateType(

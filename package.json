@@ -13,6 +13,7 @@
     "test": "pnpm -r test",
     "lint": "eslint .",
     "test:rules": "node --test eslint-rules/no-blocking-io.test.mjs",
+    "conformance:inspector": "node scripts/inspector-conformance.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "pnpm format:check && pnpm lint && pnpm test:rules && pnpm build && pnpm typecheck && pnpm test && pnpm version:check",

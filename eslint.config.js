@@ -5,7 +5,9 @@ import tseslint from "typescript-eslint";
 import noBlockingIo from "./eslint-rules/no-blocking-io.js";
 
 export default tseslint.config(
-  { ignores: ["**/dist/**", "**/node_modules/**", "pnpm-lock.yaml"] },
+  {
+    ignores: ["**/dist/**", "**/node_modules/**", "mcpfy/**", "pnpm-lock.yaml"],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

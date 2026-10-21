@@ -1007,8 +1007,128 @@ describe("unsupported schemas", () => {
       version,
     );
 
-  it("rejects unsupported constraints in strict mode and drops them in permissive mode", () => {
-    const document = parameterDocument({ type: "string", format: "uuid" });
+  it("preserves supported validation constraints", () => {
+    const result = compileDocument(
+      parameterDocument({
+        type: "object",
+        required: ["name"],
+        properties: {
+          name: {
+            type: "string",
+            minLength: 2,
+            maxLength: 20,
+            pattern: "^[a-z]+$",
+            format: "email",
+          },
+          count: {
+            type: "number",
+            minimum: 0,
+            maximum: 10,
+            multipleOf: 0.5,
+          },
+          tags: {
+            type: "array",
+            minItems: 1,
+            maxItems: 3,
+            uniqueItems: true,
+            items: { type: "string" },
+          },
+        },
+        minProperties: 1,
+        maxProperties: 3,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(singleTool(result).inputSchema.properties).toEqual({
+      value: {
+        type: "object",
+        required: ["name"],
+        properties: {
+          name: {
+            type: "string",
+            minLength: 2,
+            maxLength: 20,
+            pattern: "^[a-z]+$",
+            format: "email",
+          },
+          count: {
+            type: "number",
+            minimum: 0,
+            maximum: 10,
+            multipleOf: 0.5,
+          },
+          tags: {
+            type: "array",
+            minItems: 1,
+            maxItems: 3,
+            uniqueItems: true,
+            items: { type: "string" },
+          },
+        },
+        minProperties: 1,
+        maxProperties: 3,
+      },
+    });
+  });
+
+  it("normalizes OpenAPI 3.0 boolean exclusive bounds", () => {
+    const result = compileDocument(
+      parameterDocument({
+        type: "number",
+        minimum: 1,
+        exclusiveMinimum: true,
+        maximum: 10,
+        exclusiveMaximum: false,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(singleTool(result).inputSchema.properties).toEqual({
+      value: {
+        type: "number",
+        exclusiveMinimum: 1,
+        maximum: 10,
+      },
+    });
+
+    const invalid = compileDocument(
+      parameterDocument({
+        type: "number",
+        exclusiveMinimum: true,
+      }),
+    );
+    expect(invalid.ok).toBe(false);
+    expect(codes(invalid)).toContain("SCHEMA_INVALID");
+  });
+
+  it("preserves OpenAPI 3.1 numeric exclusive bounds", () => {
+    const result = compileDocument(
+      parameterDocument(
+        {
+          type: "number",
+          exclusiveMinimum: 1,
+          exclusiveMaximum: 10,
+        },
+        "3.1.0",
+      ),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(singleTool(result).inputSchema.properties).toEqual({
+      value: {
+        type: "number",
+        exclusiveMinimum: 1,
+        exclusiveMaximum: 10,
+      },
+    });
+  });
+
+  it("rejects unsupported annotation keywords in strict mode and drops them in permissive mode", () => {
+    const document = parameterDocument({
+      type: "string",
+      contentEncoding: "base64",
+    });
     const strict = compileDocument(document);
     expect(strict.ok).toBe(false);
     expect(strict.tools).toHaveLength(0);

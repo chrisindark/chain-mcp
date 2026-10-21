@@ -28,8 +28,13 @@ The compiler:
   properties with `additionalProperties: false`. Records sorted parameter
   bindings and the selected request-body media type for execution.
 - Translates OpenAPI 3.0 `nullable` into a `"null"` type union (and adds `null`
-  to `enum`), preserves OpenAPI 3.1 null unions, and drops `readOnly`
+  to `enum`), preserves OpenAPI 3.1 null unions, normalizes 3.0 boolean
+  exclusive bounds to numeric JSON Schema bounds, and drops `readOnly`
   properties from request inputs.
+- Preserves supported validation constraints in generated input schemas:
+  `minLength`, `maxLength`, `pattern`, `format`, `minimum`, `maximum`,
+  `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `minItems`, `maxItems`,
+  `uniqueItems`, `minProperties`, and `maxProperties`.
 - Flattens an `allOf` of object schemas into one object schema when the
   intersection is semantics-preserving, resolving nested local `$ref`s.
   Incompatible properties, non-object members, sibling validation keywords, and
@@ -75,9 +80,9 @@ The full compiler must:
 9. Produce a source hash and compiler version.
 10. Bind `context.signal` to generated upstream calls and release executor resources on abort or timeout.
 
-The compiler implements items 1-5 and 8-9, part of item 6 (input validation
-only), and item 7 as unenforced metadata. `@chainmcp/executor` implements item
-10 for JSON HTTP operations. Response mapping is descriptive; output validation
+The compiler implements items 1-6 for the documented input subset and items
+8-9, and item 7 as unenforced metadata. `@chainmcp/executor` implements item 10
+for JSON HTTP operations. Response mapping is descriptive; output validation
 and credential injection remain open.
 
 ## Initial mapping
@@ -114,7 +119,9 @@ Cover the 3.0 and 3.1 forms with fixtures so the two paths are tested separately
 
 The compiler must not silently weaken validation when it encounters unsupported schema features. It should fail in strict mode or emit explicit diagnostics in permissive mode.
 
-Current status: strict mode (the default) errors and omits the operation for unsupported input constraints such as `format`, bounds, `pattern`, and `uniqueItems`. Permissive mode drops only constraints that can be omitted without changing the supported subset and records a warning. Input `allOf` is flattened when every member is an object schema and merging is semantics-preserving; nested `$ref`s are resolved first. Incompatible or non-object `allOf` members, sibling validation keywords, `oneOf`, `anyOf`, `not`, conditionals, dependent and pattern schemas, schema-valued `additionalProperties`, tuple/boolean `items`, remote references, and unknown schema keywords remain errors in both modes because dropping or approximating them would accept values the contract rejects.
+Current status: the runtime-supported constraints listed above are preserved and enforced. Strict mode (the default) errors and omits the operation for unsupported input annotations such as `contentEncoding` and `contentMediaType`. Permissive mode drops only annotations that can be omitted without changing the supported subset and records a warning. Input `allOf` is flattened when every member is an object schema and merging is semantics-preserving; nested `$ref`s are resolved first. Incompatible or non-object `allOf` members, sibling validation keywords, `oneOf`, `anyOf`, `not`, conditionals, dependent and pattern schemas, schema-valued `additionalProperties`, tuple/boolean `items`, remote references, and unknown schema keywords remain errors in both modes because dropping or approximating them would accept values the contract rejects.
+
+Asserted `format` values are `date-time`, `date`, `time`, `email`, `hostname`, `ipv4`, `ipv6`, `uri`, and `uuid`. Other format strings are preserved as annotations, matching JSON Schema's default format-annotation behavior. `pattern` uses the linear-time `re2js` engine and is capped at 4,096 characters; invalid or unsupported regular expressions are rejected. `uniqueItems` uses a bounded structural comparison and fails closed when the comparison budget is exceeded.
 
 Response schemas are metadata, not a validation boundary. Their translation preserves composition and constraints that the runtime cannot enforce, because no output validator exists yet. When an output validator is added, it must reject or explicitly document those keywords rather than silently ignore them.
 
@@ -184,6 +191,8 @@ Maintain fixtures for:
 - Read and write operations.
 - Invalid documents and unsupported schema constructs.
 
-Current fixtures live in `packages/compiler/tests/fixtures/`. The deterministic compiler suite covers both versions, nullable translation, local and circular references, remote-reference refusal, tool-name collisions, security OR/AND structure and authentication policies (including anonymous alternatives, scope validation, OIDC, and mutual TLS), unsupported constructs in both modes, parameter/body mapping, `allOf` flattening, response mapping (including `$ref` responses, 3.1 ranges, non-JSON content, and output composition), limits, and manifest diffs. Executor tests cover destination classification, DNS pinning inputs, request mapping, redirect rules, response caps, JSON handling, timeouts, cancellation, and a local Node HTTP transport; they do not use production endpoints.
+Current fixtures live in `packages/compiler/tests/fixtures/`. The deterministic compiler suite covers both versions, nullable translation, local and circular references, remote-reference refusal, tool-name collisions, security OR/AND structure and authentication policies (including anonymous alternatives, scope validation, OIDC, and mutual TLS), supported and unsupported schema constructs in both modes, parameter/body mapping, `allOf` flattening, response mapping (including `$ref` responses, 3.1 ranges, non-JSON content, and output composition), limits, and manifest diffs. Core tests cover constraint enforcement, Unicode length counting, structural uniqueness, format assertions, and invalid constraint declarations. Executor tests cover destination classification, DNS pinning inputs, request mapping, redirect rules, response caps, JSON handling, timeouts, cancellation, and a local Node HTTP transport; they do not use production endpoints.
+
+The `examples/petstore` project exercises compilation, executor binding, runtime validation, and stdio MCP serving end to end with a deterministic mock upstream. `pnpm conformance:inspector` runs the MCP Inspector CLI against the built example and asserts both `tools/list` and `tools/call`; CI runs that check in a separate Node.js 22.19.0 job.
 
 Document actual compatibility based on tests rather than assumptions.
