@@ -88,4 +88,4 @@ Do not expose an unreviewed instance to untrusted traffic. Read `SECURITY.md` be
 
 ## License
 
-The project license must be chosen before public distribution. Do not publish the repository with an assumed license.
+ChainMcp is licensed under the [Apache License, Version 2.0](LICENSE).

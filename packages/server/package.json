@@ -1,7 +1,7 @@
 {
   "name": "@chainmcp/server",
   "version": "0.1.0",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/chrisindark/chain-mcp.git",
@@ -29,9 +29,9 @@
   },
   "dependencies": {
     "@chainmcp/core": "workspace:*",
-    "@modelcontextprotocol/server": "2.0.0"
+    "@modelcontextprotocol/server": "2.3.1"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.0.0"
+    "@modelcontextprotocol/client": "2.3.1"
   }
 }

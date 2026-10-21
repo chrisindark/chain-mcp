@@ -30,9 +30,9 @@ are not re-argued per milestone. Deferred risks and their triggers live in
 - [x] Establish monorepo and package boundaries (`@chainmcp/core`, `@chainmcp/config`).
 - [x] Define supported Node.js (20.11+) and TypeScript (5.9) versions.
 - [x] Establish lint, formatting, typecheck, build, and test commands.
-- [ ] Add CI, dependency scanning, and secret scanning (CI checks exist; scanners remain absent).
+- [x] Add CI, dependency scanning, and secret scanning (CI check, Inspector conformance, Dependabot, high-severity audit, Gitleaks, and dependency-review actions configured).
 - [x] Document architecture, security, and contribution rules.
-- [ ] Select a license before public release.
+- [x] Select a license before public release (Apache License 2.0).
 
 **Exit criteria:** a clean checkout installs and passes all CI checks.
 

@@ -49,4 +49,4 @@ A pull request should explain:
 
 ## Licensing
 
-The maintainers must select and apply a license before distributing the project publicly.
+ChainMcp is licensed under the Apache License, Version 2.0. By contributing to ChainMcp, you agree that your contributions will be licensed under its terms.
