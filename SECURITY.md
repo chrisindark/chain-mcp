@@ -52,10 +52,19 @@ The implementation must address:
 ### Caching
 
 - Partition entries by tenant, principal or authorization context, tool, contract revision, and relevant arguments.
+- Include a stable, non-secret authorization partition derived from effective grants or policy state; bypass shared caching when one cannot be established.
 - Never use raw bearer tokens as cache keys.
+- Cache only tools that explicitly opt in as idempotent reads. Never store failed or `undefined` results.
+- Resolve identity, authorization, validation, and rate limits before reading the cache; a hit must not bypass them.
 - Do not cache mutations by default.
 - Never serve a cached response across authorization boundaries.
 - Bypass caching when a safe partition cannot be established.
+- Treat cache store, partition, and key-derivation failures as bypasses (or read misses), never as invocation failures or reasons to weaken a check.
+- Require cache adapters to return isolated values so a caller cannot mutate stored state.
+- Expose cache invalidation only to trusted operator code; it is not an MCP tool and must not become an authorization bypass.
+- Record cache hit/miss/bypass outcomes without including keys, arguments, or cached values in telemetry.
+- Run tokenizer adapters in-process or inside a trusted boundary. Do not forward serialized results to a third party for counting, and never record payload text in telemetry.
+- Never label an estimated token count as exact, and never promise savings from an estimate without a documented baseline.
 
 ### Analytics
 

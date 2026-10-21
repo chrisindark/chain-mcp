@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-The target architecture consists of a contract compiler, shared runtime, MCP adapters, optional infrastructure adapters, and two deployment modes. The current implementation contains only `@chainmcp/core` and `@chainmcp/config`; other components shown below are planned.
+The target architecture consists of a contract compiler, shared runtime, MCP adapters, optional infrastructure adapters, and two deployment modes. The current implementation contains `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, and `@chainmcp/server`; remaining components shown below are planned.
 
 ```text
                     API contract
@@ -137,6 +137,14 @@ export interface CacheStore {
   delete(key: string): Promise<void>;
 }
 
+export interface RuntimeCacheOptions {
+  store: CacheStore;
+  authorizationPartition(
+    context: ToolContext,
+    tool: ToolDefinition,
+  ): string | undefined;
+}
+
 export interface Authorizer {
   authorize(tool: ToolDefinition, context: ToolContext): void | Promise<void>;
 }
@@ -186,30 +194,68 @@ A cache key must incorporate:
 - Tool identity.
 - Canonicalized arguments.
 - Tenant identity.
-- Principal or authorization partition.
+- Principal identity.
+- A stable, non-secret authorization partition representing relevant grants or policy state.
 - Relevant scopes and response-varying inputs.
 - A key-format version.
 
 The store key must be an opaque, fixed-length digest of the canonical key material. Do not place raw tenant, principal, tool, revision, or argument text in store keys. Bound the canonical input size before hashing. Increment the key-format version whenever canonicalization or hashed fields change so old entries become misses instead of colliding with entries written under different semantics.
 
-Never use raw bearer tokens as keys. If a safe authorization partition cannot be computed, bypass shared caching.
+Never use raw bearer tokens as keys. `createCacheKey` requires a non-empty
+authorization partition, and callers must bypass shared caching if they cannot
+compute one safely. `ToolDefinition.contractRevision` binds each cacheable tool
+to the revision it was compiled from. The runtime invokes a deployment-supplied
+`authorizationPartition(context, tool)` callback; returning a blank value,
+returning `undefined`, throwing, or producing uncanonicalizable arguments
+bypasses caching for that call only. The runtime never derives a partition from
+a credential and never falls back to a shared partition.
 
-Writes are not cached by default. Cache failures must never result in serving data from another tenant or authorization context.
+Caching is opt-in per tool through `ToolDefinition.cache`, and no result is
+cached unless the runtime also receives a store. Reads happen after
+authorization, validation, and rate limiting, so a hit cannot bypass those
+stages. Cache read, write, partition, and key-derivation failures degrade to a
+miss or bypass; they never fail the invocation or serve data across partitions.
+There is no request coalescing, and cache I/O is not covered by the per-call
+timeout, so distributed adapters must bound their own latency. Writes are not
+cached by default. Cache failures must never result in serving data from another
+tenant or authorization context.
+
+Eligible invocations report `cacheOutcome` (`hit`, `miss`, or `bypass`) on the
+`tool_invocation` event; the hit ratio is `hit / (hit + miss)` with bypass
+reported separately. Invalidation is exact-match only:
+`invalidateCachedResult(name, input, context)` recomputes the key from the same
+tool, arguments, and caller context and deletes that entry. Hashed keys cannot
+be enumerated, so tenant-wide or predicate invalidation requires separate store
+namespaces or external metadata (ADR 0005). Invalidation is a trusted operator
+surface, not an MCP request, and does not run authorization.
 
 ## 9. Token accounting
 
 Token accounting measures the serialized result presented to the model, not merely the raw upstream response.
 
-The implementation must record:
+When a `Tokenizer` adapter is configured, every successful invocation emits
+`tokenUsage` on the `tool_invocation` event with the measurement mode (`exact`
+or `estimate`), the tokenizer identifier, the count, and the UTF-8 size of the
+serialized payload. Cache hits are measured the same way as misses, and the same
+event carries `cacheOutcome`, so token and cache metrics can be correlated
+without duplicate events. Failed invocations, `undefined` results,
+unserializable results, and adapter failures omit `tokenUsage` rather than
+guessing.
 
-- Measurement mode.
-- Tokenizer identifier, when known.
-- Count or estimate.
-- Serialized payload size.
-- Whether the response was cached.
-- Whether response projection was applied.
+Adapters declare their own exactness; the runtime never relabels an estimate as
+exact. No tokenizer is bundled, because a generic heuristic is not a faithful
+count for a specific model. Deployments that only have an approximation must
+label it `estimate` and must not promise savings from it.
 
-Do not describe estimated counts as exact. Do not promise savings without a documented baseline.
+The following remain required before token budgeting is complete:
+
+- A token-budgeted projection applied before the result is cached or returned.
+- Output-level policy enforcement on the projected result (SEC-05).
+- Per-content-block measurement if multimodal results are added.
+- Aggregated hit-ratio and token dashboards or exporters.
+
+Token counts are metadata; adapters receive the serialized result, so they must
+run in-process or in a trusted boundary and must not forward payload text.
 
 ## 10. JSON navigation
 

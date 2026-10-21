@@ -80,15 +80,15 @@ are not re-argued per milestone. Deferred risks and their triggers live in
 
 ## Milestone 4 — Smart caching and token accounting
 
-- [ ] Add bounded in-memory cache for development.
+- [x] Add bounded in-memory cache for development (LRU, bounded retained bytes/entries, per-entry cap, TTL cap, and JSON value depth/node limits).
 - [ ] Add optional Redis adapter.
-- [ ] Implement safe, versioned, hashed cache key construction and identity partitioning.
-- [ ] Cache eligible read operations only by default.
-- [ ] Add TTL, invalidation, and field projection.
+- [x] Implement safe, versioned, hashed cache key construction and tenant/principal/authorization-context partitioning.
+- [x] Cache eligible read operations only by default (opt-in `ToolDefinition.cache`; authorization, validation, and rate limiting still run on hits; key/partition/store failures bypass instead of failing the call).
+- [ ] Add TTL, invalidation, and field projection (TTL is implemented; invalidation and field projection remain open).
 - [ ] Enforce output-level policy and a token-budgeted projection on tool results.
-- [ ] Integrate tokenizer adapters.
-- [ ] Distinguish exact counts from estimates.
-- [ ] Record cache hit ratio and token metrics.
+- [x] Integrate tokenizer adapters (optional synchronous `Tokenizer` with id, exact/estimate declaration, and count).
+- [x] Distinguish exact counts from estimates (recorded as `tokenUsage.measurement`; estimates are never relabeled).
+- [x] Record cache hit ratio and token metrics (per-invocation hit/miss/bypass and `tokenUsage`; aggregated ratios are computed by exporters).
 
 **Exit criteria:** tests demonstrate cache isolation and accurate labeling of token measurements.
 

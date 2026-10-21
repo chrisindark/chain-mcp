@@ -15,16 +15,22 @@ entries written under the old rules.
 
 ## Decision
 
-Cache keys are opaque, fixed-length, versioned digests:
+Cache keys are opaque, fixed-length, versioned digests. Version 2 keys are:
 
 ```text
-chainmcp:cache:v1:<64 lowercase hex characters>
+chainmcp:cache:v2:<64 lowercase hex characters>
 ```
 
-`createCacheKey` canonicalizes the key material, enforces a 64 KiB limit
-(`MAX_CACHE_KEY_INPUT_BYTES`) on the canonical JSON payload, hashes the payload
-with SHA-256 under a versioned domain separator, and prefixes the digest with
-`chainmcp:cache:v1:`. The version is exported as `CACHE_KEY_VERSION`.
+`createCacheKey` requires a stable, non-secret `authorizationPartition` and
+canonicalizes the key material: tenant ID, principal ID, authorization
+partition, contract revision, tool name, and arguments. Identity fields that
+are blank after trimming are rejected. It enforces a 64 KiB
+limit (`MAX_CACHE_KEY_INPUT_BYTES`) on the canonical JSON payload, hashes the
+payload with SHA-256 under a versioned domain separator, and prefixes the
+digest with `chainmcp:cache:v2:`. The version is exported as
+`CACHE_KEY_VERSION`. Callers must not use bearer tokens as the authorization
+partition; if effective grants or policy state cannot be represented safely,
+they must bypass shared caching.
 
 Object properties whose value is `undefined` are omitted, matching JSON
 serialization and normal TypeScript optional-field usage. `undefined` at the
@@ -57,6 +63,8 @@ misses rather than colliding with new semantics.
 - Keys can no longer be inspected or prefix-scanned by tenant in the store.
   Deployments that need tenant-scoped cleanup must use separate store
   namespaces or external metadata.
+- Effective authorization state participates in cache identity without putting
+  its raw description in the store key.
 - Version bumps intentionally invalidate the cache. A rolling deployment may
   temporarily see misses across mixed versions.
 - SHA-256 collisions are negligible for this use, but hashing is not

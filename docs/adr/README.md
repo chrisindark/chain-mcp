@@ -28,6 +28,8 @@ Create an ADR before making a substantial change to public APIs, tenant isolatio
 | [0007](0007-wall-clock-and-monotonic-duration.md) | Wall clock and monotonic duration      | proposed |
 | [0008](0008-mcp-authorization-mapping.md)         | MCP authorization mapping              | proposed |
 | [0009](0009-mcp-sdk-v2-packages.md)               | MCP SDK v2 package split and pin       | proposed |
+| [0010](0010-runtime-cache-eligibility.md)         | Runtime cache eligibility and binding  | proposed |
+| [0011](0011-token-measurement-labeling.md)        | Token measurement labeling             | proposed |
 
 ADRs 0001–0003 were recorded retroactively from existing documentation and
 implementation. They describe decisions already reflected in the project, not

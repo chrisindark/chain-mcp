@@ -977,6 +977,7 @@ describe("cache key serialization", () => {
   const base = {
     tenantId: "tenant-secret",
     principalId: "principal-secret",
+    authorizationPartition: "grants-read-v1",
     contractRevision: "revision-secret",
     toolName: "tool-secret",
     arguments: { b: 2, a: 1, account: "arg-secret" },
@@ -987,12 +988,13 @@ describe("cache key serialization", () => {
       createCacheKey({
         tenantId: "t",
         principalId: "p",
+        authorizationPartition: "authz-v1",
         contractRevision: "r1",
         toolName: "x",
         arguments: { b: 2, a: 1 },
       }),
     ).toBe(
-      "chainmcp:cache:v1:cd555bbe0d1b8725cb873129fd6b98f0656c4baee6e2e74408d927ef37a3894d",
+      "chainmcp:cache:v2:d23cc364e19223a75bff2d865d061442ff00f1ce8c1321b4a4c0f17b8ad67572",
     );
   });
 
@@ -1023,6 +1025,9 @@ describe("cache key serialization", () => {
     );
     expect(createCacheKey(base)).not.toBe(
       createCacheKey({ ...base, principalId: "other" }),
+    );
+    expect(createCacheKey(base)).not.toBe(
+      createCacheKey({ ...base, authorizationPartition: "different-grants" }),
     );
     expect(createCacheKey(base)).not.toBe(
       createCacheKey({ ...base, contractRevision: "other" }),
@@ -1072,6 +1077,15 @@ describe("cache key serialization", () => {
         arguments: cyclic,
       }),
     ).toThrow("cycles");
+  });
+
+  it("requires a non-empty authorization partition", () => {
+    expect(() =>
+      createCacheKey({ ...base, authorizationPartition: "" }),
+    ).toThrow("authorizationPartition");
+    expect(() =>
+      createCacheKey({ ...base, authorizationPartition: "   " }),
+    ).toThrow("authorizationPartition");
   });
 
   it("rejects canonical input beyond the size limit", () => {

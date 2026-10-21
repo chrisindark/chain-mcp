@@ -46,11 +46,17 @@ A tool that ignores the signal may continue running after the caller has been re
 ### Tool definition
 
 ```ts
+export interface ToolCachePolicy {
+  ttlSeconds: number;
+}
+
 export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   name: string;
   description: string;
   inputSchema: JsonSchema;
   operation: OperationPolicy;
+  contractRevision?: string;
+  cache?: ToolCachePolicy;
   ownerTenantId?: string;
   execute(input: TInput, context: ToolContext): Promise<TOutput>;
 }
@@ -61,7 +67,14 @@ multi-tenant mode the binding is required; in single-tenant mode an omitted
 value is stamped with the deployment's pinned tenant (`RuntimeOptions.tenantId`),
 and an explicit value must match that pin.
 
-`@chainmcp/core` currently provides `InMemoryToolRuntime`, which validates a documented JSON Schema subset, invokes an optional `Authorizer`, then an optional `RateLimiter`, and executes the tool. `RateLimiter.check` returns an explicit decision; only a denial is counted as rate limiting. Cancellation is cooperative: the runtime aborts a per-call signal and stops waiting on caller cancellation or timeout, but executors must bind that signal to their own abortable I/O and release resources. Calls have a 15-second default timeout, configurable through `RuntimeOptions.defaultTimeoutMs` or per tool. Cache interfaces are defined, but cache reads/writes are not integrated into invocation. Metrics failures are ignored so they do not change tool results.
+`cache` opts an idempotent read operation into result caching. It is absent by
+default, so mutations are never cached implicitly. A cacheable tool must also
+declare a non-empty `contractRevision`; registration rejects a missing,
+blank, or non-finite TTL with `CONTRACT_INVALID`. Declaring `cache` does not
+enable caching by itself: the runtime must also be constructed with
+`RuntimeOptions.cache` (ADR 0010).
+
+`@chainmcp/core` currently provides `InMemoryToolRuntime`, which validates a documented JSON Schema subset, invokes an optional `Authorizer`, then an optional `RateLimiter`, reads the cache for eligible tools, and executes the tool. `RateLimiter.check` returns an explicit decision; only a denial is counted as rate limiting. Cancellation is cooperative: the runtime aborts a per-call signal and stops waiting on caller cancellation or timeout, but executors must bind that signal to their own abortable I/O and release resources. Calls have a 15-second default timeout, configurable through `RuntimeOptions.defaultTimeoutMs` or per tool. `InMemoryCacheStore` is available as a bounded standalone adapter and can be supplied as the runtime cache store; caching still requires per-tool opt-in. Metrics failures are ignored so they do not change tool results.
 
 The validator supports `type` (a string or non-empty array of strings), primitive `enum` (string, boolean, null, and finite number values), `required`, `properties`, boolean `additionalProperties`, and object-form `items`. Object keywords (`required`, `properties`, `additionalProperties`) and array `items` are enforced whenever the value has the corresponding JSON kind, including schemas that omit `type`. `additionalProperties` defaults to `true`, so unknown object keys are passed to `execute` untouched; tool implementations must treat them as untrusted input. Keys are compared as own properties, so a key named after an `Object.prototype` member (for example `toString`, `constructor`, or `__proto__`) is treated as undeclared and cannot satisfy `required`. At most 20 issues are reported per call; the message ends with a truncation marker when more were found.
 
@@ -133,6 +146,12 @@ export interface ToolRuntime {
     input: unknown,
     context: ToolContext | ToolContextFactory,
   ): Promise<unknown>;
+
+  invalidateCachedResult?(
+    name: string,
+    input: unknown,
+    context: ToolContext,
+  ): Promise<void>;
 }
 ```
 
@@ -150,7 +169,7 @@ Untyped factory failures fail closed as `AUTH_FORBIDDEN`. A typed
 normal invocation metric; when tenant resolution did not complete, that event
 uses `tenantId: "unknown"`.
 
-`RuntimeError` currently includes `TOOL_NOT_FOUND`, `TOOL_ALREADY_REGISTERED`, `CONFIG_INVALID` (tenant mode, tenant pinning, or tenant-binding violations), `CONTRACT_INVALID` (registration-time schema rejection), `INPUT_INVALID`, `AUTH_REQUIRED` (identity missing where it is required, such as a multi-tenant listing), `AUTH_FORBIDDEN`, `RATE_LIMITED`, `CANCELLED`, `UPSTREAM_TIMEOUT`, and `UPSTREAM_FAILURE`. The runtime does not implement a concrete authorization or rate-limit policy, so `OperationPolicy.requiredScopes` remains policy data for adapters to enforce.
+`RuntimeError` currently includes `TOOL_NOT_FOUND`, `TOOL_ALREADY_REGISTERED`, `CONFIG_INVALID` (tenant mode, tenant pinning, tenant-binding violations, or malformed runtime cache/tokenizer options), `CONTRACT_INVALID` (registration-time schema or cache-metadata rejection), `INPUT_INVALID`, `AUTH_REQUIRED` (identity missing where it is required, such as a multi-tenant listing), `AUTH_FORBIDDEN`, `RATE_LIMITED`, `CANCELLED`, `UPSTREAM_TIMEOUT`, and `UPSTREAM_FAILURE`. The runtime does not implement a concrete authorization or rate-limit policy, so `OperationPolicy.requiredScopes` remains policy data for adapters to enforce.
 
 Failures are classified by invocation stage:
 
@@ -169,6 +188,8 @@ Failures are classified by invocation stage:
 | Execution           | throws anything else                       | `UPSTREAM_FAILURE` with `Tool '<name>' failed`; cause retained.         |
 
 Causes are retained for protected diagnostics and are never included in the client message or in `RuntimeEvent`. Authorization runs before validation so an unauthorized caller cannot probe the tool schema.
+
+Cache key derivation and cache store failures are not invocation failures. They bypass caching (or degrade a read to a miss) and the call proceeds; they never expose a cached value across a partition and never fail the tool call. A caller cancellation observed on a cache hit is still reported as `CANCELLED`.
 
 ### Authorization and rate limiting
 
@@ -193,20 +214,85 @@ export interface RateLimiter {
 
 `check` must return a decision. `{ allowed: false }` denies the call. A missing or malformed decision fails closed as `UPSTREAM_FAILURE`; it does not silently allow the call. Throwing is reserved for limiter failures, not denials. A thrown `RuntimeError` other than `RATE_LIMITED` is preserved; any other throw, including `RATE_LIMITED`, becomes `UPSTREAM_FAILURE`. This keeps the `rate_limited` metrics outcome independent of adapter error-code conventions: only an explicit denial can produce it.
 
-`createCacheKey` returns an opaque, fixed-length key of the form `chainmcp:cache:v1:<64 lowercase hex characters>`. It canonicalizes plain JSON-compatible argument values and hashes the tenant, principal, contract revision, tool identity, and arguments with SHA-256 under a versioned domain separator. Object properties whose value is `undefined` are omitted; `undefined` at the root or in arrays, sparse arrays, cycles, non-finite numbers, and non-JSON values are rejected. Canonical input is limited to `MAX_CACHE_KEY_INPUT_BYTES` (64 KiB); larger inputs throw `TypeError`. Changing canonicalization, hashed fields, or digest semantics requires incrementing `CACHE_KEY_VERSION`, which changes the key prefix and deliberately invalidates the existing key space. Hashing reduces accidental disclosure but is not encryption; protect the cache store and do not treat keys as secrets.
+### Cache keys
+
+`createCacheKey` returns an opaque, fixed-length key of the form `chainmcp:cache:v2:<64 lowercase hex characters>`. It requires a stable, non-secret `authorizationPartition` and hashes the tenant, principal, authorization partition, contract revision, tool identity, and canonicalized arguments with SHA-256 under a versioned domain separator. The partition should represent effective grants or policy state; never pass a bearer token. Identity fields must be non-empty after trimming, so a blank partition is rejected instead of silently merging authorization contexts. Object properties whose value is `undefined` are omitted; `undefined` at the root or in arrays, sparse arrays, cycles, non-finite numbers, and non-JSON values are rejected. Canonical input is limited to `MAX_CACHE_KEY_INPUT_BYTES` (64 KiB); larger inputs throw `TypeError`. Changing canonicalization, hashed fields, or digest semantics requires incrementing `CACHE_KEY_VERSION`, which changes the key prefix and deliberately invalidates the existing key space. Hashing reduces accidental disclosure but is not encryption; protect the cache store and do not treat keys as secrets.
 
 ```ts
-export const CACHE_KEY_VERSION = "v1";
+export const CACHE_KEY_VERSION = "v2";
 export const MAX_CACHE_KEY_INPUT_BYTES = 64 * 1024;
 
 export function createCacheKey(parts: {
   tenantId: string;
   principalId: string;
+  authorizationPartition: string;
   contractRevision: string;
   toolName: string;
   arguments: unknown;
 }): string;
 ```
+
+### Invocation caching
+
+```ts
+export interface RuntimeCacheOptions {
+  store: CacheStore;
+  authorizationPartition(
+    context: ToolContext,
+    tool: ToolDefinition,
+  ): string | undefined;
+}
+```
+
+`RuntimeOptions.cache` enables caching for tools that declare `cache`. The
+runtime reads the cache after identity resolution, authorization, input
+validation, and rate limiting, so a hit never bypasses an access decision or a
+quota check. On a miss it executes the tool and writes successful, non-
+`undefined` results with the tool's TTL. Failures are not cached.
+
+The cache key is built with `createCacheKey` from the caller's tenant and
+principal, the derived authorization partition, the tool's contract revision,
+the tool name, and the validated arguments. `authorizationPartition` must
+return a stable, non-secret value representing effective grants or policy
+state; it must not return a bearer token or other credential. Returning
+`undefined`, returning a blank value, throwing, or producing arguments that
+cannot be canonicalized (for example a function-valued extra property) bypasses
+the cache for that call only. The callback is synchronous.
+
+Cache failures never change a result: a rejected read becomes a cache bypass, and
+a rejected write (including a TTL above the store's cap) is ignored. Cached
+values are returned without re-running validation or `execute`, so adapters
+must return isolated values from `get`; `InMemoryCacheStore` satisfies this by
+parsing a fresh JSON copy per hit. There is no request coalescing, so concurrent
+misses may execute the same call more than once. Cache hits still count as
+`success` in `RuntimeEvent`; cache outcomes are reported separately (see below).
+Cache reads and writes are not covered by the tool execution timeout or
+cancellation signal, so a distributed store must enforce its own timeouts.
+
+Each invocation event for an eligible tool includes
+`cacheOutcome: "hit" | "miss" | "bypass"`. A read failure and a partition or key
+derivation failure report `bypass`, because no usable lookup occurred; a
+successful lookup with no entry reports `miss`, even if execution later fails or
+the write is rejected. Tools that do not declare `cache` omit the field, as do
+runtimes without a cache. The hit ratio is
+`hit / (hit + miss)`; exclude `bypass` from the denominator and alert on it
+separately.
+
+### Cache invalidation
+
+`invalidateCachedResult(name, input, context)` deletes the entry for one exact
+invocation, using the same tool, arguments, tenant, principal, partition, and
+contract revision that produced it. It is optional on `ToolRuntime`; runtimes
+without caching support may omit it. Hashed keys cannot be enumerated by prefix,
+tenant, or predicate, so there is no bulk invalidation: deployments that need
+tenant-wide cleanup must use separate store namespaces or external metadata
+(ADR 0005). The call is a trusted operator surface, not an MCP request; it does
+not run the authorizer and does not validate `input` against the tool schema. It
+resolves the tool with the same tenant scoping as `callTool`, so a multi-tenant
+caller cannot invalidate another tenant's entry and learns nothing beyond
+`TOOL_NOT_FOUND`. It is a no-op when the runtime has no cache, the tool is not
+cache-eligible, or the partition/key cannot be derived. Store deletion failures
+propagate so an operator can see that invalidation did not succeed.
 
 ## Cache interface
 
@@ -216,9 +302,36 @@ export interface CacheStore {
   set<T>(key: string, value: T, ttlSeconds: number): Promise<void>;
   delete(key: string): Promise<void>;
 }
+
+export interface InMemoryCacheStoreOptions {
+  maxEntries?: number;
+  maxBytes?: number;
+  maxEntryBytes?: number;
+  maxTtlSeconds?: number;
+  monotonicNow?: () => number;
+}
+
+export class InMemoryCacheStore implements CacheStore {
+  constructor(options?: InMemoryCacheStoreOptions);
+}
 ```
 
-Adapters must enforce bounded TTLs and entry sizes. Shared caches must partition data by tenant and authorization context.
+Adapters must enforce bounded TTLs and entry sizes. Shared caches must partition data by tenant and authorization context. `get` must return a value the caller may mutate without affecting stored state, and must return `undefined` for a miss.
+
+`InMemoryCacheStore` is a process-local LRU implementation for development and
+tests. Its options default to 1,000 entries, 16 MiB retained key/value bytes,
+256 KiB per entry, and a 3,600-second maximum TTL. It accepts only versioned
+SHA-256 cache keys, clones values through JSON serialization, and rejects
+non-JSON values, accessors, callable `toJSON` methods (own or inherited),
+values deeper than 64 levels, and values with more than 50,000 nodes. It
+rejects a `toJSON` method because `JSON.stringify` invokes one even when it is
+inherited or non-enumerable, which would escape those bounds. Expired entries
+are reclaimed lazily on read or write; the entry and byte caps still bound
+retention. Its byte limit bounds retained serialized data; serialization can
+still allocate a temporary string before rejecting an oversized value.
+`InMemoryToolRuntime` uses it only when it is supplied through
+`RuntimeOptions.cache`; no tool result is cached unless the tool opts in and the
+runtime has a store.
 
 ## Metrics interface
 
@@ -233,18 +346,50 @@ export type RuntimeEvent = {
   toolName: string;
   outcome: "success" | "error" | "rate_limited";
   errorCode?: RuntimeErrorCode;
+  cacheOutcome?: "hit" | "miss" | "bypass";
+  tokenUsage?: {
+    count: number;
+    measurement: "exact" | "estimate";
+    tokenizer: string;
+    payloadBytes: number;
+  };
 };
 
 export interface MetricsSink {
   record(event: RuntimeEvent): void | Promise<void>;
 }
+
+export interface Tokenizer {
+  id: string;
+  measurement: "exact" | "estimate";
+  count(text: string): number;
+}
 ```
+
+`tokenUsage` is present on successful invocations when `RuntimeOptions.tokenizer`
+is configured. `count` is the adapter's count over `JSON.stringify(result)`, the
+same text the MCP adapter presents to the model; `payloadBytes` is that text's
+UTF-8 size. The runtime requires both a non-empty `id` and a `measurement` of
+`exact` or `estimate`, validates the returned count as a non-negative safe
+integer, and records the adapter's declaration without relabeling it. An
+adapter may claim `exact` only when it matches the tokenizer the target model
+uses; a heuristic must declare `estimate`. No tokenizer is bundled.
+
+Measurement runs on every successful call, including cache hits, and never on
+failures. It is skipped when the result has no JSON representation (for example
+`undefined` or a cycle), when the adapter throws, or when it returns an unusable
+count; the invocation still succeeds and `tokenUsage` is omitted. Tokenizers run
+in-process and synchronously in this milestone, so a remote counter must be
+fronted by a local adapter. Counts are telemetry only: token budgeting and
+response projection are not implemented.
 
 The runtime emits one event for every `callTool` that finds a callable tool, regardless of success or failure. Calls rejected with `TOOL_NOT_FOUND` do not emit an event: single-tenant runtimes reject unknown tools before the event is created, and in multi-tenant mode unresolved tools (unknown or outside the caller's tenant) are the same observable miss, so metrics timing cannot be used to enumerate another tenant's tools. Pinned single-tenant cross-tenant denials do emit an event with `AUTH_FORBIDDEN`. `timestamp` (epoch milliseconds) is read from `RuntimeOptions.now`, which defaults to `Date.now`. `durationMs` is measured with the monotonic `RuntimeOptions.monotonicNow`, which defaults to `performance.now`, so wall-clock adjustments cannot distort or invert a duration. Both clocks are injectable for deterministic tests. See `docs/adr/0007-wall-clock-and-monotonic-duration.md`.
 
 `outcome` is `success` when execution resolves, `rate_limited` only when the configured `RateLimiter` returns `{ allowed: false }`, and `error` for every other failure, including authorization failures, validation failures, limiter failures, timeouts, cancellations, and upstream errors. `errorCode` is present on failures and is the final `RuntimeErrorCode`. A `RATE_LIMITED` error reported by an executor is preserved as `errorCode` but has outcome `error`, because the runtime rate limiter did not deny the call.
 
-The earlier target shape included `outcome: "cache_hit"` and optional `durationMs`, `tenantId`, `toolName`, `tokenCount`, and `attributes`. Those fields are not implemented in Milestone 1. `cache_hit` depends on cache integration (Milestone 4), `tokenCount` depends on token accounting (Milestone 4), and `attributes` plus the optional-field relaxation depend on analytics and redaction work (Milestone 6). Adapters must not assume they exist.
+`cacheOutcome` is present only for a tool that declares `cache` on a runtime configured with a cache. Values are `hit` (served from the store), `miss` (lookup succeeded with no entry, including when execution or the write later fails), and `bypass` (no usable lookup: partition/key derivation failed or the store read failed). The hit ratio is `hit / (hit + miss)`; `bypass` is excluded from that ratio and should be monitored separately. Cache outcomes do not change `outcome` or `errorCode`.
+
+The earlier target shape included `outcome: "cache_hit"` and optional `durationMs`, `tenantId`, `toolName`, `tokenCount`, and `attributes`. Cache hits are represented by `cacheOutcome: "hit"` with `outcome: "success"` rather than a distinct outcome, so existing consumers of `outcome` keep working. `tokenCount` is represented by `tokenUsage.count`, with `tokenUsage.measurement` preventing an estimate from being read as exact; `attributes` and the optional-field relaxation depend on analytics and redaction work (Milestone 6). Adapters must not assume they exist.
 
 `MetricsSink.record` is invoked after the call settles. Synchronous throws and rejected promises are ignored so telemetry cannot change the tool result. Events must not contain secrets, raw authorization data, or unrestricted request and response bodies.
 
