@@ -75,6 +75,9 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Add `@chainmcp/executor` with `createUpstreamExecutor()`: compile output becomes runnable tools with bounded path/query/header/JSON-body mapping; exact host allowlists; HTTPS by default; fixed protocol/port; same-host redirect revalidation; rejection of any loopback, private, shared, link-local, metadata, multicast, documentation, or reserved DNS answer; pinned lookups with peer verification; no proxy environment or connection reuse; compression refusal; URL/header/request/response/redirect/time caps; and `context.signal`/total-timeout binding. It does not inject credentials, enforce authentication, validate response schemas, or retry.
 - Extend the runtime validator and compiler with bounded schema constraints: string `minLength`/`maxLength`/`pattern` and asserted formats, numeric bounds and `multipleOf`, array length and structural `uniqueItems`, and object property counts. Patterns use the linear-time `re2js` engine; invalid or oversized patterns fail registration. OpenAPI 3.0 boolean exclusive bounds are normalized to numeric JSON Schema bounds.
 - Add `examples/petstore`, a compiled stdio MCP server that wires the compiler, executor, shared runtime, and server adapter to a deterministic mock upstream. Add `docs/getting-started.md` and `pnpm conformance:inspector`, which runs the MCP Inspector CLI against `tools/list` and `tools/call`; CI runs the Inspector check in a separate Node.js 22.19.0 job.
+- Add Apache License 2.0 and apply it across all workspace packages, completing Milestone 0 licensing.
+- Configure dependency and secret scanning: add Dependabot configuration (`.github/dependabot.yml`), high-severity audit check in CI, Gitleaks secret scanning, and pull request dependency review.
+- Upgrade `@modelcontextprotocol/server` and `@modelcontextprotocol/client` to `2.3.1` to patch security advisories GHSA-jm63-cq47-j5jp, GHSA-46jr-4wx8-v453, and GHSA-rvq5-wwqv-78pq.
 
 ### Breaking changes
 
@@ -88,4 +91,3 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - No OpenAPI response-schema validation, CLI, gateway, credential provider, authentication enforcement, generated-server wiring, or concrete cache/auth/rate-limit adapter is included.
 - `@chainmcp/compiler` output is operation metadata; `@chainmcp/executor` turns it into runnable tools. Response schemas and authentication policies are not enforced; input `oneOf`/`anyOf`/`not` composition, `const`, remote references, and formats outside the asserted set remain unsupported. Authentication enforcement remains Milestone 5 work; generated-server/CLI wiring remains Milestone 7 work.
 - The core input validator supports only the subset documented in `API_REFERENCE.md`.
-- License selection remains unresolved; the existing `LICENSE` file is empty.

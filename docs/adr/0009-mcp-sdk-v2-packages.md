@@ -16,7 +16,8 @@ explicit.
 - Depend on `@modelcontextprotocol/server` from `@chainmcp/server` at runtime.
 - Depend on `@modelcontextprotocol/client` only as a development dependency for
   integration tests.
-- Pin both packages to exact version `2.0.0`; keep the lockfile aligned.
+- Pin both packages to exact version `2.3.1` (updated from `2.0.0` following
+  compatibility verification and security review); keep the lockfile aligned.
 - Treat an SDK upgrade as a reviewed compatibility change: update both package
   declarations and the lockfile together, then run typecheck, tests, and build.
 

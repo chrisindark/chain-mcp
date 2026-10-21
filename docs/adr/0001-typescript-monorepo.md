@@ -64,8 +64,7 @@ Use a TypeScript monorepo managed by pnpm workspaces.
 
 ## Follow-up actions
 
-- Add the remaining CI gates: dependency scanning and secret scanning
-  (Milestone 0).
-- Select a license before public release.
+- Completed: dependency scanning, secret scanning, and Apache-2.0 license
+  selection (Milestone 0).
 - Keep package dependency direction aligned with `ARCHITECTURE.md`.
 - Revisit the Node.js and TypeScript support matrix before 1.0.

@@ -59,7 +59,7 @@ Notes:
   ranges; redirect revalidation; DNS-rebinding pinning; no scheme or port
   escalation; and explicit proxy configuration.
 - `SEC-06b` from the raw triage (dependency and secret scanning) is Milestone 0
-  process work, not a service feature; `ROADMAP.md` already tracks it.
+  process work; completed in CI (audit check, Dependabot, Gitleaks, and dependency review).
 
 ## Phase 2 — Tool generation
 
