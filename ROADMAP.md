@@ -17,7 +17,8 @@ are not re-argued per milestone. Deferred risks and their triggers live in
 - **Determinism:** the same contract and compiler version produce byte-identical
   output, and the generation manifest records a toolset hash.
 - **No blocking I/O:** request paths avoid synchronous filesystem, process, and
-  network calls; a lint rule enforces this.
+  network calls; the `chainmcp/no-blocking-io` lint rule enforces this over
+  runtime source paths.
 - **Outbound safety:** the first outbound HTTP call lands with destination
   allowlisting, private/link-local/metadata range blocking, redirect
   revalidation, and response size and time caps.
@@ -60,23 +61,37 @@ are not re-argued per milestone. Deferred risks and their triggers live in
 
 ## Milestone 3 — OpenAPI compiler
 
-- [ ] Parse and validate OpenAPI 3.0 and 3.1.
+- [x] Parse and validate OpenAPI 3.0 and 3.1.
 - [ ] Map operations, parameters, request bodies, and response schemas.
 - [ ] Resolve nested and composed `$ref` schemas deterministically.
 - [ ] Preserve required fields, enums, formats, and numeric and string constraints in generated validators.
-- [ ] Generate stable tool names and descriptions.
-- [ ] Detect circular references, invalid schemas, and tool-name collisions; fail with actionable diagnostics.
+- [x] Generate stable tool names and descriptions.
+- [x] Detect circular references, invalid schemas, and tool-name collisions; fail with actionable diagnostics.
 - [ ] Translate supported JSON Schema constructs into validators.
 - [ ] Map authentication schemes to explicit policies, including alternative (OR) and combined (AND) requirements; never silently drop a requirement.
-- [ ] Report unsupported constructs and ambiguous mappings.
+- [x] Report unsupported constructs and ambiguous mappings.
 - [ ] Enforce outbound destination policy (allowlist, private-range and metadata blocking, redirect revalidation) on generated executors.
 - [ ] Bind `context.signal` to generated upstream calls and release executor resources on timeout or cancellation.
-- [ ] Emit a deterministic generation manifest with a toolset hash and a regeneration diff.
+- [x] Emit a deterministic generation manifest with a toolset hash and a regeneration diff.
 - [ ] Validate compiled output with an MCP client and an Inspector conformance check.
 - [ ] Document one end-to-end example in `docs/getting-started.md` and `examples/`.
-- [ ] Add deterministic compiler tests and fixtures.
+- [x] Add deterministic compiler tests and fixtures.
 
 **Exit criteria:** a representative API contract compiles into validated tools with documented limitations; generated executors bind the cancellation signal and the outbound destination policy to upstream I/O; output is byte-identical for the same contract and compiler version; and a runnable example is documented in `docs/getting-started.md`.
+
+**Status (2026-10-21):** the compiler package and its first vertical slice are
+implemented. It parses one YAML/JSON OpenAPI 3.0 or 3.1 document, validates
+document structure, resolves local references, enumerates operations, builds
+audited object-root input schemas from path/query/header parameters and JSON
+request bodies, translates 3.0 nullability, preserves security OR/AND
+metadata, and emits deterministic source/contract/toolset hashes plus
+`diffManifests()`. Unsupported constraints are rejected in strict mode and
+reported when droppable in permissive mode; composition and remote references
+are always rejected. Output is metadata, not runnable tools. Response schemas,
+composed `$ref` forms, explicit authentication policies/scopes, upstream
+execution, outbound destination policy, cancellation binding, Inspector
+conformance, and an end-to-end example remain open, so the exit criteria are
+not yet met.
 
 ## Milestone 4 — Smart caching and token accounting
 

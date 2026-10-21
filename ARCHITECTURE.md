@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-The target architecture consists of a contract compiler, shared runtime, MCP adapters, optional infrastructure adapters, and two deployment modes. The current implementation contains `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, and `@chainmcp/server`; remaining components shown below are planned.
+The target architecture consists of a contract compiler, shared runtime, MCP adapters, optional infrastructure adapters, and two deployment modes. The current implementation contains `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, and `@chainmcp/server`; remaining components shown below are planned.
 
 ```text
                     API contract
@@ -39,7 +39,7 @@ The target architecture consists of a contract compiler, shared runtime, MCP ada
 
 ## 3. Monorepo package boundaries
 
-Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, and `@chainmcp/server`. Remaining rows describe planned boundaries; no empty packages are created for them.
+Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, and `@chainmcp/server`. Remaining rows describe planned boundaries; no empty packages are created for them.
 
 | Package                     | Responsibility                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------ |
@@ -84,7 +84,46 @@ The runtime supports two tenancy modes (ADR 0008). **Single-tenant** deployments
 
 Timeout and cancellation are cooperative. The runtime creates a per-call `AbortController`, aborts it when the caller cancels or the timeout elapses, and rejects the caller with `CANCELLED` or `UPSTREAM_TIMEOUT`. This does not forcibly terminate `execute` or release resources it has acquired. Tool and executor implementations must observe `context.signal`, bind it to abortable I/O, and release resources in `finally`. A tool that ignores the signal may continue running after the caller has been rejected.
 
-## 5. Generated server mode
+## 5. OpenAPI compiler
+
+`@chainmcp/compiler` converts one OpenAPI 3.0 or 3.1 document into deterministic
+operation metadata. The current slice is offline and emits `CompiledOperation`
+records, not runnable `ToolDefinition`s; execution, credentials, response
+validation, and outbound policy remain future work.
+
+The pipeline is:
+
+1. Parse one YAML 1.2 or JSON document with duplicate-key, alias, node, depth,
+   and byte limits.
+2. Validate the version, `info`, `paths`, path items, operations, parameters,
+   JSON request bodies, responses presence, and security structures.
+3. Resolve local `#/...` references only, with cycle and depth limits. Remote
+   references are rejected and never fetched.
+4. Enumerate operations by sorted path and a fixed method order, so names,
+   collisions, diagnostics, and hashes do not depend on source key order.
+5. Build an object-root input schema from path, query, and header parameters
+   plus a JSON body mapped to a `body` property. Operation-level parameters
+   override path-level parameters by `(name, in)`.
+6. Translate OpenAPI 3.0 `nullable` and `readOnly` input semantics, preserve
+   3.1 null unions, and audit the result with `auditInputSchema`.
+7. Preserve security schemes and OR/AND requirements as metadata. They are not
+   enforced until authentication and upstream credential slices exist.
+8. Emit `sourceHash`, a canonical-document `contractRevision`, per-tool hashes,
+   a `toolsetHash`, and `diffManifests()` output.
+
+Strict mode is the default: unsupported validation constraints are errors and
+the operation is omitted. Permissive mode may drop constraints that cannot
+weaken the supported subset, with a warning. Composition keywords, remote
+references, unknown schema keywords, and schema-valued
+`additionalProperties` are always errors because dropping them would accept
+values the contract rejects. Name collisions are errors in strict mode and are
+renamed deterministically with a warning in permissive mode.
+
+Compilation performs no filesystem or network I/O and runs on the normal
+asynchronous request path without blocking APIs. The `chainmcp/no-blocking-io`
+lint rule enforces that invariant for runtime source.
+
+## 6. Generated server mode
 
 The compiler produces a project containing:
 
@@ -97,7 +136,7 @@ The compiler produces a project containing:
 
 Generated servers use the shared runtime package. Generated source must be deterministic for the same contract and compiler version.
 
-## 6. Dynamic gateway mode
+## 7. Dynamic gateway mode
 
 The gateway serves multiple registered API contracts through a shared process.
 
@@ -112,7 +151,7 @@ Each contract revision has:
 
 Load new revisions into an isolated candidate registry. Validate completely, then atomically activate. Support rollback and disabling without mutating active registries in place.
 
-## 7. Core interfaces
+## 8. Core interfaces
 
 ```ts
 export interface ToolContext {
@@ -186,7 +225,7 @@ application abort, SIGINT, or SIGTERM. A `closed` promise and `onclose`
 callback expose transport lifecycle; repeated close calls await the same
 shutdown. Remote serving and inbound authentication are not implemented.
 
-## 8. Caching invariants
+## 9. Caching invariants
 
 A cache key must incorporate:
 
@@ -243,7 +282,7 @@ be enumerated, so tenant-wide or predicate invalidation requires separate store
 namespaces or external metadata (ADR 0005). Invalidation is a trusted operator
 surface, not an MCP request, and does not run authorization.
 
-## 9. Token accounting
+## 10. Token accounting
 
 Token accounting measures the serialized result presented to the model, not merely the raw upstream response.
 
@@ -279,7 +318,7 @@ The following remain required before token accounting is complete:
 Token counts are metadata; adapters receive the serialized result, so they must
 run in-process or in a trusted boundary and must not forward payload text.
 
-## 10. JSON navigation
+## 11. JSON navigation
 
 Navigation tools must operate on bounded JSON data and enforce limits for:
 
@@ -291,7 +330,7 @@ Navigation tools must operate on bounded JSON data and enforce limits for:
 
 Navigation must not bypass upstream authorization or grant access to fields the caller is not allowed to see.
 
-## 11. Error model
+## 12. Error model
 
 Use stable internal error codes, including:
 
@@ -311,7 +350,7 @@ Expose safe messages to clients. Keep stack traces and sensitive diagnostics in 
 
 The runtime classifies failures by invocation stage. Typed `RuntimeError` values from adapters are preserved. An authorization adapter that throws anything else fails closed as `AUTH_FORBIDDEN` with a safe `Access denied` message, and its cause is retained only for protected diagnostics. Rate limiting is expressed as an explicit `{ allowed: false }` decision; a thrown limiter error is an infrastructure failure and does not produce the `rate_limited` metrics outcome, even if the adapter throws a `RATE_LIMITED` code. See ADR 0006.
 
-## 12. Architecture decision records
+## 13. Architecture decision records
 
 Changes to the runtime model, public API, transport strategy, or security boundaries require an ADR under `docs/adr/`.
 

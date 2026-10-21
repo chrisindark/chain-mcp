@@ -535,14 +535,19 @@ The earlier target shape included `outcome: "cache_hit"` and optional `durationM
 
 `MetricsSink.record` is invoked after the call settles. Synchronous throws and rejected promises are ignored so telemetry cannot change the tool result. Events must not contain secrets, raw authorization data, or unrestricted request and response bodies.
 
-## Compiler interface
+## `@chainmcp/compiler`
 
-The planned compiler API is:
+`@chainmcp/compiler` parses and validates OpenAPI 3.0 and 3.1 documents and emits deterministic operation metadata. It does **not** emit runnable `ToolDefinition`s yet: upstream execution, credential injection, response-schema mapping, and outbound destination policy remain Milestone 3 work. Do not register compiler output as a callable tool until an executor slice exists.
 
 ```ts
+export type OpenApiVersion = "3.0" | "3.1";
+
 export interface CompileOptions {
   strict?: boolean;
   includeDeprecated?: boolean;
+  maxSourceBytes?: number;
+  maxRefDepth?: number;
+  maxOperations?: number;
 }
 
 export interface CompileDiagnostic {
@@ -552,18 +557,95 @@ export interface CompileDiagnostic {
   location?: string;
 }
 
-export interface CompileResult {
-  tools: ToolDefinition[];
-  diagnostics: CompileDiagnostic[];
+export type SecurityRequirement = Readonly<Record<string, readonly string[]>>;
+
+export interface CompiledSecurityScheme {
+  name: string;
+  type: "apiKey" | "http" | "oauth2" | "openIdConnect" | "mutualTLS";
+  description?: string;
+  parameterName?: string;
+  parameterLocation?: "query" | "header" | "cookie";
+  scheme?: string;
+  bearerFormat?: string;
+  openIdConnectUrl?: string;
+  flows?: Readonly<Record<string, unknown>>;
+}
+
+export interface CompiledOperation {
+  name: string;
+  description: string;
+  inputSchema: JsonSchema;
+  operation: OperationPolicy;
+  method: HttpMethod;
+  path: string;
+  operationId?: string;
+  readOnly: boolean;
+  deprecated: boolean;
+  security: readonly SecurityRequirement[];
+  sourceLocation: string;
+}
+
+export interface CompileManifest {
+  manifestVersion: 1;
+  compilerVersion: string;
+  openapiVersion: OpenApiVersion | "unknown";
   sourceHash: string;
+  contractRevision: string;
+  toolsetHash: string;
+  toolCount: number;
+  tools: readonly { name: string; hash: string }[];
+}
+
+export interface CompileResult {
+  ok: boolean;
+  tools: readonly CompiledOperation[];
+  diagnostics: readonly CompileDiagnostic[];
+  securitySchemes: Readonly<Record<string, CompiledSecurityScheme>>;
+  sourceHash: string;
+  contractRevision: string;
+  manifest: CompileManifest;
 }
 
 export interface ContractCompiler {
   compile(source: string, options?: CompileOptions): Promise<CompileResult>;
 }
+
+export class OpenApiCompiler implements ContractCompiler {}
+
+export function compileOpenApi(
+  source: string,
+  options?: CompileOptions,
+): CompileResult;
+
+export function diffManifests(
+  previous: CompileManifest,
+  next: CompileManifest,
+): {
+  added: readonly string[];
+  removed: readonly string[];
+  changed: readonly string[];
+  unchanged: readonly string[];
+};
 ```
 
-The final compiler contract must be validated against the actual parser and schema support.
+`compile`/`compileOpenApi` accept one YAML or JSON document (YAML 1.2 core schema, duplicate keys rejected). Compilation is offline and asynchronous only to match the interface: it performs no filesystem or network I/O. Defaults are `strict: true`, `includeDeprecated: false`, `maxSourceBytes: 5 MiB` (hard maximum 25 MiB), `maxRefDepth: 32` (maximum 128), and `maxOperations: 1,000` (maximum 10,000). Invalid option types and exceeded hard maxima throw `TypeError`; document and contract problems are returned as diagnostics.
+
+`ok` is false when any diagnostic has severity `error`. The compiler keeps compiling independent operations after a failure, but never emits an operation with an error. Deprecated operations are excluded with a warning by default. In strict mode, an unsupported schema constraint is an error and the operation is omitted; in permissive mode (`strict: false`) constraints that can be dropped without changing the supported subset are dropped with a warning. Composition keywords (`allOf`, `oneOf`, `anyOf`, `not`, conditionals, and dependent/pattern schemas), schema-valued `additionalProperties`, tuple or boolean `items`, remote references, and unknown schema keywords are always errors because dropping them would weaken validation.
+
+Supported input construction:
+
+- Path, query, and header parameters from path-item and operation levels; operation-level declarations override path-level ones by `(name, in)`. Cookie parameters, content-encoded parameters, credential/transport headers such as `Authorization` and `Cookie`, duplicate names across locations, and path parameters without `required: true` are rejected.
+- JSON request bodies (`application/json` or an `application/*+json` media type) become one `body` input property, required when `requestBody.required` is true. A parameter named `body` collides and is rejected.
+- The root input schema is always `type: "object"` with `additionalProperties: false`; property and `required` ordering is sorted for determinism.
+- `readOnly` properties are omitted from inputs and from `required`. Response schemas are not mapped yet.
+
+Schema translation resolves local `$ref`s only (`#/...`) with cycle and depth detection and never fetches a remote reference. OpenAPI 3.0 `nullable: true` becomes a union with `"null"` and adds `null` to `enum`; it requires a sibling `type`, and using `nullable` in 3.1 is an error. OpenAPI 3.1 null unions are preserved. The resulting input schema is audited with `auditInputSchema`; an operation is not emitted when the runtime cannot enforce its schema.
+
+Security schemes and requirements are preserved structurally, not enforced. Each `security` array element is an OR alternative; keys inside one element are AND requirements; `security: []` explicitly means no authentication. `components.securitySchemes` must be valid for the declared version (`mutualTLS` requires 3.1), and requirements may not reference an unknown scheme. `operation.requiredScopes` is intentionally left empty because flattening OR alternatives or AND scopes into one list would misrepresent the contract.
+
+`sourceHash` hashes the exact source text. `contractRevision` hashes the canonical parsed document plus `COMPILER_VERSION`; semantically equivalent key ordering therefore produces the same revision, while compiler changes produce a new revision. `manifest.tools` records a hash per emitted operation, `toolsetHash` hashes the compiler version, contract revision, and all tool hashes, and `diffManifests` reports added, removed, changed, and unchanged names between two manifests. No timestamps are included, so the same source and compiler version produce the same manifest.
+
+Known limitations: no response-schema mapping or output validation, no executor or upstream HTTP policy, no remote references, no `allOf`/`oneOf`/`anyOf` composition, no numeric/string/format constraint enforcement beyond the runtime subset, no YAML merge-key support, and no regeneration command that reads/writes a manifest. The compiler is not wired into the CLI or generated-server flow yet.
 
 ## `@chainmcp/cache-redis`
 
