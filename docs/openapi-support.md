@@ -13,7 +13,7 @@ Milestone 3. It:
   duplicate keys, multiple documents, non-JSON values, deep nesting, cycles,
   and sources above the configured byte limit.
 - Validates the OpenAPI version, `info`, `paths`, path items, operations,
-  parameters, JSON request bodies, responses presence, and security structures.
+  parameters, JSON request bodies, response objects, and security structures.
 - Resolves local `$ref`s only, with depth and cycle limits. Remote references
   are rejected rather than fetched.
 - Enumerates eligible operations in deterministic path and method order.
@@ -26,8 +26,20 @@ Milestone 3. It:
 - Translates OpenAPI 3.0 `nullable` into a `"null"` type union (and adds `null`
   to `enum`), preserves OpenAPI 3.1 null unions, and drops `readOnly`
   properties from request inputs.
+- Flattens an `allOf` of object schemas into one object schema when the
+  intersection is semantics-preserving, resolving nested local `$ref`s.
+  Incompatible properties, non-object members, sibling validation keywords, and
+  input `oneOf`/`anyOf`/`not`/conditional composition are rejected.
 - Audits every input schema with `auditInputSchema` and refuses to emit an
   operation the runtime cannot enforce.
+- Maps declared responses as metadata: status keys, descriptions, the selected
+  media type, and translated response schemas. OpenAPI 3.1 status ranges are
+  supported; 3.0 ranges are rejected. Non-JSON-only content is recorded with a
+  warning and no schema. `headers` and `links` are not mapped.
+- Translates response schemas descriptively without generating or applying an
+  output validator: local `$ref`s are resolved, 3.0 nullability is translated,
+  `writeOnly` properties are omitted, and composition keywords such as
+  `oneOf`, `anyOf`, and `not` are preserved.
 - Preserves security schemes and OR/AND requirement structure as metadata. It
   does not enforce them yet.
 - Emits `sourceHash`, `contractRevision`, a deterministic manifest with
@@ -36,8 +48,8 @@ Milestone 3. It:
 
 The output is operation metadata (`CompiledOperation`), not runnable
 `ToolDefinition`s. There is no upstream executor, outbound destination policy,
-credential injection, response-schema mapping, CLI, or generated-server
-integration yet.
+credential injection, response validation, CLI, or generated-server integration
+yet.
 
 ## Compilation behavior
 
@@ -54,24 +66,24 @@ The full compiler must:
 9. Produce a source hash and compiler version.
 10. Bind `context.signal` to generated upstream calls and release executor resources on abort or timeout.
 
-The current slice implements items 1-4, 8, and 9 for operation metadata and
-parts of items 5-7. The remaining portions of items 5-7, item 10, response
-mapping, and execution remain open.
+The current slice implements items 1-5 and 8-9 for operation metadata, part of
+item 6 (input validation only), and item 7 as unenforced metadata. Response
+mapping is descriptive; output validation, item 10, and execution remain open.
 
 ## Initial mapping
 
-| OpenAPI concept        | Intended MCP representation                 |
-| ---------------------- | ------------------------------------------- |
-| `operationId`          | Preferred tool-name source                  |
-| `summary`              | Tool description                            |
-| Path parameters        | Required input properties                   |
-| Query parameters       | Input properties                            |
-| Header parameters      | Policy-controlled inputs                    |
-| Request body           | Validated input object                      |
-| Security schemes       | Authentication policy                       |
-| Response schema        | Output validation and documentation         |
-| Deprecated operation   | Warning or exclusion based on configuration |
-| `nullable: true` (3.0) | `type` union containing `"null"`            |
+| OpenAPI concept        | Intended MCP representation                  |
+| ---------------------- | -------------------------------------------- |
+| `operationId`          | Preferred tool-name source                   |
+| `summary`              | Tool description                             |
+| Path parameters        | Required input properties                    |
+| Query parameters       | Input properties                             |
+| Header parameters      | Policy-controlled inputs                     |
+| Request body           | Validated input object                       |
+| Security schemes       | Authentication policy                        |
+| Response schema        | Output metadata (validation not implemented) |
+| Deprecated operation   | Warning or exclusion based on configuration  |
+| `nullable: true` (3.0) | `type` union containing `"null"`             |
 
 ### OpenAPI 3.0 `nullable`
 
@@ -92,7 +104,9 @@ Cover the 3.0 and 3.1 forms with fixtures so the two paths are tested separately
 
 The compiler must not silently weaken validation when it encounters unsupported schema features. It should fail in strict mode or emit explicit diagnostics in permissive mode.
 
-Current status: strict mode (the default) errors and omits the operation for unsupported constraints such as `format`, bounds, `pattern`, and `uniqueItems`. Permissive mode drops only constraints that can be omitted without changing the supported subset and records a warning. Composition (`allOf`, `oneOf`, `anyOf`, `not`, conditionals, dependent and pattern schemas), schema-valued `additionalProperties`, tuple/boolean `items`, remote references, and unknown schema keywords remain errors in both modes because dropping them would accept values the contract rejects.
+Current status: strict mode (the default) errors and omits the operation for unsupported input constraints such as `format`, bounds, `pattern`, and `uniqueItems`. Permissive mode drops only constraints that can be omitted without changing the supported subset and records a warning. Input `allOf` is flattened when every member is an object schema and merging is semantics-preserving; nested `$ref`s are resolved first. Incompatible or non-object `allOf` members, sibling validation keywords, `oneOf`, `anyOf`, `not`, conditionals, dependent and pattern schemas, schema-valued `additionalProperties`, tuple/boolean `items`, remote references, and unknown schema keywords remain errors in both modes because dropping or approximating them would accept values the contract rejects.
+
+Response schemas are metadata, not a validation boundary. Their translation preserves composition and constraints that the runtime cannot enforce, because no output validator exists yet. When an output validator is added, it must reject or explicitly document those keywords rather than silently ignore them.
 
 Use `auditInputSchema` from `@chainmcp/core` on every generated tool input schema. It returns the same diagnostics the runtime enforces at registration, including stable codes and JSON-path locations. Do not emit a tool while its audit result is unsupported.
 
@@ -125,6 +139,6 @@ Maintain fixtures for:
 - Read and write operations.
 - Invalid documents and unsupported schema constructs.
 
-Current fixtures live in `packages/compiler/tests/fixtures/`. The deterministic test suite covers both versions, nullable translation, local and circular references, remote-reference refusal, tool-name collisions, security OR/AND structure, unsupported constructs in both modes, parameter/body mapping, limits, and manifest diffs.
+Current fixtures live in `packages/compiler/tests/fixtures/`. The deterministic test suite covers both versions, nullable translation, local and circular references, remote-reference refusal, tool-name collisions, security OR/AND structure, unsupported constructs in both modes, parameter/body mapping, `allOf` flattening, response mapping (including `$ref` responses, 3.1 ranges, non-JSON content, and output composition), limits, and manifest diffs.
 
 Document actual compatibility based on tests rather than assumptions.

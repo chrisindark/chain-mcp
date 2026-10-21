@@ -105,6 +105,30 @@ describe("OpenAPI 3.0 compilation", () => {
     const getPet = result.tools[2];
     expect(getPet?.security).toEqual([]);
     expect(getPet?.inputSchema.required).toEqual(["petId"]);
+    expect(getPet?.responses).toEqual([
+      {
+        status: "200",
+        description: "A pet",
+        mediaType: "application/json",
+        schema: {
+          type: "object",
+          required: ["id", "name"],
+          properties: {
+            id: { type: "string" },
+            name: { type: "string" },
+            tag: {
+              type: ["string", "null"],
+              enum: ["dog", "cat", null],
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+    ]);
+    expect(listPets?.responses[0]?.schema).toMatchObject({
+      type: "array",
+      items: { type: "object" },
+    });
 
     for (const tool of result.tools) {
       expect(auditInputSchema(tool.inputSchema).supported).toBe(true);
@@ -230,6 +254,18 @@ describe("OpenAPI 3.1 compilation", () => {
     expect((getItem?.inputSchema.properties as ObjectMap).filter).toEqual({
       type: ["string", "null"],
       enum: ["active", "archived", null],
+    });
+
+    const itemResponse = getItem?.responses[0];
+    expect(itemResponse).toMatchObject({
+      status: "200",
+      description: "An item",
+      mediaType: "application/json",
+    });
+    const itemSchema = itemResponse?.schema as ObjectMap;
+    expect(itemSchema.allOf).toHaveLength(2);
+    expect((itemSchema.allOf as ObjectMap[])[1]?.properties).toEqual({
+      id: { type: "string", readOnly: true },
     });
 
     const replaceItem = result.tools[1];
@@ -436,6 +472,421 @@ describe("reference resolution", () => {
   });
 });
 
+describe("schema composition", () => {
+  const bodyOf = (schema: ObjectMap) =>
+    compileDocument(
+      baseDocument({
+        "/x": {
+          post: operation({
+            requestBody: {
+              required: true,
+              content: { "application/json": { schema } },
+            },
+          }),
+        },
+      }),
+    );
+
+  it("flattens object allOf schemas and resolves their references", () => {
+    const result = compileDocument(
+      baseDocument(
+        {
+          "/x": {
+            post: operation({
+              requestBody: {
+                required: true,
+                content: {
+                  "application/json": {
+                    schema: {
+                      allOf: [
+                        {
+                          type: "object",
+                          properties: { id: { type: "string" } },
+                          required: ["id"],
+                        },
+                        { $ref: "#/components/schemas/Audit" },
+                        {
+                          allOf: [
+                            {
+                              type: "object",
+                              properties: { note: { type: "string" } },
+                            },
+                          ],
+                        },
+                      ],
+                      description: "Combined",
+                    },
+                  },
+                },
+              },
+            }),
+          },
+        },
+        {
+          components: {
+            schemas: {
+              Audit: {
+                type: "object",
+                properties: { createdAt: { type: "string" } },
+                required: ["createdAt"],
+              },
+            },
+          },
+        },
+      ),
+    );
+
+    const tool = singleTool(result);
+    const body = (tool.inputSchema.properties as ObjectMap).body;
+    expect(body).toEqual({
+      type: "object",
+      description: "Combined",
+      properties: {
+        createdAt: { type: "string" },
+        id: { type: "string" },
+        note: { type: "string" },
+      },
+      required: ["createdAt", "id"],
+    });
+  });
+
+  it("rejects incompatible, non-object, and ambiguous allOf members", () => {
+    const incompatible = bodyOf({
+      allOf: [
+        { type: "object", properties: { id: { type: "string" } } },
+        { type: "object", properties: { id: { type: "integer" } } },
+      ],
+    });
+    expect(codes(incompatible)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
+
+    const primitive = bodyOf({ allOf: [{ type: "string" }] });
+    expect(codes(primitive)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
+
+    // Flattening a closed member is safe only when it declares every property
+    // contributed by the other members.
+    const closedSafe = bodyOf({
+      allOf: [
+        {
+          type: "object",
+          properties: {
+            a: { type: "string" },
+            b: { type: "integer" },
+          },
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: { b: { type: "integer" } },
+          required: ["b"],
+        },
+      ],
+    });
+    expect(singleTool(closedSafe).inputSchema.properties).toEqual({
+      body: {
+        type: "object",
+        properties: {
+          a: { type: "string" },
+          b: { type: "integer" },
+        },
+        required: ["b"],
+        additionalProperties: false,
+      },
+    });
+
+    const closedUnsafe = bodyOf({
+      allOf: [
+        {
+          type: "object",
+          properties: { a: { type: "string" } },
+          additionalProperties: false,
+        },
+        { type: "object", properties: { b: { type: "integer" } } },
+      ],
+    });
+    expect(codes(closedUnsafe)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
+
+    const sibling = bodyOf({
+      type: "object",
+      allOf: [{ type: "object", properties: { id: { type: "string" } } }],
+    });
+    expect(codes(sibling)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
+
+    const nullable = compileDocument(
+      baseDocument({
+        "/x": {
+          get: operation({
+            parameters: [
+              {
+                name: "value",
+                in: "query",
+                schema: {
+                  nullable: true,
+                  type: "object",
+                  allOf: [{ type: "object" }],
+                },
+              },
+            ],
+          }),
+        },
+      }),
+      { strict: false },
+    );
+    expect(codes(nullable)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
+  });
+
+  it("detects cycles through allOf references", () => {
+    const result = compileDocument(
+      baseDocument(
+        {
+          "/x": {
+            post: operation({
+              requestBody: {
+                content: {
+                  "application/json": {
+                    schema: { $ref: "#/components/schemas/A" },
+                  },
+                },
+              },
+            }),
+          },
+        },
+        {
+          components: {
+            schemas: {
+              A: { allOf: [{ $ref: "#/components/schemas/A" }] },
+            },
+          },
+        },
+      ),
+    );
+    expect(codes(result)).toContain("REF_CYCLE");
+    expect(result.tools).toHaveLength(0);
+  });
+});
+
+describe("responses", () => {
+  it("maps statuses, JSON schemas, and write-only output fields", () => {
+    const result = compileDocument(
+      baseDocument({
+        "/x": {
+          get: operation({
+            operationId: "x",
+            responses: {
+              "404": { description: "Not found" },
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      required: ["id", "secret"],
+                      properties: {
+                        id: { type: "string", readOnly: true },
+                        name: { type: "string" },
+                        secret: { type: "string", writeOnly: true },
+                      },
+                      additionalProperties: false,
+                    },
+                  },
+                },
+              },
+            },
+          }),
+        },
+      }),
+    );
+
+    const tool = singleTool(result);
+    expect(tool.responses).toEqual([
+      {
+        status: "200",
+        description: "OK",
+        mediaType: "application/json",
+        schema: {
+          type: "object",
+          properties: {
+            id: { type: "string", readOnly: true },
+            name: { type: "string" },
+          },
+          required: ["id"],
+          additionalProperties: false,
+        },
+      },
+      { status: "404", description: "Not found" },
+    ]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("resolves referenced responses and composes output schemas", () => {
+    const result = compileDocument(
+      baseDocument(
+        {
+          "/x": {
+            get: operation({
+              responses: { "200": { $ref: "#/components/responses/Item" } },
+            }),
+          },
+        },
+        {
+          components: {
+            responses: {
+              Item: {
+                description: "An item",
+                content: {
+                  "application/json": {
+                    schema: {
+                      oneOf: [
+                        { $ref: "#/components/schemas/Item" },
+                        { type: "null" },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+            schemas: {
+              Item: {
+                type: "object",
+                properties: { id: { type: "string" } },
+              },
+            },
+          },
+        },
+      ),
+    );
+
+    const tool = singleTool(result);
+    expect(tool.responses).toEqual([
+      {
+        status: "200",
+        description: "An item",
+        mediaType: "application/json",
+        schema: {
+          oneOf: [
+            { type: "object", properties: { id: { type: "string" } } },
+            { type: "null" },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it("supports 3.1 ranges and rejects them in 3.0", () => {
+    const range = { "2XX": { description: "Success" } };
+    const document = baseDocument(
+      { "/x": { get: operation({ responses: range }) } },
+      {},
+      "3.1.0",
+    );
+    const result31 = compileDocument(document);
+    expect(result31.ok).toBe(true);
+    expect(singleTool(result31).responses).toEqual([
+      { status: "2XX", description: "Success" },
+    ]);
+
+    const result30 = compileDocument(
+      baseDocument({ "/x": { get: operation({ responses: range }) } }),
+    );
+    expect(codes(result30)).toContain("RESPONSE_INVALID");
+    expect(result30.tools).toHaveLength(0);
+  });
+
+  it("records non-JSON content without a schema and warns", () => {
+    const result = compileDocument(
+      baseDocument({
+        "/x": {
+          get: operation({
+            responses: {
+              "200": {
+                description: "CSV",
+                content: { "text/csv": { schema: { type: "string" } } },
+              },
+            },
+          }),
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(singleTool(result).responses).toEqual([
+      { status: "200", description: "CSV", mediaType: "text/csv" },
+    ]);
+    expect(
+      result.diagnostics.find(
+        (diagnostic) => diagnostic.code === "RESPONSE_UNSUPPORTED",
+      )?.severity,
+    ).toBe("warning");
+  });
+
+  it("rejects malformed response objects", () => {
+    const missingDescription = compileDocument(
+      baseDocument({
+        "/x": { get: operation({ responses: { "200": {} } }) },
+      }),
+    );
+    expect(codes(missingDescription)).toContain("RESPONSE_INVALID");
+
+    const badStatus = compileDocument(
+      baseDocument({
+        "/x": {
+          get: operation({ responses: { "2000": { description: "Bad" } } }),
+        },
+      }),
+    );
+    expect(codes(badStatus)).toContain("RESPONSE_INVALID");
+
+    const badSchema = compileDocument(
+      baseDocument({
+        "/x": {
+          get: operation({
+            responses: {
+              "200": {
+                description: "Bad",
+                content: { "application/json": { schema: "not a schema" } },
+              },
+            },
+          }),
+        },
+      }),
+    );
+    expect(codes(badSchema)).toContain("RESPONSE_INVALID");
+
+    const unknownField = compileDocument(
+      baseDocument({
+        "/x": {
+          get: operation({
+            responses: { "200": { description: "Bad", body: "no" } },
+          }),
+        },
+      }),
+    );
+    expect(codes(unknownField)).toContain("RESPONSE_INVALID");
+  });
+
+  it("includes response metadata in per-tool hashes", () => {
+    const compileWith = (description: string) =>
+      compileDocument(
+        baseDocument({
+          "/x": {
+            get: operation({
+              operationId: "x",
+              responses: { "200": { description } },
+            }),
+          },
+        }),
+      );
+
+    const first = compileWith("One");
+    const second = compileWith("Two");
+    expect(diffManifests(first.manifest, second.manifest)).toEqual({
+      added: [],
+      removed: [],
+      changed: ["x"],
+      unchanged: [],
+    });
+  });
+});
+
 describe("tool naming", () => {
   it("falls back to method and path when operationId is absent", () => {
     const result = compileDocument(
@@ -522,16 +973,16 @@ describe("unsupported schemas", () => {
     ).toBe("warning");
   });
 
-  it("rejects composition even in permissive mode", () => {
+  it("rejects union composition even in permissive mode", () => {
     const result = compileDocument(
       parameterDocument({
-        allOf: [{ type: "string" }],
+        oneOf: [{ type: "string" }, { type: "integer" }],
       }),
       { strict: false },
     );
     expect(result.ok).toBe(false);
     expect(result.tools).toHaveLength(0);
-    expect(codes(result)).toContain("SCHEMA_UNSUPPORTED");
+    expect(codes(result)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
   });
 
   it("rejects schema-valued additionalProperties and unknown keywords", () => {

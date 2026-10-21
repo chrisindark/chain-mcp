@@ -1,6 +1,6 @@
 # ADR 0015: OpenAPI compiler scope and deterministic manifests
 
-- Status: proposed
+- Status: proposed; extended by ADR 0016
 - Date: 2026-10-21
 
 ## Context

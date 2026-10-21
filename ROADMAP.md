@@ -62,7 +62,7 @@ are not re-argued per milestone. Deferred risks and their triggers live in
 ## Milestone 3 — OpenAPI compiler
 
 - [x] Parse and validate OpenAPI 3.0 and 3.1.
-- [ ] Map operations, parameters, request bodies, and response schemas.
+- [x] Map operations, parameters, request bodies, and response schemas.
 - [ ] Resolve nested and composed `$ref` schemas deterministically.
 - [ ] Preserve required fields, enums, formats, and numeric and string constraints in generated validators.
 - [x] Generate stable tool names and descriptions.
@@ -79,19 +79,25 @@ are not re-argued per milestone. Deferred risks and their triggers live in
 
 **Exit criteria:** a representative API contract compiles into validated tools with documented limitations; generated executors bind the cancellation signal and the outbound destination policy to upstream I/O; output is byte-identical for the same contract and compiler version; and a runnable example is documented in `docs/getting-started.md`.
 
-**Status (2026-10-21):** the compiler package and its first vertical slice are
-implemented. It parses one YAML/JSON OpenAPI 3.0 or 3.1 document, validates
+**Status (2026-10-21):** the compiler package and its first two vertical slices
+are implemented. It parses one YAML/JSON OpenAPI 3.0 or 3.1 document, validates
 document structure, resolves local references, enumerates operations, builds
 audited object-root input schemas from path/query/header parameters and JSON
 request bodies, translates 3.0 nullability, preserves security OR/AND
 metadata, and emits deterministic source/contract/toolset hashes plus
-`diffManifests()`. Unsupported constraints are rejected in strict mode and
-reported when droppable in permissive mode; composition and remote references
-are always rejected. Output is metadata, not runnable tools. Response schemas,
-composed `$ref` forms, explicit authentication policies/scopes, upstream
-execution, outbound destination policy, cancellation binding, Inspector
-conformance, and an end-to-end example remain open, so the exit criteria are
-not yet met.
+`diffManifests()`. It maps declared responses in status-key order with their
+description, selected media type, and translated response schema. Response
+schemas are descriptive metadata: `writeOnly` fields are omitted, local
+references are resolved, and composition is preserved, but upstream payloads
+are not validated against them. Object `allOf` intersections are flattened
+deterministically for inputs. Unsupported input constraints are rejected in
+strict mode and reported when droppable in permissive mode; input
+`oneOf`/`anyOf`/`not`, conditional/dependent/pattern composition, and remote
+references are always rejected. Output is metadata, not runnable tools.
+Explicit authentication policies/scopes, input union composition, an output
+validator, upstream execution, outbound destination policy, cancellation
+binding, Inspector conformance, and an end-to-end example remain open, so the
+exit criteria are not yet met.
 
 ## Milestone 4 — Smart caching and token accounting
 

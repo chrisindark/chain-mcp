@@ -20,7 +20,7 @@ import {
   type ToolNameState,
 } from "./names.js";
 import { resolveObjectReference } from "./refs.js";
-import { translateInputSchema } from "./schema.js";
+import { translateInputSchema, translateOutputSchema } from "./schema.js";
 import { parseSecurityRequirements, parseSecuritySchemes } from "./security.js";
 import type {
   CompileDiff,
@@ -29,6 +29,7 @@ import type {
   CompileOptions,
   CompileResult,
   CompiledOperation,
+  CompiledResponse,
   CompiledSecurityScheme,
   ContractCompiler,
   HttpMethod,
@@ -78,6 +79,8 @@ const OPERATION_KEYS = new Set<string>([
 ]);
 
 const PARAMETER_LOCATIONS = new Set(["path", "query", "header"]);
+
+const RESPONSE_KEYS = new Set(["description", "headers", "links", "content"]);
 
 /**
  * Header inputs that would let an MCP caller choose upstream transport
@@ -406,16 +409,6 @@ function compileOperation(
     return undefined;
   }
 
-  const responses = rawOperation.responses;
-  if (!isPlainObject(responses) || Object.keys(responses).length === 0) {
-    diagnostics.push({
-      severity: "error",
-      code: "OPERATION_INVALID",
-      message: "Operation 'responses' must be a non-empty object",
-      location: operationLocation,
-    });
-  }
-
   if (!pathParametersValid) return undefined;
 
   const operationParameterStart = diagnostics.length;
@@ -473,6 +466,19 @@ function compileOperation(
           pointer("paths", path, method, "requestBody"),
         );
   if (hasError(diagnostics, bodyStart)) return undefined;
+
+  const responsesStart = diagnostics.length;
+  const responses = compileResponses(
+    rawOperation.responses,
+    document,
+    version,
+    settings,
+    diagnostics,
+    pointer("paths", path, method, "responses"),
+  );
+  if (responses === undefined || hasError(diagnostics, responsesStart)) {
+    return undefined;
+  }
 
   if (body !== undefined) {
     if (propertyNames.has("body")) {
@@ -557,6 +563,7 @@ function compileOperation(
       : {}),
     readOnly: method === "get" || method === "head",
     deprecated,
+    responses,
     security,
     sourceLocation: operationLocation,
   };
@@ -812,22 +819,191 @@ function compileRequestBody(
   };
 }
 
-function selectJsonMediaType(
+interface NormalizedMediaType {
+  original: string;
+  base: string;
+}
+
+function normalizeMediaTypes(
   mediaTypes: readonly string[],
-): string | undefined {
-  const normalized = mediaTypes
+): NormalizedMediaType[] {
+  return mediaTypes
     .map((mediaType) => ({
       original: mediaType,
       base: mediaType.split(";")[0]?.trim().toLowerCase() ?? "",
     }))
     .sort((left, right) => compareCodeUnits(left.original, right.original));
+}
+
+function isJsonMediaType(base: string): boolean {
+  return (
+    base === "application/json" ||
+    (base.startsWith("application/") && base.endsWith("+json"))
+  );
+}
+
+function selectJsonMediaType(
+  mediaTypes: readonly string[],
+): string | undefined {
+  const normalized = normalizeMediaTypes(mediaTypes);
   return (
     normalized.find((entry) => entry.base === "application/json")?.original ??
-    normalized.find(
-      (entry) =>
-        entry.base.startsWith("application/") && entry.base.endsWith("+json"),
-    )?.original
+    normalized.find((entry) => isJsonMediaType(entry.base))?.original
   );
+}
+
+function selectResponseMediaType(mediaTypes: readonly string[]): {
+  mediaType: string;
+  json: boolean;
+} {
+  const normalized = normalizeMediaTypes(mediaTypes);
+  const json =
+    normalized.find((entry) => entry.base === "application/json") ??
+    normalized.find((entry) => isJsonMediaType(entry.base));
+  if (json !== undefined) return { mediaType: json.original, json: true };
+  // A response may legitimately declare only non-JSON content. Record the
+  // media type so it is visible in metadata, but do not pretend to have a
+  // schema for it.
+  return { mediaType: normalized[0]?.original ?? "", json: false };
+}
+
+function isResponseStatusKey(status: string, version: OpenApiVersion): boolean {
+  if (status === "default") return true;
+  if (/^[1-5]\d\d$/.test(status)) return true;
+  return version === "3.1" && /^[1-5]XX$/.test(status);
+}
+
+function compileResponses(
+  value: unknown,
+  document: Record<string, unknown>,
+  version: OpenApiVersion,
+  settings: NormalizedOptions,
+  diagnostics: CompileDiagnostic[],
+  location: string,
+): readonly CompiledResponse[] | undefined {
+  if (!isPlainObject(value) || Object.keys(value).length === 0) {
+    diagnostics.push({
+      severity: "error",
+      code: "OPERATION_INVALID",
+      message: "Operation 'responses' must be a non-empty object",
+      location,
+    });
+    return undefined;
+  }
+
+  const responses: CompiledResponse[] = [];
+  for (const status of Object.keys(value).sort(compareCodeUnits)) {
+    const responseLocation = `${location}/${status}`;
+    if (!isResponseStatusKey(status, version)) {
+      diagnostics.push({
+        severity: "error",
+        code: "RESPONSE_INVALID",
+        message:
+          version === "3.1"
+            ? `Response key '${status}' must be 'default', an exact status code, or a range such as '2XX'`
+            : `Response key '${status}' must be 'default' or an exact status code; ranges require OpenAPI 3.1`,
+        location: responseLocation,
+      });
+      return undefined;
+    }
+
+    const response = resolveObjectReference(
+      value[status],
+      document,
+      diagnostics,
+      responseLocation,
+    );
+    if (response === undefined) return undefined;
+
+    for (const key of Object.keys(response)) {
+      if (RESPONSE_KEYS.has(key) || key.startsWith("x-")) continue;
+      diagnostics.push({
+        severity: "error",
+        code: "RESPONSE_INVALID",
+        message: `Unsupported response field '${key}'`,
+        location: responseLocation,
+      });
+      return undefined;
+    }
+
+    if (
+      typeof response.description !== "string" ||
+      response.description.trim().length === 0
+    ) {
+      diagnostics.push({
+        severity: "error",
+        code: "RESPONSE_INVALID",
+        message: "Response 'description' must be a non-empty string",
+        location: responseLocation,
+      });
+      return undefined;
+    }
+
+    let mediaType: string | undefined;
+    let schema: JsonSchema | undefined;
+    if (Object.hasOwn(response, "content")) {
+      if (!isPlainObject(response.content)) {
+        diagnostics.push({
+          severity: "error",
+          code: "RESPONSE_INVALID",
+          message: "Response 'content' must be an object",
+          location: responseLocation,
+        });
+        return undefined;
+      }
+      const mediaTypes = Object.keys(response.content);
+      if (mediaTypes.length > 0) {
+        const selected = selectResponseMediaType(mediaTypes);
+        mediaType = selected.mediaType;
+        if (selected.json) {
+          const media = response.content[selected.mediaType];
+          if (!isPlainObject(media)) {
+            diagnostics.push({
+              severity: "error",
+              code: "RESPONSE_INVALID",
+              message: `Response media type '${selected.mediaType}' must be an object`,
+              location: responseLocation,
+            });
+            return undefined;
+          }
+          if (Object.hasOwn(media, "schema")) {
+            if (!isPlainObject(media.schema)) {
+              diagnostics.push({
+                severity: "error",
+                code: "RESPONSE_INVALID",
+                message: `Response media type '${selected.mediaType}' requires an object schema`,
+                location: responseLocation,
+              });
+              return undefined;
+            }
+            schema = translateOutputSchema(media.schema, {
+              document,
+              version,
+              strict: settings.strict,
+              maxRefDepth: settings.maxRefDepth,
+              diagnostics,
+            });
+            if (schema === undefined) return undefined;
+          }
+        } else {
+          diagnostics.push({
+            severity: "warning",
+            code: "RESPONSE_UNSUPPORTED",
+            message: `Response '${status}' declares only non-JSON content; the media type is recorded without a schema`,
+            location: responseLocation,
+          });
+        }
+      }
+    }
+
+    responses.push({
+      status,
+      description: response.description,
+      ...(mediaType === undefined ? {} : { mediaType }),
+      ...(schema === undefined ? {} : { schema }),
+    });
+  }
+  return responses;
 }
 
 function resolveOperationSecurity(
@@ -986,6 +1162,7 @@ function hashTool(tool: CompiledOperation): string {
       operationId: tool.operationId ?? null,
       readOnly: tool.readOnly,
       deprecated: tool.deprecated,
+      responses: tool.responses,
       security: tool.security,
     }),
   );

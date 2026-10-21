@@ -30,6 +30,10 @@ paths:
       responses:
         "200":
           description: An item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
     put:
       operationId: replaceItem
       summary: Replace an item
@@ -62,6 +66,17 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    Item:
+      allOf:
+        - $ref: "#/components/schemas/ItemInput"
+        - type: object
+          properties:
+            id:
+              type: string
+              readOnly: true
+            internal:
+              type: string
+              writeOnly: true
     ItemInput:
       type: object
       required:

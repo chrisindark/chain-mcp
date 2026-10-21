@@ -26,12 +26,15 @@ export type CompileDiagnosticCode =
   | "PARAMETER_UNSUPPORTED"
   | "REQUEST_BODY_INVALID"
   | "REQUEST_BODY_UNSUPPORTED"
+  | "RESPONSE_INVALID"
+  | "RESPONSE_UNSUPPORTED"
   | "REF_INVALID"
   | "REF_REMOTE_UNSUPPORTED"
   | "REF_CYCLE"
   | "REF_DEPTH_EXCEEDED"
   | "REF_SIBLINGS_UNSUPPORTED"
   | "SCHEMA_INVALID"
+  | "SCHEMA_COMPOSITION_UNSUPPORTED"
   | "SCHEMA_UNSUPPORTED"
   | "SCHEMA_NULLABLE_INVALID"
   | "SECURITY_INVALID"
@@ -87,6 +90,24 @@ export interface CompiledSecurityScheme {
 }
 
 /**
+ * Declared response metadata. Response schemas are descriptive: the runtime
+ * does not validate upstream payloads against them yet.
+ */
+export interface CompiledResponse {
+  /** Exact status code, `default`, or a `1XX`-`5XX` range (OpenAPI 3.1). */
+  status: string;
+  description: string;
+  /**
+   * Selected response media type. JSON media types are preferred; when only
+   * non-JSON content is declared, the first media type in code-unit order is
+   * recorded without a schema.
+   */
+  mediaType?: string;
+  /** Translated response schema metadata; not used for runtime validation. */
+  schema?: JsonSchema;
+}
+
+/**
  * Compiler output metadata for one operation. This is not yet a runnable
  * `ToolDefinition`: upstream execution, credential injection, and outbound
  * destination policy are deferred to later Milestone 3 slices.
@@ -102,6 +123,8 @@ export interface CompiledOperation {
   /** GET and HEAD are safe to consider for opt-in caching later. */
   readOnly: boolean;
   deprecated: boolean;
+  /** Declared responses in deterministic status-key order. */
+  responses: readonly CompiledResponse[];
   /** Resolved contract-level or operation-level security alternatives. */
   security: readonly SecurityRequirement[];
   sourceLocation: string;

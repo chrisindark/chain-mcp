@@ -537,7 +537,7 @@ The earlier target shape included `outcome: "cache_hit"` and optional `durationM
 
 ## `@chainmcp/compiler`
 
-`@chainmcp/compiler` parses and validates OpenAPI 3.0 and 3.1 documents and emits deterministic operation metadata. It does **not** emit runnable `ToolDefinition`s yet: upstream execution, credential injection, response-schema mapping, and outbound destination policy remain Milestone 3 work. Do not register compiler output as a callable tool until an executor slice exists.
+`@chainmcp/compiler` parses and validates OpenAPI 3.0 and 3.1 documents and emits deterministic operation metadata, including declared response schemas. It does **not** emit runnable `ToolDefinition`s yet: upstream execution, credential injection, response validation, and outbound destination policy remain Milestone 3 work. Do not register compiler output as a callable tool until an executor slice exists.
 
 ```ts
 export type OpenApiVersion = "3.0" | "3.1";
@@ -571,6 +571,13 @@ export interface CompiledSecurityScheme {
   flows?: Readonly<Record<string, unknown>>;
 }
 
+export interface CompiledResponse {
+  status: string;
+  description: string;
+  mediaType?: string;
+  schema?: JsonSchema;
+}
+
 export interface CompiledOperation {
   name: string;
   description: string;
@@ -581,6 +588,7 @@ export interface CompiledOperation {
   operationId?: string;
   readOnly: boolean;
   deprecated: boolean;
+  responses: readonly CompiledResponse[];
   security: readonly SecurityRequirement[];
   sourceLocation: string;
 }
@@ -630,22 +638,29 @@ export function diffManifests(
 
 `compile`/`compileOpenApi` accept one YAML or JSON document (YAML 1.2 core schema, duplicate keys rejected). Compilation is offline and asynchronous only to match the interface: it performs no filesystem or network I/O. Defaults are `strict: true`, `includeDeprecated: false`, `maxSourceBytes: 5 MiB` (hard maximum 25 MiB), `maxRefDepth: 32` (maximum 128), and `maxOperations: 1,000` (maximum 10,000). Invalid option types and exceeded hard maxima throw `TypeError`; document and contract problems are returned as diagnostics.
 
-`ok` is false when any diagnostic has severity `error`. The compiler keeps compiling independent operations after a failure, but never emits an operation with an error. Deprecated operations are excluded with a warning by default. In strict mode, an unsupported schema constraint is an error and the operation is omitted; in permissive mode (`strict: false`) constraints that can be dropped without changing the supported subset are dropped with a warning. Composition keywords (`allOf`, `oneOf`, `anyOf`, `not`, conditionals, and dependent/pattern schemas), schema-valued `additionalProperties`, tuple or boolean `items`, remote references, and unknown schema keywords are always errors because dropping them would weaken validation.
+`ok` is false when any diagnostic has severity `error`. The compiler keeps compiling independent operations after a failure, but never emits an operation with an error. Deprecated operations are excluded with a warning by default. In strict mode, an unsupported schema constraint is an error and the operation is omitted; in permissive mode (`strict: false`) constraints that can be dropped without changing the supported subset are dropped with a warning. An `allOf` of object schemas is flattened into one object schema when merging properties, `required`, and `additionalProperties` preserves the intersection; incompatible or non-object members, sibling validation keywords, and `oneOf`/`anyOf`/`not`/conditional/dependent/pattern composition on inputs are always errors because dropping or approximating them would weaken validation. Schema-valued `additionalProperties`, tuple or boolean `items`, remote references, and unknown schema keywords are also errors.
 
 Supported input construction:
 
 - Path, query, and header parameters from path-item and operation levels; operation-level declarations override path-level ones by `(name, in)`. Cookie parameters, content-encoded parameters, credential/transport headers such as `Authorization` and `Cookie`, duplicate names across locations, and path parameters without `required: true` are rejected.
 - JSON request bodies (`application/json` or an `application/*+json` media type) become one `body` input property, required when `requestBody.required` is true. A parameter named `body` collides and is rejected.
 - The root input schema is always `type: "object"` with `additionalProperties: false`; property and `required` ordering is sorted for determinism.
-- `readOnly` properties are omitted from inputs and from `required`. Response schemas are not mapped yet.
+- `readOnly` properties are omitted from inputs and from `required`.
 
-Schema translation resolves local `$ref`s only (`#/...`) with cycle and depth detection and never fetches a remote reference. OpenAPI 3.0 `nullable: true` becomes a union with `"null"` and adds `null` to `enum`; it requires a sibling `type`, and using `nullable` in 3.1 is an error. OpenAPI 3.1 null unions are preserved. The resulting input schema is audited with `auditInputSchema`; an operation is not emitted when the runtime cannot enforce its schema.
+Response mapping:
+
+- Each declared response is emitted in code-unit order of its status key as a `CompiledResponse`: `default`, an exact `100`-`599` code, and, for OpenAPI 3.1 only, ranges such as `2XX`. A 3.0 range key is rejected.
+- `description` is required. Unknown response fields and malformed `content` objects are `RESPONSE_INVALID` errors.
+- The selected media type prefers `application/json`, then the first `application/*+json` type in code-unit order. Non-JSON-only content is recorded with its first media type and a `RESPONSE_UNSUPPORTED` warning, without a schema. `headers` and `links` are not mapped.
+- Response schemas are descriptive metadata, not runtime validation. They are translated with local `$ref` resolution, 3.0 nullability, `writeOnly` output filtering, and preserved composition (`allOf`, `oneOf`, `anyOf`, `not`, conditionals, pattern/dependent schemas). Keywords outside the input-validator subset are retained rather than rejected. No validator is generated or applied to upstream payloads yet.
+
+Schema translation resolves local `$ref`s only (`#/...`) with cycle and depth detection and never fetches a remote reference. OpenAPI 3.0 `nullable: true` becomes a union with `"null"` and adds `null` to `enum`; it requires a sibling `type`, and using `nullable` in 3.1 is an error. OpenAPI 3.1 null unions are preserved. The resulting input schema is audited with `auditInputSchema`; an operation is not emitted when the runtime cannot enforce its schema. `allOf` flattening merges nested object intersections deterministically, including intersections reached through `$ref`; a property declared with incompatible schemas in different members, a non-object member, or a sibling validation keyword produces `SCHEMA_COMPOSITION_UNSUPPORTED`.
 
 Security schemes and requirements are preserved structurally, not enforced. Each `security` array element is an OR alternative; keys inside one element are AND requirements; `security: []` explicitly means no authentication. `components.securitySchemes` must be valid for the declared version (`mutualTLS` requires 3.1), and requirements may not reference an unknown scheme. `operation.requiredScopes` is intentionally left empty because flattening OR alternatives or AND scopes into one list would misrepresent the contract.
 
-`sourceHash` hashes the exact source text. `contractRevision` hashes the canonical parsed document plus `COMPILER_VERSION`; semantically equivalent key ordering therefore produces the same revision, while compiler changes produce a new revision. `manifest.tools` records a hash per emitted operation, `toolsetHash` hashes the compiler version, contract revision, and all tool hashes, and `diffManifests` reports added, removed, changed, and unchanged names between two manifests. No timestamps are included, so the same source and compiler version produce the same manifest.
+`sourceHash` hashes the exact source text. `contractRevision` hashes the canonical parsed document plus `COMPILER_VERSION`; semantically equivalent key ordering therefore produces the same revision, while compiler changes produce a new revision. `manifest.tools` records a hash per emitted operation (including response metadata), `toolsetHash` hashes the compiler version, contract revision, and all tool hashes, and `diffManifests` reports added, removed, changed, and unchanged names between two manifests. No timestamps are included, so the same source and compiler version produce the same manifest.
 
-Known limitations: no response-schema mapping or output validation, no executor or upstream HTTP policy, no remote references, no `allOf`/`oneOf`/`anyOf` composition, no numeric/string/format constraint enforcement beyond the runtime subset, no YAML merge-key support, and no regeneration command that reads/writes a manifest. The compiler is not wired into the CLI or generated-server flow yet.
+Known limitations: response schemas are unvalidated metadata and no output validator is generated; no executor or upstream HTTP policy; no remote references; input `oneOf`, `anyOf`, `not`, conditional, dependent, and pattern composition is rejected; `allOf` supports object intersections only; no numeric/string/format constraint enforcement beyond the runtime subset; no YAML merge-key support; and no regeneration command that reads/writes a manifest. The compiler is not wired into the CLI or generated-server flow yet.
 
 ## `@chainmcp/cache-redis`
 

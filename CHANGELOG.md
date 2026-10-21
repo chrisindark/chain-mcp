@@ -21,6 +21,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Record ADR 0008, the MCP authorization mapping (tenant-bound registration, tenancy modes, identity-scoped listing), and document the tenant-bound runtime groundwork in `API_REFERENCE.md` and `ARCHITECTURE.md`.
 - Document the `@chainmcp/auth` package and its `OperationScopeAuthorizer` default, including the exact-match scope semantics and the protected-diagnostics cause contract.
 - Document the first Milestone 3 compiler slice, its supported/rejected OpenAPI surface, deterministic manifest hashes, and its metadata-only boundary in `API_REFERENCE.md`, `ARCHITECTURE.md`, `docs/openapi-support.md`, and ADR 0015.
+- Document response metadata mapping and object `allOf` flattening, including the unvalidated status of response schemas and the remaining input union-composition limits, in `API_REFERENCE.md`, `ARCHITECTURE.md`, `docs/openapi-support.md`, and ADR 0016.
 - Document the `chainmcp/no-blocking-io` lint rule and its runtime-source scope in `DEVELOPMENT.md`.
 
 ### Implementation
@@ -63,7 +64,8 @@ The project is pre-release. Versions and release dates must reflect actual publi
 - Set `license: "UNLICENSED"` in every workspace package, replacing the invalid `TODO` placeholder that would fail publish validation. Choosing and documenting a real license remains an open Milestone 0 item.
 - Build before `typecheck` and `test` in `pnpm check`. Cross-package imports resolve through each package's built `dist`, so the previous order only passed when stale artifacts happened to exist and failed on a clean checkout.
 - Add `chainmcp/no-blocking-io`, a custom ESLint rule that rejects synchronous `fs` and `child_process` APIs on runtime source paths, including aliased/namespace imports, `require`, and dynamic import. RuleTester coverage runs through `pnpm test:rules` in `pnpm check`.
-- Add `@chainmcp/compiler` with the first Milestone 3 slice: bounded YAML/JSON parsing, OpenAPI 3.0/3.1 structural validation, local `$ref` resolution with cycle/depth limits, deterministic operation enumeration and tool names, object-root input schemas from path/query/header parameters and JSON request bodies, 3.0 `nullable` translation, `readOnly` input filtering, `auditInputSchema` enforcement, security OR/AND metadata, and deterministic source/contract/toolset hashes with `diffManifests()`. It emits metadata only; executors, response schemas, and authentication enforcement remain open.
+- Add `@chainmcp/compiler` with the first Milestone 3 slice: bounded YAML/JSON parsing, OpenAPI 3.0/3.1 structural validation, local `$ref` resolution with cycle/depth limits, deterministic operation enumeration and tool names, object-root input schemas from path/query/header parameters and JSON request bodies, 3.0 `nullable` translation, `readOnly` input filtering, `auditInputSchema` enforcement, security OR/AND metadata, and deterministic source/contract/toolset hashes with `diffManifests()`. It emits metadata only; executors and authentication enforcement remain open.
+- Map declared OpenAPI responses into deterministic metadata with status keys, descriptions, selected media types, and translated schemas. Response schemas resolve local `$ref`s, drop `writeOnly` fields, preserve composition, and are explicitly not applied as output validation. Flatten object `allOf` intersections for inputs, rejecting incompatible properties, non-object members, and sibling validation keywords. Include responses in per-tool hashes.
 - Add the compiler package to the fixed release group and root version-sync check.
 
 ### Breaking changes
@@ -76,6 +78,6 @@ The project is pre-release. Versions and release dates must reflect actual publi
 ### Limitations
 
 - No OpenAPI response-schema mapping, upstream HTTP executor, CLI, gateway, credential provider, or concrete cache/auth/rate-limit adapter is included.
-- `@chainmcp/compiler` output is operation metadata, not runnable tools. Composed schemas (`allOf`/`oneOf`/`anyOf`), remote references, format/numeric/string constraint enforcement, explicit authentication policies, and Inspector conformance remain Milestone 3 work.
+- `@chainmcp/compiler` output is operation metadata, not runnable tools. Response schemas are not enforced, input `oneOf`/`anyOf`/`not` composition is rejected, remote references and format/numeric/string constraint enforcement remain unsupported, and explicit authentication policies plus Inspector conformance remain Milestone 3 work.
 - The core input validator supports only the subset documented in `API_REFERENCE.md`.
 - License selection remains unresolved; the existing `LICENSE` file is empty.

@@ -57,6 +57,10 @@ paths:
       responses:
         "200":
           description: A pet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pet"
 components:
   securitySchemes:
     api_key:

@@ -87,37 +87,46 @@ Timeout and cancellation are cooperative. The runtime creates a per-call `AbortC
 ## 5. OpenAPI compiler
 
 `@chainmcp/compiler` converts one OpenAPI 3.0 or 3.1 document into deterministic
-operation metadata. The current slice is offline and emits `CompiledOperation`
-records, not runnable `ToolDefinition`s; execution, credentials, response
-validation, and outbound policy remain future work.
+operation metadata, including declared response schemas. The current slice is
+offline and emits `CompiledOperation` records, not runnable `ToolDefinition`s;
+execution, credentials, response validation, and outbound policy remain future
+work.
 
 The pipeline is:
 
 1. Parse one YAML 1.2 or JSON document with duplicate-key, alias, node, depth,
    and byte limits.
 2. Validate the version, `info`, `paths`, path items, operations, parameters,
-   JSON request bodies, responses presence, and security structures.
+   JSON request bodies, response objects, and security structures.
 3. Resolve local `#/...` references only, with cycle and depth limits. Remote
    references are rejected and never fetched.
 4. Enumerate operations by sorted path and a fixed method order, so names,
    collisions, diagnostics, and hashes do not depend on source key order.
 5. Build an object-root input schema from path, query, and header parameters
    plus a JSON body mapped to a `body` property. Operation-level parameters
-   override path-level parameters by `(name, in)`.
+   override path-level parameters by `(name, in)`. Flatten an `allOf` of object
+   schemas into one object schema only when properties, `required`, and
+   `additionalProperties` can be merged without changing the intersection.
 6. Translate OpenAPI 3.0 `nullable` and `readOnly` input semantics, preserve
    3.1 null unions, and audit the result with `auditInputSchema`.
-7. Preserve security schemes and OR/AND requirements as metadata. They are not
+7. Map declared responses in status-key order with their selected media type and
+   a descriptive response schema. Response schemas resolve local references,
+   omit `writeOnly` properties, and preserve composition keywords; they are not
+   used to validate upstream payloads yet.
+8. Preserve security schemes and OR/AND requirements as metadata. They are not
    enforced until authentication and upstream credential slices exist.
-8. Emit `sourceHash`, a canonical-document `contractRevision`, per-tool hashes,
+9. Emit `sourceHash`, a canonical-document `contractRevision`, per-tool hashes,
    a `toolsetHash`, and `diffManifests()` output.
 
-Strict mode is the default: unsupported validation constraints are errors and
-the operation is omitted. Permissive mode may drop constraints that cannot
-weaken the supported subset, with a warning. Composition keywords, remote
-references, unknown schema keywords, and schema-valued
-`additionalProperties` are always errors because dropping them would accept
-values the contract rejects. Name collisions are errors in strict mode and are
-renamed deterministically with a warning in permissive mode.
+Strict mode is the default: unsupported input validation constraints are errors
+and the operation is omitted. Permissive mode may drop constraints that cannot
+weaken the supported subset, with a warning. Input `oneOf`, `anyOf`, `not`,
+conditional, dependent, and pattern composition, remote references, unknown
+schema keywords, and schema-valued `additionalProperties` are always errors
+because dropping them would accept values the contract rejects. `allOf` is
+flattened only for object intersections; incompatible members are errors. Name
+collisions are errors in strict mode and are renamed deterministically with a
+warning in permissive mode.
 
 Compilation performs no filesystem or network I/O and runs on the normal
 asynchronous request path without blocking APIs. The `chainmcp/no-blocking-io`

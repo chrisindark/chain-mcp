@@ -23,6 +23,7 @@ export type {
   CompileOptions,
   CompileResult,
   CompiledOperation,
+  CompiledResponse,
   CompiledSecurityScheme,
   ContractCompiler,
   DiagnosticSeverity,
