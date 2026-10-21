@@ -141,10 +141,11 @@ input, context)` recomputes the key from the same tool, arguments, and caller
 
 ## Follow-up actions
 
-- Redis adapter with bounded TTLs, response sizes, timeouts, and failure
-  treatment matching this ADR.
-- Token metrics (M4), complementing the recorded cache outcomes.
-- Invalidation and field projection (M4), plus output policy ordering before
-  writes (SEC-05). Bulk purge currently relies on TTL expiry or namespace
-  rotation.
+- ~~Redis adapter with bounded TTLs, response sizes, timeouts, and failure
+  treatment matching this ADR.~~ Implemented in ADR 0014.
+- ~~Token metrics (M4), complementing the recorded cache outcomes.~~ Implemented
+  in ADR 0011.
+- ~~Invalidation and field projection (M4), plus output policy ordering before
+  writes (SEC-05).~~ Implemented in ADR 0012 and ADR 0013. Bulk purge still relies
+  on TTL expiry or namespace rotation.
 - Re-evaluate request coalescing if duplicate upstream calls become a real cost.

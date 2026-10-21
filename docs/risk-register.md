@@ -40,15 +40,15 @@ cross-cutting criteria, not as a separate backlog.
 
 ## Phase 1 — Security
 
-| ID     | Risk                                                      | Status                                                                                                                | Disposition            | Target or trigger                                |
-| ------ | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------ |
-| SEC-01 | Authenticate protected MCP endpoints                      | Not applicable: stdio only, no inbound HTTP                                                                           | Defer                  | Before any remote transport (M5)                 |
-| SEC-02 | Translate OpenAPI security schemes correctly              | Open                                                                                                                  | **Now**                | M3                                               |
-| SEC-03 | Robust OAuth discovery and token refresh                  | Open                                                                                                                  | Defer                  | Only when an OAuth-required API is a target (M5) |
-| SEC-04 | Enforce tenant isolation and resource ownership           | Done in core and server (ADR 0008); gateway coverage open                                                             | Done / Defer           | Gateway path in M8                               |
-| SEC-05 | Argument-level and output-level policy enforcement        | Partial: argument validation, operation scopes, and the runtime output hook/budget are done; no built-in field policy | **Now** (field policy) | Runtime hook in M4; concrete field policy in M6  |
-| SEC-06 | Block SSRF, unsafe redirects, and private-network targets | Open: no outbound HTTP exists yet                                                                                     | **Now**                | Land with the first outbound HTTP call (M3)      |
-| SEC-07 | Explicit policy-denial errors and audit events            | Partial: typed denials and safe mapping done; audit events open                                                       | Defer (audit)          | M6                                               |
+| ID     | Risk                                                      | Status                                                                                                                                                  | Disposition                | Target or trigger                                       |
+| ------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------- |
+| SEC-01 | Authenticate protected MCP endpoints                      | Not applicable: stdio only, no inbound HTTP                                                                                                             | Defer                      | Before any remote transport (M5)                        |
+| SEC-02 | Translate OpenAPI security schemes correctly              | Open                                                                                                                                                    | **Now**                    | M3                                                      |
+| SEC-03 | Robust OAuth discovery and token refresh                  | Open                                                                                                                                                    | Defer                      | Only when an OAuth-required API is a target (M5)        |
+| SEC-04 | Enforce tenant isolation and resource ownership           | Done in core and server (ADR 0008); gateway coverage open                                                                                               | Done / Defer               | Gateway path in M8                                      |
+| SEC-05 | Argument-level and output-level policy enforcement        | Partial: argument validation, operation scopes, output hook/budget, and built-in field projection are done; generated-tool contract policy remains open | **Now** (generated policy) | Runtime policy in M4; contract-level field policy in M6 |
+| SEC-06 | Block SSRF, unsafe redirects, and private-network targets | Open: no outbound HTTP exists yet                                                                                                                       | **Now**                    | Land with the first outbound HTTP call (M3)             |
+| SEC-07 | Explicit policy-denial errors and audit events            | Partial: typed denials and safe mapping done; audit events open                                                                                         | Defer (audit)              | M6                                                      |
 
 Notes:
 
@@ -103,13 +103,13 @@ operations, per `DEVELOPMENT.md`.
 These are more important to the current product thesis than most of the items
 above, and the raw issue list contains none of them.
 
-| Gap                                        | Why it matters                                                                                 | Status                                            |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| Runnable example and getting-started guide | `docs/getting-started.md` and `examples/README.md` are empty; no evidence a user has succeeded | **Now**                                           |
-| Output projection and token budget         | The quality differentiator; also the open half of SEC-05                                       | Done (runtime hook and budget); field policy Next |
-| Toolset hash and regeneration diff         | Makes GEN-07 and ENT-01 observable in CI                                                       | **Now**                                           |
-| `lint-tools` and a smoke eval in CI        | Turns tool-quality judgment into a repeatable check                                            | Next                                              |
-| Composite/intent tool definitions          | Curation beyond route mapping; cannot be produced by endpoint conversion                       | Next                                              |
+| Gap                                        | Why it matters                                                                                 | Status                                                                                    |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Runnable example and getting-started guide | `docs/getting-started.md` and `examples/README.md` are empty; no evidence a user has succeeded | **Now**                                                                                   |
+| Output projection and token budget         | The quality differentiator; also the open half of SEC-05                                       | Done (runtime hook, budget, and declarative field projection); generated-tool policy Next |
+| Toolset hash and regeneration diff         | Makes GEN-07 and ENT-01 observable in CI                                                       | **Now**                                                                                   |
+| `lint-tools` and a smoke eval in CI        | Turns tool-quality judgment into a repeatable check                                            | Next                                                                                      |
+| Composite/intent tool definitions          | Curation beyond route mapping; cannot be produced by endpoint conversion                       | Next                                                                                      |
 
 ## Re-evaluation triggers
 

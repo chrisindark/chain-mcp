@@ -1,10 +1,10 @@
 # Token accounting
 
 ChainMcp records how many tokens a tool result costs when it is presented to a
-model. Measurement and per-tool token budgets are implemented; general-purpose
-field projection remains deployment-supplied. This page covers the measurement
-contract, how budgets interact with projection and caching, and how to read the
-numbers without overstating them.
+model. Measurement, per-tool token budgets, and a bounded declarative field
+projector are implemented; deployments can also supply a custom projector. This
+page covers the measurement contract, how budgets interact with projection and
+caching, and how to read the numbers without overstating them.
 
 ## What is measured
 
@@ -166,8 +166,9 @@ unless the baseline and measurement method are documented.
 
 ## Not implemented yet
 
-- A built-in projector or a declarative field-selection policy. Projection is a
-  deployment-supplied hook; JSON navigation tools remain a later milestone.
+- A general JSON-navigation or query language. `createFieldProjector()` supports
+  bounded include/exclude paths but not renames, computed fields, or array
+  indices.
 - Per-content-block measurement (the current count covers the whole serialized
   result).
 - Async or remote tokenizers.

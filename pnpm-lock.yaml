@@ -53,6 +53,12 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/cache-redis:
+    dependencies:
+      "@chainmcp/core":
+        specifier: workspace:*
+        version: link:../core
+
   packages/config:
     dependencies:
       zod:
