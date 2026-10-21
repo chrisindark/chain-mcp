@@ -21,7 +21,11 @@ import {
 } from "./names.js";
 import { resolveObjectReference } from "./refs.js";
 import { translateInputSchema, translateOutputSchema } from "./schema.js";
-import { parseSecurityRequirements, parseSecuritySchemes } from "./security.js";
+import {
+  buildAuthenticationPolicy,
+  parseSecurityRequirements,
+  parseSecuritySchemes,
+} from "./security.js";
 import type {
   CompileDiff,
   CompileDiagnostic,
@@ -184,13 +188,25 @@ export function compileOpenApi(
   const securitySchemes = parseSecuritySchemes(document, version, diagnostics);
   let globalSecurity: readonly SecurityRequirement[] = [];
   if (Object.hasOwn(document, "security")) {
-    globalSecurity =
-      parseSecurityRequirements(
-        document.security,
-        securitySchemes,
+    const parsedGlobalSecurity = parseSecurityRequirements(
+      document.security,
+      securitySchemes,
+      diagnostics,
+      "#/security",
+    );
+    if (parsedGlobalSecurity === undefined) {
+      // Every operation inherits global security. Emitting tools after a
+      // global requirement failed to parse would silently drop authentication.
+      return buildResult({
+        tools: [],
         diagnostics,
-        "#/security",
-      ) ?? [];
+        securitySchemes,
+        sourceHash,
+        contractRevision,
+        openapiVersion: version,
+      });
+    }
+    globalSecurity = parsedGlobalSecurity;
   }
 
   const tools: CompiledOperation[] = [];
@@ -275,6 +291,7 @@ export function compileOpenApi(
         pathParametersValid,
         securitySchemes,
         globalSecurity,
+        globalSecurityLocation: "#/security",
       });
       if (compiled !== undefined) tools.push(compiled);
     }
@@ -343,6 +360,7 @@ interface CompileOperationArguments {
   pathParametersValid: boolean;
   securitySchemes: Readonly<Record<string, CompiledSecurityScheme>>;
   globalSecurity: readonly SecurityRequirement[];
+  globalSecurityLocation: string;
 }
 
 function compileOperation(
@@ -362,6 +380,7 @@ function compileOperation(
     pathParametersValid,
     securitySchemes,
     globalSecurity,
+    globalSecurityLocation,
   } = arguments_;
   const operationStart = diagnostics.length;
 
@@ -499,14 +518,24 @@ function compileOperation(
     if (body.required) required.push("body");
   }
 
-  const security = resolveOperationSecurity(
+  const resolvedSecurity = resolveOperationSecurity(
     rawOperation,
     securitySchemes,
     globalSecurity,
+    globalSecurityLocation,
     diagnostics,
     operationLocation,
   );
-  if (security === undefined) return undefined;
+  if (resolvedSecurity === undefined) return undefined;
+  const authentication = buildAuthenticationPolicy(
+    resolvedSecurity.requirements,
+    securitySchemes,
+    settings.strict,
+    diagnostics,
+    resolvedSecurity.location,
+  );
+  if (authentication === undefined) return undefined;
+  const security = resolvedSecurity.requirements;
 
   const sortedProperties = Object.fromEntries(
     propertyEntries.sort(([left], [right]) => compareCodeUnits(left, right)),
@@ -565,6 +594,7 @@ function compileOperation(
     deprecated,
     responses,
     security,
+    authentication,
     sourceLocation: operationLocation,
   };
 }
@@ -1006,20 +1036,30 @@ function compileResponses(
   return responses;
 }
 
+interface ResolvedSecurity {
+  requirements: readonly SecurityRequirement[];
+  location: string;
+}
+
 function resolveOperationSecurity(
   operation: Record<string, unknown>,
   schemes: Readonly<Record<string, CompiledSecurityScheme>>,
   globalSecurity: readonly SecurityRequirement[],
+  globalLocation: string,
   diagnostics: CompileDiagnostic[],
   location: string,
-): readonly SecurityRequirement[] | undefined {
-  if (!Object.hasOwn(operation, "security")) return globalSecurity;
-  return parseSecurityRequirements(
+): ResolvedSecurity | undefined {
+  if (!Object.hasOwn(operation, "security")) {
+    return { requirements: globalSecurity, location: globalLocation };
+  }
+  const requirements = parseSecurityRequirements(
     operation.security,
     schemes,
     diagnostics,
     `${location}/security`,
   );
+  if (requirements === undefined) return undefined;
+  return { requirements, location: `${location}/security` };
 }
 
 function readOpenApiVersion(
@@ -1164,6 +1204,7 @@ function hashTool(tool: CompiledOperation): string {
       deprecated: tool.deprecated,
       responses: tool.responses,
       security: tool.security,
+      authentication: tool.authentication,
     }),
   );
 }

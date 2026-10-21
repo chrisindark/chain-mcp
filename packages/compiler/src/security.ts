@@ -1,6 +1,9 @@
 import { isPlainObject } from "./document.js";
 import type {
   CompileDiagnostic,
+  CompiledAuthenticationAlternative,
+  CompiledAuthenticationPolicy,
+  CompiledAuthenticationScheme,
   CompiledSecurityScheme,
   OpenApiVersion,
   SecurityRequirement,
@@ -249,4 +252,121 @@ export function parseSecurityRequirements(
     );
   }
   return Object.freeze(requirements);
+}
+
+/**
+ * Builds an explicit OR/AND policy from validated requirements. Each array
+ * element is an OR alternative; schemes inside one element are ANDed. An empty
+ * requirement object is preserved as an anonymous alternative rather than
+ * dropped.
+ */
+export function buildAuthenticationPolicy(
+  requirements: readonly SecurityRequirement[],
+  schemes: Readonly<Record<string, CompiledSecurityScheme>>,
+  strict: boolean,
+  diagnostics: CompileDiagnostic[],
+  location: string,
+): CompiledAuthenticationPolicy | undefined {
+  const alternatives: CompiledAuthenticationAlternative[] = [];
+
+  for (const [index, requirement] of requirements.entries()) {
+    const alternativeLocation = `${location}/${index}`;
+    const policySchemes: CompiledAuthenticationScheme[] = [];
+    for (const name of Object.keys(requirement).sort(compareCodeUnits)) {
+      const scheme = schemes[name];
+      if (scheme === undefined) {
+        // parseSecurityRequirements rejects unknown names; keep this guard so
+        // a future caller cannot produce a policy that silently drops one.
+        diagnostics.push({
+          severity: "error",
+          code: "SECURITY_INVALID",
+          message: `Security requirement references unknown scheme '${name}'`,
+          location: alternativeLocation,
+        });
+        return undefined;
+      }
+      const scopes = [...new Set(requirement[name] ?? [])].sort(
+        compareCodeUnits,
+      );
+
+      if (scheme.type === "oauth2") {
+        const declared = collectOAuth2Scopes(scheme);
+        const undeclared = scopes.filter((scope) => !declared.has(scope));
+        if (undeclared.length > 0) {
+          diagnostics.push({
+            severity: strict ? "error" : "warning",
+            code: "SECURITY_REQUIREMENT_INVALID",
+            message: `Security requirement for oauth2 scheme '${name}' uses undeclared scopes: ${undeclared.join(", ")}`,
+            location: alternativeLocation,
+          });
+          if (strict) return undefined;
+        }
+      } else if (scheme.type !== "openIdConnect" && scopes.length > 0) {
+        // OpenAPI only defines requirement scopes for oauth2 and
+        // openIdConnect; accepting them for apiKey/http/mutualTLS would
+        // imply a scope check that cannot exist.
+        diagnostics.push({
+          severity: "error",
+          code: "SECURITY_REQUIREMENT_INVALID",
+          message: `Security scheme '${name}' of type '${scheme.type}' must not declare scopes`,
+          location: alternativeLocation,
+        });
+        return undefined;
+      }
+
+      policySchemes.push(toPolicyScheme(scheme, scopes));
+    }
+    alternatives.push({ schemes: policySchemes });
+  }
+
+  return {
+    alternatives,
+    allowsAnonymous:
+      alternatives.length === 0 ||
+      alternatives.some((alternative) => alternative.schemes.length === 0),
+  };
+}
+
+function collectOAuth2Scopes(
+  scheme: CompiledSecurityScheme,
+): ReadonlySet<string> {
+  const scopes = new Set<string>();
+  if (scheme.flows === undefined) return scopes;
+  for (const flow of Object.values(scheme.flows)) {
+    if (!isPlainObject(flow) || !isPlainObject(flow.scopes)) continue;
+    for (const scope of Object.keys(flow.scopes)) scopes.add(scope);
+  }
+  return scopes;
+}
+
+function toPolicyScheme(
+  scheme: CompiledSecurityScheme,
+  scopes: readonly string[],
+): CompiledAuthenticationScheme {
+  return {
+    name: scheme.name,
+    type: scheme.type,
+    scopes,
+    ...(scheme.parameterName === undefined
+      ? {}
+      : { parameterName: scheme.parameterName }),
+    ...(scheme.parameterLocation === undefined
+      ? {}
+      : { parameterLocation: scheme.parameterLocation }),
+    ...(scheme.scheme === undefined ? {} : { httpScheme: scheme.scheme }),
+    ...(scheme.bearerFormat === undefined
+      ? {}
+      : { bearerFormat: scheme.bearerFormat }),
+    ...(scheme.openIdConnectUrl === undefined
+      ? {}
+      : { openIdConnectUrl: scheme.openIdConnectUrl }),
+    ...(scheme.flows === undefined ? {} : { flows: scheme.flows }),
+  };
+}
+
+/** Locale-independent ordering so policy output is identical on every host. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }

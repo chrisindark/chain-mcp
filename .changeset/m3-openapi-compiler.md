@@ -14,10 +14,13 @@ document, resolves local `$ref`s, enumerates operations deterministically,
 builds audited object-root input schemas from parameters and JSON request
 bodies, translates 3.0 nullability, flattens object `allOf` intersections when
 merging preserves the contract, maps declared responses with their media types
-and descriptive schemas, preserves security OR/AND metadata, and emits
-deterministic source/contract/toolset hashes plus manifest diffs. Response
-schemas are metadata only and are not used to validate upstream payloads. It
-does not emit runnable executors or enforce authentication yet.
+and descriptive schemas, and derives explicit OR/AND authentication policies
+with copied credential metadata and required scopes. Anonymous alternatives are
+preserved, and OAuth2 scope mismatches are diagnosed. It emits deterministic
+source/contract/toolset hashes plus manifest diffs. Response schemas are
+metadata only and are not used to validate upstream payloads; authentication
+policies are not enforced. It does not emit runnable executors or inject
+credentials yet.
 
 The repository now enforces `chainmcp/no-blocking-io` on runtime source paths,
 rejecting synchronous `fs` and `child_process` APIs, with RuleTester coverage.

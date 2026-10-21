@@ -84,6 +84,22 @@ describe("OpenAPI 3.0 compilation", () => {
     const listPets = result.tools[0];
     expect(listPets?.readOnly).toBe(true);
     expect(listPets?.security).toEqual([{ api_key: [] }]);
+    expect(listPets?.authentication).toEqual({
+      alternatives: [
+        {
+          schemes: [
+            {
+              name: "api_key",
+              type: "apiKey",
+              scopes: [],
+              parameterName: "X-API-Key",
+              parameterLocation: "header",
+            },
+          ],
+        },
+      ],
+      allowsAnonymous: false,
+    });
     expect(Object.keys(listPets?.inputSchema.properties ?? {})).toEqual([
       "X-Request-Id",
       "limit",
@@ -104,6 +120,10 @@ describe("OpenAPI 3.0 compilation", () => {
 
     const getPet = result.tools[2];
     expect(getPet?.security).toEqual([]);
+    expect(getPet?.authentication).toEqual({
+      alternatives: [],
+      allowsAnonymous: true,
+    });
     expect(getPet?.inputSchema.required).toEqual(["petId"]);
     expect(getPet?.responses).toEqual([
       {
@@ -251,6 +271,19 @@ describe("OpenAPI 3.1 compilation", () => {
       { oauth: ["items:read"] },
       { bearer: [] },
     ]);
+    expect(getItem?.authentication.allowsAnonymous).toBe(false);
+    expect(
+      getItem?.authentication.alternatives.map((alternative) =>
+        alternative.schemes.map((scheme) => ({
+          name: scheme.name,
+          type: scheme.type,
+          scopes: scheme.scopes,
+        })),
+      ),
+    ).toEqual([
+      [{ name: "oauth", type: "oauth2", scopes: ["items:read"] }],
+      [{ name: "bearer", type: "http", scopes: [] }],
+    ]);
     expect((getItem?.inputSchema.properties as ObjectMap).filter).toEqual({
       type: ["string", "null"],
       enum: ["active", "archived", null],
@@ -272,6 +305,12 @@ describe("OpenAPI 3.1 compilation", () => {
     expect(replaceItem?.security).toEqual([
       { oauth: ["items:write"], bearer: [] },
     ]);
+    expect(replaceItem?.authentication.alternatives).toHaveLength(1);
+    expect(
+      replaceItem?.authentication.alternatives[0]?.schemes.map(
+        (scheme) => `${scheme.name}:${scheme.scopes.join(",")}`,
+      ),
+    ).toEqual(["bearer:", "oauth:items:write"]);
   });
 });
 
@@ -1189,6 +1228,15 @@ describe("security structures", () => {
     );
     expect(codes(unknown)).toContain("SECURITY_INVALID");
 
+    const unknownGlobal = compileDocument(
+      baseDocument(
+        { "/x": { get: operation() } },
+        { security: [{ missing: [] }] },
+      ),
+    );
+    expect(codes(unknownGlobal)).toContain("SECURITY_INVALID");
+    expect(unknownGlobal.tools).toHaveLength(0);
+
     const invalid = compileDocument(
       baseDocument(
         { "/x": { get: operation() } },
@@ -1222,6 +1270,199 @@ describe("security structures", () => {
     expect(result31.securitySchemes.mtls).toEqual({
       name: "mtls",
       type: "mutualTLS",
+    });
+    expect(
+      singleTool(result31).authentication.alternatives[0]?.schemes[0],
+    ).toEqual({ name: "mtls", type: "mutualTLS", scopes: [] });
+  });
+
+  it("builds explicit OR/AND policies and preserves anonymous alternatives", () => {
+    const flows = {
+      clientCredentials: {
+        tokenUrl: "https://example.com/token",
+        scopes: { read: "Read" },
+      },
+    };
+    const result = compileDocument(
+      baseDocument(
+        {
+          "/x": {
+            get: operation({
+              security: [{ key: [] }, { oauth: ["read", "read"] }, {}],
+            }),
+          },
+        },
+        {
+          components: {
+            securitySchemes: {
+              key: { type: "apiKey", name: "X-Key", in: "header" },
+              oauth: { type: "oauth2", flows },
+            },
+          },
+        },
+      ),
+    );
+
+    expect(singleTool(result).authentication).toEqual({
+      alternatives: [
+        {
+          schemes: [
+            {
+              name: "key",
+              type: "apiKey",
+              scopes: [],
+              parameterName: "X-Key",
+              parameterLocation: "header",
+            },
+          ],
+        },
+        {
+          schemes: [
+            {
+              name: "oauth",
+              type: "oauth2",
+              scopes: ["read"],
+              flows,
+            },
+          ],
+        },
+        { schemes: [] },
+      ],
+      allowsAnonymous: true,
+    });
+  });
+
+  it("rejects scopes on non-OAuth schemes", () => {
+    const result = compileDocument(
+      baseDocument(
+        {
+          "/x": {
+            get: operation({ security: [{ key: ["read"] }] }),
+          },
+        },
+        {
+          components: {
+            securitySchemes: {
+              key: { type: "apiKey", name: "X-Key", in: "header" },
+            },
+          },
+        },
+      ),
+    );
+
+    expect(codes(result)).toContain("SECURITY_REQUIREMENT_INVALID");
+    expect(result.tools).toHaveLength(0);
+  });
+
+  it("rejects undeclared OAuth2 scopes in strict mode and warns in permissive mode", () => {
+    const document = baseDocument(
+      {
+        "/x": {
+          get: operation({ security: [{ oauth: ["write"] }] }),
+        },
+      },
+      {
+        components: {
+          securitySchemes: {
+            oauth: {
+              type: "oauth2",
+              flows: {
+                clientCredentials: {
+                  tokenUrl: "https://example.com/token",
+                  scopes: { read: "Read" },
+                },
+              },
+            },
+          },
+        },
+      },
+    );
+
+    const strict = compileDocument(document);
+    expect(strict.ok).toBe(false);
+    expect(strict.tools).toHaveLength(0);
+    expect(codes(strict)).toContain("SECURITY_REQUIREMENT_INVALID");
+
+    const permissive = compileDocument(document, { strict: false });
+    expect(permissive.ok).toBe(true);
+    expect(
+      permissive.diagnostics.find(
+        (diagnostic) => diagnostic.code === "SECURITY_REQUIREMENT_INVALID",
+      )?.severity,
+    ).toBe("warning");
+    expect(
+      singleTool(permissive).authentication.alternatives[0]?.schemes[0]?.scopes,
+    ).toEqual(["write"]);
+  });
+
+  it("preserves OpenID Connect scopes without a declared scope catalog", () => {
+    const result = compileDocument(
+      baseDocument(
+        {
+          "/x": {
+            get: operation({ security: [{ oidc: ["email"] }] }),
+          },
+        },
+        {
+          components: {
+            securitySchemes: {
+              oidc: {
+                type: "openIdConnect",
+                openIdConnectUrl:
+                  "https://example.com/.well-known/openid-configuration",
+              },
+            },
+          },
+        },
+      ),
+    );
+
+    expect(
+      singleTool(result).authentication.alternatives[0]?.schemes[0],
+    ).toEqual({
+      name: "oidc",
+      type: "openIdConnect",
+      scopes: ["email"],
+      openIdConnectUrl: "https://example.com/.well-known/openid-configuration",
+    });
+  });
+
+  it("includes authentication details in per-tool hashes", () => {
+    const compileWith = (parameterName: string) =>
+      compileDocument(
+        baseDocument(
+          {
+            "/x": {
+              get: operation({
+                operationId: "x",
+                security: [{ key: [] }],
+              }),
+            },
+          },
+          {
+            components: {
+              securitySchemes: {
+                key: {
+                  type: "apiKey",
+                  name: parameterName,
+                  in: "header",
+                },
+              },
+            },
+          },
+        ),
+      );
+
+    expect(
+      diffManifests(
+        compileWith("X-One").manifest,
+        compileWith("X-Two").manifest,
+      ),
+    ).toEqual({
+      added: [],
+      removed: [],
+      changed: ["x"],
+      unchanged: [],
     });
   });
 });

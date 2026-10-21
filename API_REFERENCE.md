@@ -571,6 +571,30 @@ export interface CompiledSecurityScheme {
   flows?: Readonly<Record<string, unknown>>;
 }
 
+export interface CompiledAuthenticationScheme {
+  name: string;
+  type: "apiKey" | "http" | "oauth2" | "openIdConnect" | "mutualTLS";
+  scopes: readonly string[];
+  parameterName?: string;
+  parameterLocation?: "query" | "header" | "cookie";
+  httpScheme?: string;
+  bearerFormat?: string;
+  openIdConnectUrl?: string;
+  flows?: Readonly<Record<string, unknown>>;
+}
+
+export interface CompiledAuthenticationAlternative {
+  /** Schemes that must all be satisfied together (AND). */
+  schemes: readonly CompiledAuthenticationScheme[];
+}
+
+export interface CompiledAuthenticationPolicy {
+  /** OR alternatives; empty means no authentication is declared. */
+  alternatives: readonly CompiledAuthenticationAlternative[];
+  /** True when at least one alternative requires no scheme. */
+  allowsAnonymous: boolean;
+}
+
 export interface CompiledResponse {
   status: string;
   description: string;
@@ -590,6 +614,7 @@ export interface CompiledOperation {
   deprecated: boolean;
   responses: readonly CompiledResponse[];
   security: readonly SecurityRequirement[];
+  authentication: CompiledAuthenticationPolicy;
   sourceLocation: string;
 }
 
@@ -656,11 +681,19 @@ Response mapping:
 
 Schema translation resolves local `$ref`s only (`#/...`) with cycle and depth detection and never fetches a remote reference. OpenAPI 3.0 `nullable: true` becomes a union with `"null"` and adds `null` to `enum`; it requires a sibling `type`, and using `nullable` in 3.1 is an error. OpenAPI 3.1 null unions are preserved. The resulting input schema is audited with `auditInputSchema`; an operation is not emitted when the runtime cannot enforce its schema. `allOf` flattening merges nested object intersections deterministically, including intersections reached through `$ref`; a property declared with incompatible schemas in different members, a non-object member, or a sibling validation keyword produces `SCHEMA_COMPOSITION_UNSUPPORTED`.
 
-Security schemes and requirements are preserved structurally, not enforced. Each `security` array element is an OR alternative; keys inside one element are AND requirements; `security: []` explicitly means no authentication. `components.securitySchemes` must be valid for the declared version (`mutualTLS` requires 3.1), and requirements may not reference an unknown scheme. `operation.requiredScopes` is intentionally left empty because flattening OR alternatives or AND scopes into one list would misrepresent the contract.
+Security schemes and raw requirements are preserved, and each operation also receives an explicit `authentication` policy:
+
+- `authentication.alternatives` mirrors the OR list; each alternative's `schemes` is the AND list.
+- Each scheme entry copies the credential-relevant definition (API key parameter name/location, HTTP scheme and bearer format, OpenID Connect URL, OAuth2 flows) plus the required scopes. Scopes are deduplicated and sorted by code unit; scheme entries are sorted by name. Alternative order follows the contract.
+- An empty requirement object (`{}`) is preserved as an alternative with no schemes and sets `allowsAnonymous: true`; it is not dropped. An empty or absent `security` list also means no authentication, with `alternatives: []` and `allowsAnonymous: true`.
+- A non-OAuth/OIDC scheme that declares scopes is rejected with `SECURITY_REQUIREMENT_INVALID`. OAuth2 scopes must appear in at least one declared flow in strict mode (error) or produce a warning in permissive mode. OpenID Connect scopes cannot be checked offline and are preserved.
+- If the document-level `security` list is invalid, no operations are emitted. Every operation inherits it, so emitting tools would silently drop authentication.
+
+The policy is compiler metadata, not enforcement. `operation.requiredScopes` remains empty because flattening OR alternatives or AND scopes into one list would misrepresent the contract; auth adapters and the future executor must interpret `authentication`.
 
 `sourceHash` hashes the exact source text. `contractRevision` hashes the canonical parsed document plus `COMPILER_VERSION`; semantically equivalent key ordering therefore produces the same revision, while compiler changes produce a new revision. `manifest.tools` records a hash per emitted operation (including response metadata), `toolsetHash` hashes the compiler version, contract revision, and all tool hashes, and `diffManifests` reports added, removed, changed, and unchanged names between two manifests. No timestamps are included, so the same source and compiler version produce the same manifest.
 
-Known limitations: response schemas are unvalidated metadata and no output validator is generated; no executor or upstream HTTP policy; no remote references; input `oneOf`, `anyOf`, `not`, conditional, dependent, and pattern composition is rejected; `allOf` supports object intersections only; no numeric/string/format constraint enforcement beyond the runtime subset; no YAML merge-key support; and no regeneration command that reads/writes a manifest. The compiler is not wired into the CLI or generated-server flow yet.
+Known limitations: response schemas are unvalidated metadata and no output validator is generated; authentication policies are not enforced and no credentials are injected; no executor or upstream HTTP policy; no remote references; input `oneOf`, `anyOf`, `not`, conditional, dependent, and pattern composition is rejected; `allOf` supports object intersections only; no numeric/string/format constraint enforcement beyond the runtime subset; no YAML merge-key support; and no regeneration command that reads/writes a manifest. The compiler is not wired into the CLI or generated-server flow yet.
 
 ## `@chainmcp/cache-redis`
 

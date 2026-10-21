@@ -113,8 +113,10 @@ The pipeline is:
    a descriptive response schema. Response schemas resolve local references,
    omit `writeOnly` properties, and preserve composition keywords; they are not
    used to validate upstream payloads yet.
-8. Preserve security schemes and OR/AND requirements as metadata. They are not
-   enforced until authentication and upstream credential slices exist.
+8. Derive an explicit authentication policy: OR alternatives, AND scheme sets,
+   copied credential metadata, required scopes, and preserved anonymous
+   alternatives. It is metadata; authentication, scope checks, and credential
+   injection are not enforced until the auth and executor slices exist.
 9. Emit `sourceHash`, a canonical-document `contractRevision`, per-tool hashes,
    a `toolsetHash`, and `diffManifests()` output.
 

@@ -68,7 +68,7 @@ are not re-argued per milestone. Deferred risks and their triggers live in
 - [x] Generate stable tool names and descriptions.
 - [x] Detect circular references, invalid schemas, and tool-name collisions; fail with actionable diagnostics.
 - [ ] Translate supported JSON Schema constructs into validators.
-- [ ] Map authentication schemes to explicit policies, including alternative (OR) and combined (AND) requirements; never silently drop a requirement.
+- [x] Map authentication schemes to explicit policies, including alternative (OR) and combined (AND) requirements; never silently drop a requirement.
 - [x] Report unsupported constructs and ambiguous mappings.
 - [ ] Enforce outbound destination policy (allowlist, private-range and metadata blocking, redirect revalidation) on generated executors.
 - [ ] Bind `context.signal` to generated upstream calls and release executor resources on timeout or cancellation.
@@ -90,14 +90,17 @@ description, selected media type, and translated response schema. Response
 schemas are descriptive metadata: `writeOnly` fields are omitted, local
 references are resolved, and composition is preserved, but upstream payloads
 are not validated against them. Object `allOf` intersections are flattened
-deterministically for inputs. Unsupported input constraints are rejected in
-strict mode and reported when droppable in permissive mode; input
+deterministically for inputs. Security requirements are expanded into explicit
+OR alternatives and AND scheme sets with copied credential metadata and
+required scopes; anonymous alternatives are preserved. Authentication is not
+enforced and no credentials are injected. Unsupported input constraints are
+rejected in strict mode and reported when droppable in permissive mode; input
 `oneOf`/`anyOf`/`not`, conditional/dependent/pattern composition, and remote
-references are always rejected. Output is metadata, not runnable tools.
-Explicit authentication policies/scopes, input union composition, an output
-validator, upstream execution, outbound destination policy, cancellation
-binding, Inspector conformance, and an end-to-end example remain open, so the
-exit criteria are not yet met.
+references are always rejected. Output is metadata, not runnable tools. Input
+union composition, an output validator, authentication enforcement, upstream
+execution, outbound destination policy, cancellation binding, Inspector
+conformance, and an end-to-end example remain open, so the exit criteria are
+not yet met.
 
 ## Milestone 4 — Smart caching and token accounting
 

@@ -40,8 +40,11 @@ Milestone 3. It:
   output validator: local `$ref`s are resolved, 3.0 nullability is translated,
   `writeOnly` properties are omitted, and composition keywords such as
   `oneOf`, `anyOf`, and `not` are preserved.
-- Preserves security schemes and OR/AND requirement structure as metadata. It
-  does not enforce them yet.
+- Preserves security schemes and OR/AND requirement structure, and derives an
+  explicit `authentication` policy per operation: OR alternatives, AND scheme
+  sets, copied credential metadata, sorted/deduplicated scopes, and preserved
+  anonymous alternatives. It rejects scopes on non-OAuth/OIDC schemes. It does
+  not enforce the policy or inject credentials yet.
 - Emits `sourceHash`, `contractRevision`, a deterministic manifest with
   `toolsetHash` and per-tool hashes, and `diffManifests()` for regeneration
   comparisons.
@@ -121,6 +124,17 @@ Use `auditInputSchema` from `@chainmcp/core` on every generated tool input schem
 
 Current status: local `#/...` references only, with per-compile depth, cycle, source-size, and operation-count limits. A remote or non-local reference is `REF_REMOTE_UNSUPPORTED`; the compiler performs no network or filesystem I/O.
 
+## Authentication policies
+
+Each operation receives `authentication: { alternatives, allowsAnonymous }` derived from the resolved operation-level or global `security` list. The top-level array is an OR list; each alternative's `schemes` array is an AND list. Scheme entries copy the credential-relevant definition (API key name/location, HTTP scheme and bearer format, OIDC URL, OAuth2 flows) and required scopes.
+
+- `{}` in a `security` list is an anonymous alternative and sets `allowsAnonymous: true`; it is never dropped.
+- An empty or absent `security` list produces `alternatives: []`, `allowsAnonymous: true`.
+- Scopes are deduplicated and sorted; scheme names are sorted inside an alternative.
+- Non-OAuth/OIDC schemes with non-empty scopes are rejected.
+- OAuth2 scopes must be declared by at least one flow; strict mode errors, permissive mode warns and preserves them. OIDC scopes cannot be validated offline.
+- The policy is not enforced and no upstream credentials are resolved. `operation.requiredScopes` stays empty because a flat list cannot represent OR/AND semantics.
+
 ## Tool naming
 
 Names must be deterministic, unique, and compatible with the MCP SDK's validation rules. Resolve collisions predictably and report any renaming.
@@ -139,6 +153,6 @@ Maintain fixtures for:
 - Read and write operations.
 - Invalid documents and unsupported schema constructs.
 
-Current fixtures live in `packages/compiler/tests/fixtures/`. The deterministic test suite covers both versions, nullable translation, local and circular references, remote-reference refusal, tool-name collisions, security OR/AND structure, unsupported constructs in both modes, parameter/body mapping, `allOf` flattening, response mapping (including `$ref` responses, 3.1 ranges, non-JSON content, and output composition), limits, and manifest diffs.
+Current fixtures live in `packages/compiler/tests/fixtures/`. The deterministic test suite covers both versions, nullable translation, local and circular references, remote-reference refusal, tool-name collisions, security OR/AND structure and authentication policies (including anonymous alternatives, scope validation, OIDC, and mutual TLS), unsupported constructs in both modes, parameter/body mapping, `allOf` flattening, response mapping (including `$ref` responses, 3.1 ranges, non-JSON content, and output composition), limits, and manifest diffs.
 
 Document actual compatibility based on tests rather than assumptions.

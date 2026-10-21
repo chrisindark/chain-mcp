@@ -38,6 +38,7 @@ export type CompileDiagnosticCode =
   | "SCHEMA_UNSUPPORTED"
   | "SCHEMA_NULLABLE_INVALID"
   | "SECURITY_INVALID"
+  | "SECURITY_REQUIREMENT_INVALID"
   | "SECURITY_SCHEME_INVALID"
   | "INTERNAL_ERROR";
 
@@ -108,6 +109,49 @@ export interface CompiledResponse {
 }
 
 /**
+ * One scheme inside an authentication alternative. All schemes in an
+ * alternative are required together (AND). The copied credential metadata
+ * makes the policy actionable without re-reading the source document.
+ */
+export interface CompiledAuthenticationScheme {
+  name: string;
+  type: SecuritySchemeType;
+  /** Required OAuth2/OpenID Connect scopes; empty for other scheme types. */
+  scopes: readonly string[];
+  /** API key parameter name and location. */
+  parameterName?: string;
+  parameterLocation?: "query" | "header" | "cookie";
+  /** HTTP authentication scheme such as `basic` or `bearer`. */
+  httpScheme?: string;
+  bearerFormat?: string;
+  openIdConnectUrl?: string;
+  /** OAuth2 flow definitions from the contract. */
+  flows?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * One alternative in an OR list. Schemes inside `schemes` are ANDed. An
+ * alternative with no schemes represents anonymous access.
+ */
+export interface CompiledAuthenticationAlternative {
+  schemes: readonly CompiledAuthenticationScheme[];
+}
+
+/**
+ * Explicit authentication policy derived from OpenAPI security requirements.
+ * The array is an OR list; each alternative is an AND list. An empty
+ * `alternatives` array means no authentication is declared.
+ *
+ * This is compiler metadata. Authentication and credential injection are not
+ * enforced by the current runtime or executor.
+ */
+export interface CompiledAuthenticationPolicy {
+  alternatives: readonly CompiledAuthenticationAlternative[];
+  /** True when at least one alternative requires no scheme. */
+  allowsAnonymous: boolean;
+}
+
+/**
  * Compiler output metadata for one operation. This is not yet a runnable
  * `ToolDefinition`: upstream execution, credential injection, and outbound
  * destination policy are deferred to later Milestone 3 slices.
@@ -127,6 +171,8 @@ export interface CompiledOperation {
   responses: readonly CompiledResponse[];
   /** Resolved contract-level or operation-level security alternatives. */
   security: readonly SecurityRequirement[];
+  /** Explicit OR/AND authentication policy derived from `security`. */
+  authentication: CompiledAuthenticationPolicy;
   sourceLocation: string;
 }
 
