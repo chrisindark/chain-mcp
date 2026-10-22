@@ -48,6 +48,16 @@ export interface RateLimitRules {
 export interface InMemoryRateLimiterOptions extends RateLimitRules {
   /** Clock provider for testing. Defaults to `Date.now`. */
   now?: () => number;
+  /**
+   * Maximum number of sliding windows retained in memory. Defaults to 10,000.
+   *
+   * Windows are evicted least-recently-used first, so a caller that keeps
+   * presenting new tenant, principal, or tool identities cannot grow the map
+   * without bound. Eviction forgets the history of the evicted identity, so it
+   * can make one extra request before its window is rebuilt; use the
+   * distributed limiter when strict counting matters more than local memory.
+   */
+  maxTrackedWindows?: number;
 }
 
 export interface RedisRateLimitClient {

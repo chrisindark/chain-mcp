@@ -19,7 +19,7 @@ pnpm test
 
 These commands must be implemented and verified by the initial repository-generation task. Do not claim they pass until executed successfully.
 
-The current workspace provides `pnpm format:check`, `pnpm lint`, `pnpm test:rules`, `pnpm typecheck`, `pnpm test`, and `pnpm build`; `pnpm check` runs these in sequence and finishes with `pnpm version:check`. `pnpm format` applies Prettier. The available packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/compiler`, `@chainmcp/auth`, `@chainmcp/cache-redis`, and `@chainmcp/server`.
+The current workspace provides `pnpm format:check`, `pnpm lint`, `pnpm test:rules`, `pnpm typecheck`, `pnpm test`, and `pnpm build`; `pnpm check` runs these in sequence and finishes with `pnpm version:check`. `pnpm format` applies Prettier. The available packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/compiler`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/executor`, `@chainmcp/rate-limit`, and `@chainmcp/server`.
 
 ## Commits and local hooks
 
@@ -34,7 +34,7 @@ Hooks are a fast local guardrail, not the gate. CI runs the full `pnpm check`, a
 
 ## Releases and versioning
 
-Releases use [Changesets](https://github.com/changesets/changesets). `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/compiler`, `@chainmcp/auth`, `@chainmcp/cache-redis`, and `@chainmcp/server` are a fixed group: they always share one version, and the private root package mirrors it.
+Releases use [Changesets](https://github.com/changesets/changesets). `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/compiler`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/executor`, `@chainmcp/rate-limit`, and `@chainmcp/server` are a fixed group: they always share one version, and the private root package mirrors it.
 
 - Add a changeset for every user-visible change: `pnpm changeset`.
 - Apply pending changesets locally with `pnpm release:version`. This runs `changeset version` and then `scripts/sync-version.mjs`, which copies the shared package version onto the root `package.json`.
@@ -78,6 +78,21 @@ Test OpenAPI 3.0 and 3.1 documents, invalid schemas, missing operation IDs, auth
 ### Integration tests
 
 Test real MCP client interactions, upstream HTTP requests, cache adapters, and generated-server builds.
+
+### Optional Redis integration tests
+
+The rate limiter's Lua scripts are covered by unit tests against a JavaScript
+fake. To prove the scripts against a real server, point the suite at Redis:
+
+```bash
+docker run --rm -p 6379:6379 redis:7-alpine
+CHAINMCP_TEST_REDIS_URL=redis://127.0.0.1:6379 \
+  pnpm --filter @chainmcp/rate-limit test
+```
+
+The suite skips itself when `CHAINMCP_TEST_REDIS_URL` is unset, so `pnpm test`
+and `pnpm check` stay hermetic. CI runs the same command in a dedicated job with
+a Redis service container.
 
 ### Security tests
 

@@ -64,9 +64,12 @@ analytics:
   retentionDays: 14
 ```
 
-The implemented `@chainmcp/config` package exports `ChainMcpConfigSchema` and `parseConfig`. The currently supported subset is `version`, `name`, `server`, and `security` as described in the schema source and defaults. Unknown keys are rejected. The schema does not yet load YAML/files or map environment variables. Cache, token metrics, rate-limit, JSON-navigation, and analytics sections in the example remain target configuration and are not accepted by the current parser.
+The implemented `@chainmcp/config` package exports `ChainMcpConfigSchema`, `parseConfig`, `safeParseConfig`, and wiring helpers. The supported sections are `version`, `name`, `contract`, `server`, `security`, `rateLimit`, and `auth`. Unknown keys are rejected with Zod `.strict()`.
 
-The schema currently validates these values only. In particular, `security.allowedUpstreamHosts` is not wired into `@chainmcp/executor` yet: deployment code passes `allowedHosts` directly to `createUpstreamExecutor`. The optional `@chainmcp/cache-redis` and `@chainmcp/rate-limit` adapters are constructed in deployment code and are not part of the config schema; `CHAINMCP_REDIS_URL` is not read by the current packages.
+- **`security.allowedUpstreamHosts`:** Strictly validated against schemes, ports, paths, queries, credentials, and wildcards. Automatically normalized to lowercase canonical hostnames. Wired directly into executor options via `buildExecutorOptions`.
+- **`rateLimit`:** Configures in-memory or Redis distributed rate limiting with shorthand (`requestsPerMinute`, `concurrency`) or explicit global, tenant, and tool quotas. Wired into runtime options via `createRateLimiterFromConfig`.
+- **`auth`:** Configures inbound authorization (`authorizer: "scope"`) and upstream credential providers (`static`, `env`, `secretStore`, `oauth`). Wired into executor options via `createUpstreamCredentialProviderFromConfig`.
+- **Wiring Helpers:** `buildExecutorOptions(config, overrides)` maps allowlists, timeouts, response caps, and credentials into `@chainmcp/executor`. `buildRuntimeOptions(config, overrides)` maps authorizers, rate limiters, and default timeouts into `@chainmcp/core`.
 
 ## 3. Environment variables
 

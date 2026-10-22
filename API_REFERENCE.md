@@ -816,7 +816,8 @@ for (const tool of executor.createTools(result.tools)) runtime.register(tool);
 - Header parameters are sent as declared. Array values are comma-joined. Control characters, invalid header names, and reserved transport/credential headers are rejected. Compiler `parameters` metadata never includes cookie parameters or the forbidden headers listed for the compiler.
 - A JSON `body` input is serialized as UTF-8 with the selected request media type. The body is required only when `requestBody.required` is true.
 - Requests set `accept: application/json`, `accept-encoding: identity`, and a package user agent. No inbound identity, token, cookie, or authorization header is forwarded from tool arguments or context.
-- When `credentialProvider` is configured, it resolves upstream credentials for operations declaring `CompiledAuthenticationPolicy`. Valid credentials (`apiKey`, `http` bearer/basic, `oauth2`) are injected into headers, query parameters, or cookies. If authentication fails and anonymous access is not allowed, the call rejects with `RuntimeError("AUTH_REQUIRED")`.
+- When `credentialProvider` is configured, it resolves upstream credentials for operations declaring `CompiledAuthenticationPolicy`. Provider output is validated with `@chainmcp/auth`'s `normalizeUpstreamCredential`; valid credentials (`apiKey`, `http` bearer/basic, `oauth2`) are injected into headers, query parameters, or cookies, and invalid material counts as unresolved. If authentication fails and anonymous access is not allowed, the call rejects with `RuntimeError("AUTH_REQUIRED")`.
+- OAuth token acquisition reuses the outbound policy. With a credential provider configured, the executor passes a token endpoint fetcher built from its resolver and transport, so the token request is allowlisted (the provider's `allowedTokenHosts`, otherwise the token URL host), classified, DNS-pinned, peer-verified, and capped exactly like an API request. Token endpoint redirects are refused and non-JSON token responses are rejected.
 - URL length is capped at 8 KiB and request headers at 16 KiB. The request body defaults to a 1 MiB cap.
 
 #### Response and redirect behavior
@@ -970,12 +971,81 @@ export class CompositeCredentialProvider implements UpstreamCredentialProvider {
   ): Promise<UpstreamCredential | undefined>;
 }
 
+export interface SecretStoreCredentialProviderOptions {
+  store: SecretStore;
+  allowGlobalFallback?: boolean;
+  deriveStoreKey?: (
+    context: CredentialResolutionContext,
+  ) => string | readonly string[];
+}
+
+export const MAX_SECRET_KEY_LENGTH = 256;
+export function encodeSecretKeySegment(value: string): string;
+export function buildCredentialStoreKey(options: {
+  tenantId?: string;
+  schemeName: string;
+}): string;
+export function buildOAuthTokenStoreKey(options: {
+  tenantId: string;
+  principalId?: string;
+  schemeName: string;
+  normalizedScopes: string;
+}): string;
+
+export function normalizeUpstreamCredential(
+  value: unknown,
+): UpstreamCredential | undefined;
+
+export interface OAuthTokenFetcherOptions {
+  signal?: AbortSignal;
+  allowedHosts?: readonly string[];
+  allowAnyTokenHost?: boolean;
+  allowInsecureHttp?: boolean;
+  maxResponseBytes?: number;
+}
+
+export type OAuthTokenFetcher = (
+  url: string,
+  body: URLSearchParams,
+  headers: Readonly<Record<string, string>>,
+  options?: OAuthTokenFetcherOptions,
+) => Promise<OAuthTokenResponse>;
+
+export const DEFAULT_TOKEN_TIMEOUT_MS = 10_000;
+export const MAX_TOKEN_RESPONSE_BYTES = 65_536;
+export const MAX_TOKEN_URL_LENGTH = 8_192;
+export function defaultTokenFetcher(
+  url: string,
+  body: URLSearchParams,
+  headers: Readonly<Record<string, string>>,
+  options?: OAuthTokenFetcherOptions,
+): Promise<OAuthTokenResponse>;
+
+export interface OAuthClientCredentialsConfig {
+  tokenUrl: string;
+  clientId: string;
+  clientSecret: string;
+  scopes?: readonly string[];
+  schemeNames?: readonly string[];
+  expirySkewSeconds?: number;
+  allowedTokenHosts?: readonly string[];
+  allowAnyTokenHost?: boolean;
+  allowInsecureHttp?: boolean;
+  fetchToken?: OAuthTokenFetcher;
+  tokenStore?: SecretStore;
+  now?: () => number;
+}
+
 export class OAuthClientCredentialsProvider implements UpstreamCredentialProvider {
   constructor(config: OAuthClientCredentialsConfig);
   resolveCredential(
     context: CredentialResolutionContext,
   ): Promise<UpstreamCredential | undefined>;
-  invalidate(tenantId?: string, schemeName?: string): Promise<void>;
+  invalidate(
+    tenantId?: string,
+    schemeName?: string,
+    principalId?: string,
+  ): Promise<void>;
 }
 ```
 
@@ -1000,7 +1070,15 @@ export class OAuthClientCredentialsProvider implements UpstreamCredentialProvide
 
 `EncryptedSecretStore` protects secrets at rest using authenticated AES-256-GCM encryption with 96-bit random IVs, 128-bit authentication tags, and key-name AAD binding. Missing keys, tampered ciphertext, or swapped records fail closed.
 
-`OAuthClientCredentialsProvider` handles upstream OAuth 2.0 client credentials grants, automatic token caching, expiry detection with safety margin, and automatic refresh.
+`buildCredentialStoreKey` and `buildOAuthTokenStoreKey` derive valid store keys from tenant, principal, scheme, and scope values. Each segment is base64url-encoded, so identifiers that contain characters outside the key grammar cannot break lookup or collide with another identifier, and keys longer than `MAX_SECRET_KEY_LENGTH` are replaced by a stable SHA-256 digest. `encodeSecretKeySegment` exposes the segment encoding.
+
+`normalizeUpstreamCredential` validates untrusted credential material and returns a normalized credential or `undefined`. Providers are deployment code, so a value with an unknown `type`, a missing secret, an invalid `location`, or a malformed optional field is treated as unresolved instead of being passed to request construction.
+
+`SecretStoreCredentialProvider` reads `buildCredentialStoreKey({ tenantId, schemeName })` only. A tenant without its own entry does not inherit a deployment-wide credential; set `allowGlobalFallback: true` to fall back to `buildCredentialStoreKey({ schemeName })`, or pass `deriveStoreKey` for a custom layout.
+
+`OAuthClientCredentialsProvider` handles upstream OAuth 2.0 client credentials grants, automatic token caching, expiry detection with safety margin, and automatic refresh. A client credentials token has no refresh token, so expiry means re-acquiring it. Token cache entries are partitioned by tenant, principal, scheme, and normalized scopes under `buildOAuthTokenStoreKey`, and a token-store read or write failure bypasses the cache instead of failing the call. `invalidate(tenantId?, schemeName?, principalId?)` drops matching in-memory entries and deletes their persistent copies; with no arguments it clears every token the instance knows about. Because `SecretStore` has no scan operation, entries written by another process that this instance never loaded cannot be enumerated; delete `buildOAuthTokenStoreKey(...)` from the shared store or rely on token expiry for cross-process revocation.
+
+The token endpoint is subject to an explicit policy. `OAuthClientCredentialsProvider` requires `allowedTokenHosts` (exact hostnames, no wildcards) or the explicit `allowAnyTokenHost: true` opt-out, forwards them through `OAuthTokenFetcherOptions`, and requires HTTPS unless `allowInsecureHttp` is set. `defaultTokenFetcher` refuses URL credentials, refuses redirects instead of following them, enforces `MAX_TOKEN_URL_LENGTH`, caps the response at `MAX_TOKEN_RESPONSE_BYTES`, and applies `DEFAULT_TOKEN_TIMEOUT_MS`. It uses the platform fetch, so it cannot pin the resolved address; when the provider runs inside `@chainmcp/executor`, the executor supplies `CredentialResolutionContext.tokenEndpointFetch`, which resolves and pins the token endpoint through the same destination policy and transport as upstream requests.
 
 ## `@chainmcp/rate-limit`
 
@@ -1017,11 +1095,17 @@ export interface ConcurrencyPolicy {
   ttlSeconds?: number;
 }
 
+export interface InMemoryRateLimiterOptions extends RateLimitRules {
+  now?: () => number;
+  maxTrackedWindows?: number; // default 10,000
+}
+
 export class InMemoryRateLimiter implements RateLimiter {
   constructor(options?: InMemoryRateLimiterOptions);
   check(context: ToolContext, toolName: string): Promise<RateLimitDecision>;
   release(context: ToolContext, toolName: string): Promise<void>;
   reset(): void;
+  readonly trackedWindowCount: number;
 }
 
 export interface RedisRateLimitClient {
@@ -1035,7 +1119,64 @@ export class DistributedRateLimiter implements RateLimiter {
 }
 ```
 
-Quotas and concurrency can be partitioned globally, by tenant, by principal, or by tool. Denied calls produce `{ allowed: false, retryAfterSeconds }`. In distributed deployments, atomic Redis Lua scripts ensure quota and concurrency limits are enforced across server processes without race conditions. Concurrency slots are acquired before tool execution and released in a `finally` block upon completion.
+Quotas and concurrency can be partitioned globally, by tenant, by principal, or by tool. Denied calls produce `{ allowed: false, retryAfterSeconds }`. Quota denials report when the oldest request leaves the window; concurrency denials report a conservative lower bound of one second.
+
+`InMemoryRateLimiter` retains at most `maxTrackedWindows` sliding windows (default 10,000) and evicts the least recently used one first, which bounds memory when callers keep presenting new identities. Eviction forgets that identity's history, so it can make one extra request before its window is rebuilt; use `DistributedRateLimiter` when strict counting across many identities matters more than local memory. Expired windows are dropped immediately and `trackedWindowCount` reports the current size.
+
+In distributed deployments, atomic Redis Lua scripts ensure quota and concurrency limits are enforced across server processes without race conditions. Every matching scope is evaluated for each call and the scopes recorded before a denial are rolled back, so a rejected call never consumes another scope's budget; rollback failures are isolated and can only over-count. Concurrency slots are acquired before tool execution and released in a `finally` block upon completion, with a safety TTL (default 60 seconds) for crashed holders. The Lua scripts are proven against a real Redis by the opt-in integration suite described in `DEVELOPMENT.md`.
+
+## `@chainmcp/config`
+
+Configuration schema, validation, and wiring helpers for ChainMcp servers:
+
+```ts
+export const ChainMcpConfigSchema: z.ZodType<ChainMcpConfig>;
+export function parseConfig(input: unknown): ChainMcpConfig;
+export function safeParseConfig(
+  input: unknown,
+): ReturnType<typeof ChainMcpConfigSchema.safeParse>;
+
+export function buildExecutorOptions(
+  config: ChainMcpConfig,
+  overrides: BuildExecutorOptionsOverrides,
+  factoryOptions?: CredentialProviderFactoryOptions,
+): UpstreamExecutorOptions;
+
+export function buildRuntimeOptions(
+  config: ChainMcpConfig,
+  overrides?: Partial<RuntimeOptions>,
+  factoryOptions?: {
+    rateLimiterOptions?: RateLimiterFactoryOptions;
+  },
+): RuntimeOptions;
+
+export function createRateLimiterFromConfig(
+  config: RateLimitConfig,
+  options?: RateLimiterFactoryOptions,
+): RateLimiter | undefined;
+
+export function createAuthorizerFromConfig(
+  config: InboundAuthConfig,
+): Authorizer | undefined;
+
+export function createUpstreamCredentialProviderFromConfig(
+  config: UpstreamAuthConfig,
+  options?: CredentialProviderFactoryOptions,
+): UpstreamCredentialProvider | undefined;
+```
+
+### Configuration Sections
+
+- **`server`:** Configures transport (`stdio`), host, port, `requestTimeoutMs` (default 15,000ms), and `maxResponseBytes` (default 1,000,000 bytes).
+- **`security`:** Configures `requireInboundAuth`, `allowedUpstreamHosts`, and `redactHeaders`. Each host in `allowedUpstreamHosts` is strictly validated against schemes, ports, paths, queries, credentials, and wildcards, and normalized to canonical lowercase.
+- **`rateLimit`:** Configures in-memory or Redis distributed rate limiting with shorthand (`requestsPerMinute`, `concurrency`) or explicit global, tenant, and tool quotas.
+- **`auth`:** Configures inbound authorization (`authorizer: "scope"`) and upstream credential providers (`static`, `env`, `secretStore`, `oauth`).
+- **`contract`:** Optional contract source and strict validation settings.
+
+### Wiring Helpers
+
+- `buildExecutorOptions(config, overrides)` maps `security.allowedUpstreamHosts` to `allowedHosts`, `server.requestTimeoutMs` to `timeoutMs`, `server.maxResponseBytes` to `maxResponseBytes`, and `auth.upstream` to `credentialProvider`. Fails closed if `allowedUpstreamHosts` is empty.
+- `buildRuntimeOptions(config, overrides)` maps `security.requireInboundAuth` / `auth.inbound` to `authorizer`, `config.rateLimit` to `rateLimiter`, and `server.requestTimeoutMs` to `defaultTimeoutMs`.
 
 ## Error codes
 
@@ -1107,8 +1248,11 @@ compiled stdio server, and `pnpm conformance:inspector` runs the Inspector CLI
 against `tools/list` and `tools/call`. Runtime errors are returned as
 `isError: true` results containing only the stable code and adapter-selected
 generic message; executor-provided messages and causes are never returned.
-Unexpected failures use a generic message. No credentials or causes are
-returned to clients.
+`RATE_LIMITED` additionally renders `RuntimeError.retryAfterSeconds` when it is
+a whole number of seconds between 1 and 86,400, as
+`RATE_LIMITED: Rate limit exceeded. Retry after N seconds`; no other detail
+from the limiter is exposed. Unexpected failures use a generic message. No
+credentials or causes are returned to clients.
 
 `connectMcpServer(runtime, transport, options)` connects a server to an SDK
 transport and returns an idempotent `close()` handle plus a `closed` promise

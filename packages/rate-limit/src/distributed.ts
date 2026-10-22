@@ -67,6 +67,13 @@ end
 return 1
 `;
 
+const ROLLBACK_QUOTA_LUA = `
+-- chainmcp:quota_rollback
+local key = KEYS[1]
+local requestId = ARGV[1]
+return redis.call('ZREM', key, requestId)
+`;
+
 interface ActiveQuotaCheck {
   key: string;
   policy: QuotaPolicy;
@@ -112,6 +119,10 @@ export class DistributedRateLimiter implements RateLimiter {
 
     // 1. Check concurrency limits across distributed processes
     const acquiredConcurrencyKeys: string[] = [];
+    // Quota entries recorded by this check, rolled back if a later scope denies
+    // so a rejected call never consumes another scope's budget.
+    const recordedQuotaKeys: string[] = [];
+    const requestId = `${context.requestId}:${currentTime}:${Math.random().toString(36).slice(2, 8)}`;
     try {
       for (const check of concurrencyChecks) {
         const fullKey = `${this.keyPrefix}concurrency:${check.key}`;
@@ -137,7 +148,6 @@ export class DistributedRateLimiter implements RateLimiter {
       }
 
       // 2. Check quota limits across distributed processes
-      const requestId = `${context.requestId}:${currentTime}:${Math.random().toString(36).slice(2, 8)}`;
       let maxRetryAfterSeconds = 0;
 
       for (const check of quotaChecks) {
@@ -162,11 +172,15 @@ export class DistributedRateLimiter implements RateLimiter {
           if (retryAfterSec > maxRetryAfterSeconds) {
             maxRetryAfterSeconds = retryAfterSec;
           }
+        } else {
+          recordedQuotaKeys.push(fullKey);
         }
       }
 
       if (maxRetryAfterSeconds > 0) {
-        // Rollback concurrency slots acquired
+        // A rejected call must not consume quota or concurrency: undo every
+        // scope recorded above and release the concurrency slots.
+        await this.rollbackQuota(recordedQuotaKeys, requestId);
         await this.rollbackConcurrency(acquiredConcurrencyKeys);
         return {
           allowed: false,
@@ -176,6 +190,9 @@ export class DistributedRateLimiter implements RateLimiter {
 
       return { allowed: true };
     } catch (error) {
+      if (recordedQuotaKeys.length > 0) {
+        await this.rollbackQuota(recordedQuotaKeys, requestId);
+      }
       if (acquiredConcurrencyKeys.length > 0) {
         await this.rollbackConcurrency(acquiredConcurrencyKeys);
       }
@@ -205,6 +222,22 @@ export class DistributedRateLimiter implements RateLimiter {
         );
       } catch {
         // Rollback error isolated
+      }
+    }
+  }
+
+  private async rollbackQuota(
+    keys: readonly string[],
+    requestId: string,
+  ): Promise<void> {
+    for (const key of keys) {
+      try {
+        await this.runWithTimeout("rollback_quota", () =>
+          this.client.eval(ROLLBACK_QUOTA_LUA, [key], [requestId]),
+        );
+      } catch {
+        // Rollback error isolated. A failed rollback can only over-count, which
+        // fails closed for the caller rather than granting extra quota.
       }
     }
   }

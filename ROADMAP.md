@@ -152,15 +152,36 @@ remain separated from upstream credentials; caller arguments cannot inject or ov
 authorization headers. Upstream credentials (`apiKey`, `http` basic/bearer, `oauth2`) are
 resolved per scheme and tenant by pluggable `UpstreamCredentialProvider` adapters
 (`StaticCredentialProvider`, `EnvCredentialProvider`, `SecretStoreCredentialProvider`,
-`CompositeCredentialProvider`, and `OAuthClientCredentialsProvider`). Secrets at rest are
+`CompositeCredentialProvider`, and `OAuthClientCredentialsProvider`); provider output is
+validated against the credential shapes and invalid material fails closed. Secrets at rest are
 protected by `EncryptedSecretStore` using authenticated AES-256-GCM encryption, 96-bit random
 IVs, 128-bit authentication tags, key-name AAD binding, and key rotation support.
-OAuth 2.0 client credentials grant flow (RFC 6749) handles token acquisition, expiration
-detection with safety margin, automatic refresh, and manual invalidation.
+
+Scope of the OAuth item: only the RFC 6749 client credentials grant is implemented, which is
+the only grant current contracts require. That grant issues no refresh token, so expiry means
+re-acquiring the token; there is no refresh-token rotation. Token invalidation clears the
+entries an instance knows about and deletes their persistent copies, while cross-process
+revocation of entries another process wrote is out of scope because `SecretStore` has no scan
+operation (delete the derived `buildOAuthTokenStoreKey(...)` entry or rely on token expiry).
+Token acquisition is an outbound call: inside the executor it runs through the same exact host
+allowlist, address classification, DNS pinning, peer verification, redirect refusal, and
+response cap as API requests, and store keys are derived with a segment-encoding helper so
+tenant, principal, scheme, and scope values cannot break the key grammar. Secret rotation
+applies to `EncryptedSecretStore` key rotation, not to OAuth refresh tokens.
+
 The `@chainmcp/rate-limit` package provides `InMemoryRateLimiter` and `DistributedRateLimiter`
-(backed by Redis with atomic Lua scripts for rolling-window quota check and concurrency permit
+(backed by Redis with atomic Lua scripts for rolling-window quota checks and concurrency permit
 management), enforcing quotas and concurrency limits partitioned by tenant, principal, tool,
-or globally with deterministic `retryAfterSeconds` calculation across server processes.
+or globally. All matching scopes are evaluated per call: a denial rolls back quota recorded
+earlier in the same check, so a rejected call never consumes another scope's budget. Local
+window memory is bounded by least-recently-used eviction (`maxTrackedWindows`, default
+10,000). `retryAfterSeconds` is the exact time until the oldest request leaves the window for
+quota denials, and a conservative one-second lower bound for concurrency denials. Exit-criteria
+evidence combines unit tests, executor credential and egress tests, and an opt-in integration
+suite that runs the Lua scripts against a real Redis (CI job `redis-integration`); the default
+`pnpm check` path stays hermetic.
+
+`@chainmcp/config` wires `security.allowedUpstreamHosts` directly into executor options with strict hostname syntax validation (no schemes, ports, or wildcards), and wires `rateLimit` and `auth` (inbound authorizers and upstream providers) into runtime and executor options via factory helpers (`buildExecutorOptions`, `buildRuntimeOptions`, `createRateLimiterFromConfig`, and `createUpstreamCredentialProviderFromConfig`).
 
 ## Milestone 6 — JSON navigation, logging, and analytics
 
@@ -250,8 +271,10 @@ implementation.
 The following are recorded in `docs/risk-register.md` with status and
 re-evaluation triggers. They are deliberately not milestones:
 
-- OAuth discovery, refresh, rotation, and revocation (revisit only with a real
-  OAuth-required contract; placeholder OAuth is forbidden by `AGENTS.md`).
+- OAuth authorization-code and refresh-token flows, token introspection, OIDC
+  discovery, and cross-process token revocation. The Milestone 5 client
+  credentials grant needs none of them; revisit with a real contract, and keep
+  placeholders out per `AGENTS.md`.
 - Retries, backoff, circuit breakers, and health checks beyond explicit retries
   for idempotent operations.
 - Orphaned process and container cleanup, and multi-OS CI matrices (release

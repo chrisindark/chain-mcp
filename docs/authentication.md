@@ -30,7 +30,11 @@ const runtime = new InMemoryToolRuntime({
 The `@chainmcp/auth` package provides an authenticated secret store abstraction:
 
 ```ts
-import { EncryptedSecretStore, InMemorySecretStore } from "@chainmcp/auth";
+import {
+  EncryptedSecretStore,
+  InMemorySecretStore,
+  buildCredentialStoreKey,
+} from "@chainmcp/auth";
 
 const rawStore = new InMemorySecretStore();
 const secretStore = new EncryptedSecretStore({
@@ -41,9 +45,15 @@ const secretStore = new EncryptedSecretStore({
   },
 });
 
-await secretStore.set("tenant:tenant-1:scheme:api_key", "secret-upstream-key");
-const plain = await secretStore.get("tenant:tenant-1:scheme:api_key");
+const key = buildCredentialStoreKey({
+  tenantId: "tenant-1",
+  schemeName: "api_key",
+});
+await secretStore.set(key, "secret-upstream-key");
+const plain = await secretStore.get(key);
 ```
+
+Store keys are restricted to `[a-zA-Z0-9_:./-]`. Tenant, principal, scheme, and scope values come from deployment identity systems and may contain other characters, so derive keys with `buildCredentialStoreKey` (and `buildOAuthTokenStoreKey` for the token cache) instead of interpolating identifiers into a key string. Both helpers base64url-encode each segment and replace over-long keys with a stable digest, so a value can never break the key grammar or collide with another segment.
 
 ### Encryption Properties
 
@@ -68,6 +78,21 @@ Upstream credentials implement the `UpstreamCredential` union:
 2. **`EnvCredentialProvider`:** Resolves secrets from environment variables (e.g. `CHAINMCP_AUTH_<SCHEME>`).
 3. **`SecretStoreCredentialProvider`:** Reads credentials securely from an `EncryptedSecretStore`.
 4. **`CompositeCredentialProvider`:** Evaluates an ordered list of providers, returning the first matching credential.
+
+All providers return `UpstreamCredential` values, and every value is validated with `normalizeUpstreamCredential` before use: a credential with an unknown `type`, a missing secret, an invalid `location`, or a malformed optional field is treated as unresolved and fails closed as `AUTH_REQUIRED` rather than reaching request construction. This matters because providers are deployment code; the type system cannot vouch for what a third-party provider returns.
+
+### Tenant scoping
+
+`SecretStoreCredentialProvider` looks up `buildCredentialStoreKey({ tenantId, schemeName })` only. A tenant without its own secret does **not** fall back to a deployment-wide secret, so one tenant can never authenticate with another tenant's shared credential. Single-tenant deployments that intentionally keep one credential per scheme can opt in:
+
+```ts
+new SecretStoreCredentialProvider({
+  store: secretStore,
+  allowGlobalFallback: true, // then falls back to buildCredentialStoreKey({ schemeName })
+});
+```
+
+Provide `deriveStoreKey` when a deployment stores credentials under its own key layout.
 
 ```ts
 import {
@@ -95,13 +120,16 @@ const oauthProvider = new OAuthClientCredentialsProvider({
   clientSecret: process.env.OAUTH_CLIENT_SECRET!,
   scopes: ["catalog:read"],
   expirySkewSeconds: 30, // Refresh 30s before actual expiration
+  allowedTokenHosts: ["auth.example.com"], // exact host allowlist
   tokenStore: secretStore, // Persist token cache across restarts
 });
 ```
 
-- **Client Credentials Grant:** Obtains tokens directly from upstream token endpoints.
-- **Expiry Management:** Uses `expires_in` to compute `expiresAt` and refreshes tokens before they expire.
-- **Invalidation:** Tokens can be invalidated on demand via `invalidate(tenantId, schemeName)` to force rotation.
+- **Client Credentials Grant:** Obtains tokens with the client credentials grant. A client credentials token has no refresh token, so expiry means re-acquiring it.
+- **Expiry Management:** Uses `expires_in` to compute `expiresAt` and refreshes tokens before they expire. A response without `expires_in` is cached until `invalidate` is called.
+- **Token Endpoint Policy:** The token endpoint is an outbound destination like any upstream host. Inside `@chainmcp/executor`, the provider inherits the executor's resolver and pinned transport, so token requests get the same exact host allowlist, HTTPS requirement, private-address rejection, DNS pinning, peer verification, redirect refusal, and response cap as API requests. Used standalone, the built-in fetcher requires `allowedTokenHosts` (or an explicit `allowAnyTokenHost: true`), refuses redirects and URL credentials, requires HTTPS unless `allowInsecureHttp` is set, and caps the response; it cannot pin the resolved address, so the executor path is the hardened one.
+- **Token Cache Keys:** Entries are stored under `buildOAuthTokenStoreKey(...)`, partitioned by tenant, principal, scheme name, and the normalized scope set, and encoded so any identifier is a legal store key. Read and write failures on the token store bypass the cache instead of failing the call.
+- **Invalidation:** `invalidate(tenantId?, schemeName?, principalId?)` drops matching in-memory entries and deletes their persistent copies; with no arguments it clears every token this instance knows about. `SecretStore` has no scan operation, so a token written by another process that this instance never loaded cannot be enumerated; for cross-process revocation, delete `buildOAuthTokenStoreKey(...)` from the shared store or rely on token expiry.
 
 ## 6. Upstream Executor Integration
 
@@ -121,5 +149,9 @@ For every operation:
 
 - The executor evaluates the contract's `CompiledAuthenticationPolicy`.
 - It processes OR alternatives in order, satisfying all ANDed schemes within an alternative.
+- Provider output is validated against the credential shapes; invalid material counts as unresolved.
+- OAuth token requests run through the executor's outbound policy and pinned transport, not the platform fetch.
 - Upon successful resolution, headers or query parameters are attached and validated against size caps.
 - If no alternative is met and the operation is not anonymous, it rejects with `RuntimeError("AUTH_REQUIRED")`.
+
+Caller arguments can never override `authorization`, `cookie`, or any reserved header, and credential injection happens after declared parameters are mapped, so inbound identity cannot influence upstream credentials.
