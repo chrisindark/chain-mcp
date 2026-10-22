@@ -652,15 +652,20 @@ describe("InMemoryToolRuntime", () => {
     const record = vi.fn();
     const runtime = new InMemoryToolRuntime({
       rateLimiter: {
-        check: () => ({ allowed: false }),
+        check: () => ({ allowed: false, retryAfterSeconds: 30 }),
       },
       metrics: { record },
     });
     runtime.register(tool(execute));
 
-    await expect(
-      runtime.callTool("lookup_item", { id: "x" }, context),
-    ).rejects.toMatchObject({ code: "RATE_LIMITED" });
+    const rejection = await runtime
+      .callTool("lookup_item", { id: "x" }, context)
+      .catch((error) => error);
+    expect(rejection).toBeInstanceOf(RuntimeError);
+    expect(rejection).toMatchObject({
+      code: "RATE_LIMITED",
+      retryAfterSeconds: 30,
+    });
     expect(execute).not.toHaveBeenCalled();
     expect(record).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -669,6 +674,51 @@ describe("InMemoryToolRuntime", () => {
         toolName: "lookup_item",
       }),
     );
+  });
+
+  it("calls limiter release on tool success and tool failure", async () => {
+    const release = vi.fn();
+    const runtime = new InMemoryToolRuntime({
+      rateLimiter: {
+        check: () => ({ allowed: true }),
+        release,
+      },
+    });
+    runtime.register(tool(async () => "success-result"));
+    await runtime.callTool("lookup_item", { id: "x" }, context);
+    expect(release).toHaveBeenCalledWith(context, "lookup_item");
+
+    release.mockClear();
+    const failingRuntime = new InMemoryToolRuntime({
+      rateLimiter: {
+        check: () => ({ allowed: true }),
+        release,
+      },
+    });
+    failingRuntime.register(
+      tool(async () => {
+        throw new Error("failure");
+      }),
+    );
+    await expect(
+      failingRuntime.callTool("lookup_item", { id: "x" }, context),
+    ).rejects.toThrow();
+    expect(release).toHaveBeenCalledWith(context, "lookup_item");
+  });
+
+  it("does not call limiter release when rate limit is denied", async () => {
+    const release = vi.fn();
+    const runtime = new InMemoryToolRuntime({
+      rateLimiter: {
+        check: () => ({ allowed: false }),
+        release,
+      },
+    });
+    runtime.register(tool());
+    await expect(
+      runtime.callTool("lookup_item", { id: "x" }, context),
+    ).rejects.toMatchObject({ code: "RATE_LIMITED" });
+    expect(release).not.toHaveBeenCalled();
   });
 
   it("classifies limiter failures as errors rather than rate limiting", async () => {

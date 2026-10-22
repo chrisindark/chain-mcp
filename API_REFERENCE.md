@@ -230,6 +230,7 @@ export interface Authorizer {
 
 export interface RateLimitDecision {
   allowed: boolean;
+  retryAfterSeconds?: number;
 }
 
 export interface RateLimiter {
@@ -237,6 +238,7 @@ export interface RateLimiter {
     context: ToolContext,
     toolName: string,
   ): RateLimitDecision | Promise<RateLimitDecision>;
+  release?(context: ToolContext, toolName: string): void | Promise<void>;
 }
 ```
 
@@ -813,7 +815,8 @@ for (const tool of executor.createTools(result.tools)) runtime.register(tool);
 - Query parameters are appended by name. Arrays are sent as repeated keys. Scalars may be strings, finite numbers, or booleans; objects, arrays of objects, and `null` are rejected because OpenAPI serialization styles are not retained.
 - Header parameters are sent as declared. Array values are comma-joined. Control characters, invalid header names, and reserved transport/credential headers are rejected. Compiler `parameters` metadata never includes cookie parameters or the forbidden headers listed for the compiler.
 - A JSON `body` input is serialized as UTF-8 with the selected request media type. The body is required only when `requestBody.required` is true.
-- Requests set `accept: application/json`, `accept-encoding: identity`, and a package user agent. No inbound identity, token, cookie, or authorization header is forwarded.
+- Requests set `accept: application/json`, `accept-encoding: identity`, and a package user agent. No inbound identity, token, cookie, or authorization header is forwarded from tool arguments or context.
+- When `credentialProvider` is configured, it resolves upstream credentials for operations declaring `CompiledAuthenticationPolicy`. Valid credentials (`apiKey`, `http` bearer/basic, `oauth2`) are injected into headers, query parameters, or cookies. If authentication fails and anonymous access is not allowed, the call rejects with `RuntimeError("AUTH_REQUIRED")`.
 - URL length is capped at 8 KiB and request headers at 16 KiB. The request body defaults to a 1 MiB cap.
 
 #### Response and redirect behavior
@@ -899,17 +902,84 @@ credentials, TLS, retries, eviction policy, or cluster topology. See
 
 ## `@chainmcp/auth`
 
-The auth package holds identity and authorization abstractions. Milestone 5's
-credential providers are not implemented; the implemented surface is the ADR
-0008 default authorizer:
+The auth package holds identity, authorization, secret storage, and credential abstractions:
 
 ```ts
 export class OperationScopeAuthorizer implements Authorizer {
   authorize(tool: ToolDefinition, context: ToolContext): void;
 }
+
+export interface SecretStore {
+  get(key: string): Promise<string | undefined>;
+  set(key: string, value: string): Promise<void>;
+  delete(key: string): Promise<void>;
+}
+
+export class InMemorySecretStore implements SecretStore {
+  get(key: string): Promise<string | undefined>;
+  set(key: string, value: string): Promise<void>;
+  delete(key: string): Promise<void>;
+  clear(): void;
+}
+
+export interface EncryptedSecretStoreOptions {
+  store: SecretStore;
+  activeKeyId: string;
+  keys: KeyRing;
+}
+
+export class EncryptedSecretStore implements SecretStore {
+  constructor(options: EncryptedSecretStoreOptions);
+  get(key: string): Promise<string | undefined>;
+  set(key: string, value: string): Promise<void>;
+  delete(key: string): Promise<void>;
+  rotate(key: string, targetKeyId?: string): Promise<boolean>;
+}
+
+export interface UpstreamCredentialProvider {
+  resolveCredential(
+    context: CredentialResolutionContext,
+  ): Promise<UpstreamCredential | undefined>;
+}
+
+export class StaticCredentialProvider implements UpstreamCredentialProvider {
+  constructor(options: StaticCredentialProviderOptions);
+  resolveCredential(
+    context: CredentialResolutionContext,
+  ): Promise<UpstreamCredential | undefined>;
+}
+
+export class EnvCredentialProvider implements UpstreamCredentialProvider {
+  constructor(options?: EnvCredentialProviderOptions);
+  resolveCredential(
+    context: CredentialResolutionContext,
+  ): Promise<UpstreamCredential | undefined>;
+}
+
+export class SecretStoreCredentialProvider implements UpstreamCredentialProvider {
+  constructor(options: SecretStoreCredentialProviderOptions);
+  resolveCredential(
+    context: CredentialResolutionContext,
+  ): Promise<UpstreamCredential | undefined>;
+}
+
+export class CompositeCredentialProvider implements UpstreamCredentialProvider {
+  constructor(providers: readonly UpstreamCredentialProvider[]);
+  resolveCredential(
+    context: CredentialResolutionContext,
+  ): Promise<UpstreamCredential | undefined>;
+}
+
+export class OAuthClientCredentialsProvider implements UpstreamCredentialProvider {
+  constructor(config: OAuthClientCredentialsConfig);
+  resolveCredential(
+    context: CredentialResolutionContext,
+  ): Promise<UpstreamCredential | undefined>;
+  invalidate(tenantId?: string, schemeName?: string): Promise<void>;
+}
 ```
 
-`authorize` enforces `tool.operation.requiredScopes` as a subset of
+`OperationScopeAuthorizer` enforces `tool.operation.requiredScopes` as a subset of
 `context.principal.scopes`:
 
 - Matching is plain set membership: exact, case-sensitive scope tokens, with
@@ -928,9 +998,44 @@ export class OperationScopeAuthorizer implements Authorizer {
   Any `requiredScopes` entry that is not a string, or a principal with no
   scope list, denies the call rather than failing open.
 
-`createMcpServer` and the compiled tool metadata do not select an authorizer;
-deployments pass `new OperationScopeAuthorizer()` (or their own authorizer)
-into `RuntimeOptions.authorizer`.
+`EncryptedSecretStore` protects secrets at rest using authenticated AES-256-GCM encryption with 96-bit random IVs, 128-bit authentication tags, and key-name AAD binding. Missing keys, tampered ciphertext, or swapped records fail closed.
+
+`OAuthClientCredentialsProvider` handles upstream OAuth 2.0 client credentials grants, automatic token caching, expiry detection with safety margin, and automatic refresh.
+
+## `@chainmcp/rate-limit`
+
+The rate-limit package provides quota and concurrency control for single-process and distributed deployments:
+
+```ts
+export interface QuotaPolicy {
+  maxRequests: number;
+  windowMs: number;
+}
+
+export interface ConcurrencyPolicy {
+  maxConcurrent: number;
+  ttlSeconds?: number;
+}
+
+export class InMemoryRateLimiter implements RateLimiter {
+  constructor(options?: InMemoryRateLimiterOptions);
+  check(context: ToolContext, toolName: string): Promise<RateLimitDecision>;
+  release(context: ToolContext, toolName: string): Promise<void>;
+  reset(): void;
+}
+
+export interface RedisRateLimitClient {
+  eval(script: string, keys: string[], args: string[]): Promise<unknown>;
+}
+
+export class DistributedRateLimiter implements RateLimiter {
+  constructor(options: DistributedRateLimiterOptions);
+  check(context: ToolContext, toolName: string): Promise<RateLimitDecision>;
+  release(context: ToolContext, toolName: string): Promise<void>;
+}
+```
+
+Quotas and concurrency can be partitioned globally, by tenant, by principal, or by tool. Denied calls produce `{ allowed: false, retryAfterSeconds }`. In distributed deployments, atomic Redis Lua scripts ensure quota and concurrency limits are enforced across server processes without race conditions. Concurrency slots are acquired before tool execution and released in a `finally` block upon completion.
 
 ## Error codes
 

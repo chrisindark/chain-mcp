@@ -100,9 +100,18 @@ importers:
 
   packages/executor:
     dependencies:
+      "@chainmcp/auth":
+        specifier: workspace:*
+        version: link:../auth
       "@chainmcp/compiler":
         specifier: workspace:*
         version: link:../compiler
+      "@chainmcp/core":
+        specifier: workspace:*
+        version: link:../core
+
+  packages/rate-limit:
+    dependencies:
       "@chainmcp/core":
         specifier: workspace:*
         version: link:../core

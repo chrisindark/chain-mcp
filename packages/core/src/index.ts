@@ -179,6 +179,11 @@ export interface RateLimitDecision {
    * limiter failures; only an explicit denial produces a `rate_limited` event.
    */
   allowed: boolean;
+  /**
+   * Optional integer number of seconds the caller should wait before retrying.
+   * Attached to `RuntimeError.retryAfterSeconds` when `allowed: false`.
+   */
+  retryAfterSeconds?: number;
 }
 
 export interface RateLimiter {
@@ -186,6 +191,11 @@ export interface RateLimiter {
     context: ToolContext,
     toolName: string,
   ): RateLimitDecision | Promise<RateLimitDecision>;
+  /**
+   * Optional release hook called when tool execution finishes (on success,
+   * failure, timeout, or cancellation), allowing concurrency permits to be released.
+   */
+  release?(context: ToolContext, toolName: string): void | Promise<void>;
 }
 
 export interface MetricsSink {
@@ -269,13 +279,22 @@ export type RuntimeErrorCode =
   | "UPSTREAM_FAILURE";
 
 export class RuntimeError extends Error {
+  public readonly retryAfterSeconds?: number;
+
   constructor(
     public readonly code: RuntimeErrorCode,
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { retryAfterSeconds?: number },
   ) {
     super(message, options);
     this.name = "RuntimeError";
+    if (
+      typeof options?.retryAfterSeconds === "number" &&
+      Number.isFinite(options.retryAfterSeconds) &&
+      options.retryAfterSeconds >= 0
+    ) {
+      this.retryAfterSeconds = Math.ceil(options.retryAfterSeconds);
+    }
   }
 }
 
@@ -556,6 +575,7 @@ export class InMemoryToolRuntime implements ToolRuntime {
     let context: ToolContext | undefined;
     let stage: InvocationStage = "context";
     let rateLimitDenied = false;
+    let rateLimitAcquired = false;
     // Unknown and cross-tenant tools are the same observable miss in
     // multi-tenant mode and emit no metrics event, so metrics timing cannot
     // be used to enumerate another tenant's tools.
@@ -600,8 +620,17 @@ export class InMemoryToolRuntime implements ToolRuntime {
         }
         if (!decision.allowed) {
           rateLimitDenied = true;
-          throw new RuntimeError("RATE_LIMITED", "Rate limit exceeded");
+          const retryAfterSeconds =
+            typeof decision.retryAfterSeconds === "number" &&
+            Number.isFinite(decision.retryAfterSeconds) &&
+            decision.retryAfterSeconds >= 0
+              ? Math.ceil(decision.retryAfterSeconds)
+              : undefined;
+          throw new RuntimeError("RATE_LIMITED", "Rate limit exceeded", {
+            ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+          });
         }
+        rateLimitAcquired = true;
       }
       stage = "cache";
       const cache = this.options.cache;
@@ -675,6 +704,13 @@ export class InMemoryToolRuntime implements ToolRuntime {
       errorCode = failure.error.code;
       throw failure.error;
     } finally {
+      if (rateLimitAcquired && context && this.options.rateLimiter?.release) {
+        try {
+          await this.options.rateLimiter.release(context, name);
+        } catch {
+          // Release failures must not alter tool results.
+        }
+      }
       if (this.options.metrics && !unresolved) {
         const event: RuntimeEvent = {
           name: "tool_invocation",

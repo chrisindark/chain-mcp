@@ -136,15 +136,31 @@ Redis adapter is published as `@chainmcp/cache-redis`.
 
 ## Milestone 5 — Authentication and rate limiting
 
-- [ ] Separate inbound MCP authorization from upstream credentials.
-- [ ] Add pluggable upstream credential providers.
-- [ ] Add encrypted secret storage abstraction.
-- [ ] Support required OAuth flows.
-- [ ] Handle refresh, expiry, rotation, and revocation.
-- [ ] Implement tenant, principal, and tool quotas.
-- [ ] Implement concurrency limits and retry-after behavior.
+- [x] Separate inbound MCP authorization from upstream credentials.
+- [x] Add pluggable upstream credential providers.
+- [x] Add encrypted secret storage abstraction.
+- [x] Support required OAuth flows.
+- [x] Handle refresh, expiry, rotation, and revocation.
+- [x] Implement tenant, principal, and tool quotas.
+- [x] Implement concurrency limits and retry-after behavior.
 
 **Exit criteria:** unauthorized requests fail closed, secrets remain protected, and quota enforcement works across processes when using a distributed adapter.
+
+**Status (2026-10-22):** all Milestone 5 items are implemented and covered by
+tests. Inbound identity and authorization (`ToolContext.principal`, `OperationScopeAuthorizer`)
+remain separated from upstream credentials; caller arguments cannot inject or override
+authorization headers. Upstream credentials (`apiKey`, `http` basic/bearer, `oauth2`) are
+resolved per scheme and tenant by pluggable `UpstreamCredentialProvider` adapters
+(`StaticCredentialProvider`, `EnvCredentialProvider`, `SecretStoreCredentialProvider`,
+`CompositeCredentialProvider`, and `OAuthClientCredentialsProvider`). Secrets at rest are
+protected by `EncryptedSecretStore` using authenticated AES-256-GCM encryption, 96-bit random
+IVs, 128-bit authentication tags, key-name AAD binding, and key rotation support.
+OAuth 2.0 client credentials grant flow (RFC 6749) handles token acquisition, expiration
+detection with safety margin, automatic refresh, and manual invalidation.
+The `@chainmcp/rate-limit` package provides `InMemoryRateLimiter` and `DistributedRateLimiter`
+(backed by Redis with atomic Lua scripts for rolling-window quota check and concurrency permit
+management), enforcing quotas and concurrency limits partitioned by tenant, principal, tool,
+or globally with deterministic `retryAfterSeconds` calculation across server processes.
 
 ## Milestone 6 — JSON navigation, logging, and analytics
 

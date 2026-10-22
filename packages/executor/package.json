@@ -28,6 +28,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@chainmcp/auth": "workspace:*",
     "@chainmcp/compiler": "workspace:*",
     "@chainmcp/core": "workspace:*"
   }

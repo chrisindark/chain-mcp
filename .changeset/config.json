@@ -14,6 +14,7 @@
       "@chainmcp/core",
       "@chainmcp/config",
       "@chainmcp/executor",
+      "@chainmcp/rate-limit",
       "@chainmcp/server"
     ]
   ],

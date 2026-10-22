@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-The target architecture consists of tool sources, a shared runtime, MCP adapters, optional infrastructure adapters, and two deployment modes. The current implementation contains `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, and `@chainmcp/server`; remaining components shown below are planned. OpenAPI compilation is one tool source; tools may also be registered from application code through the authoring facade described in section 4.1.
+The target architecture consists of tool sources, a shared runtime, MCP adapters, optional infrastructure adapters, and two deployment modes. The current implementation contains `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, and `@chainmcp/server`; remaining components shown below are planned. OpenAPI compilation is one tool source; tools may also be registered from application code through the authoring facade described in section 4.1.
 
 ```text
              API contract                 Code-defined tools
@@ -41,7 +41,7 @@ The target architecture consists of tool sources, a shared runtime, MCP adapters
 
 ## 3. Monorepo package boundaries
 
-Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, and `@chainmcp/server`. Remaining rows describe planned boundaries; no empty packages are created for them.
+Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, and `@chainmcp/server`. Remaining rows describe planned boundaries; no empty packages are created for them.
 
 | Package                     | Responsibility                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------ |
@@ -198,10 +198,11 @@ lint rule enforces that invariant for runtime source.
 7. Binds `context.signal` and a total time budget to DNS waiting and HTTP I/O,
    releasing listeners and timers in `finally`.
 
-The executor does not resolve upstream credentials, validate response schemas,
-retry requests, or honor proxy environment variables. A custom transport is
-trusted adapter code; the default Node transport is the component that pins DNS
-and verifies the peer.
+The executor resolves upstream credentials via a configured `credentialProvider`,
+injecting API keys, Basic/Bearer auth, or OAuth 2.0 tokens into outgoing requests.
+It does not validate response schemas, retry requests, or honor proxy
+environment variables. A custom transport is trusted adapter code; the default
+Node transport is the component that pins DNS and verifies the peer.
 
 ### End-to-end example
 
@@ -281,6 +282,7 @@ export interface Authorizer {
 
 export interface RateLimitDecision {
   allowed: boolean;
+  retryAfterSeconds?: number;
 }
 
 export interface RateLimiter {
@@ -288,6 +290,7 @@ export interface RateLimiter {
     context: ToolContext,
     toolName: string,
   ): RateLimitDecision | Promise<RateLimitDecision>;
+  release?(context: ToolContext, toolName: string): void | Promise<void>;
 }
 
 export interface MetricsSink {

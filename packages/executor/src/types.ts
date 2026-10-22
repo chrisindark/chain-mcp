@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "@chainmcp/core";
 import type { CompiledOperation } from "@chainmcp/compiler";
+import type { UpstreamCredentialProvider } from "@chainmcp/auth";
 
 /** A resolved upstream address pinned for one request. */
 export interface ResolvedDestination {
@@ -85,6 +86,8 @@ export interface UpstreamExecutorOptions {
   resolveHost?: HostResolver;
   /** Defaults to the pinned Node HTTP transport. */
   transport?: UpstreamTransport;
+  /** Optional upstream credential provider to satisfy authentication schemes. */
+  credentialProvider?: UpstreamCredentialProvider;
 }
 
 export interface UpstreamExecutor {
