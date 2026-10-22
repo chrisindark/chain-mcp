@@ -1,3 +1,4 @@
+import { buildCredentialStoreKey } from "./keys.js";
 import type { SecretStore } from "./secret-store.js";
 
 export type UpstreamCredential =
@@ -37,6 +38,45 @@ export interface CredentialResolutionContext {
   httpScheme?: string;
   requiredScopes?: readonly string[];
   signal?: AbortSignal;
+  /**
+   * Egress fetcher for OAuth token endpoints, supplied by the caller that owns
+   * the outbound request policy (`@chainmcp/executor`). When present, OAuth
+   * providers use it instead of the built-in platform fetch, so token requests
+   * inherit allowlisting, address classification, pinning, and caps.
+   */
+  tokenEndpointFetch?: TokenEndpointFetcher;
+}
+
+/** Signature of an injectable OAuth token endpoint fetcher. */
+export type TokenEndpointFetcher = (
+  url: string,
+  body: URLSearchParams,
+  headers: Readonly<Record<string, string>>,
+  options?: TokenEndpointFetchOptions,
+) => Promise<TokenEndpointResponse>;
+
+export interface TokenEndpointFetchOptions {
+  signal?: AbortSignal;
+  /** Exact hostnames permitted for the token endpoint. */
+  allowedHosts?: readonly string[];
+  /**
+   * Explicit opt-out from host allowlisting for the built-in fetcher. Do not
+   * enable this in deployments that reach untrusted networks.
+   */
+  allowAnyTokenHost?: boolean;
+  /** Permit plain-HTTP token endpoints. Disabled by default. */
+  allowInsecureHttp?: boolean;
+  /** Maximum accepted token response size in bytes. */
+  maxResponseBytes?: number;
+}
+
+/** Minimal response shape an injected token fetcher must return. */
+export interface TokenEndpointResponse {
+  access_token: string;
+  token_type?: string;
+  expires_in?: number;
+  scope?: string;
+  refresh_token?: string;
 }
 
 export interface UpstreamCredentialProvider {
@@ -140,8 +180,15 @@ export class EnvCredentialProvider implements UpstreamCredentialProvider {
 export interface SecretStoreCredentialProviderOptions {
   store: SecretStore;
   /**
-   * Custom key derivation function. Default derives:
-   * `tenant:<tenantId>:scheme:<schemeName>`, falling back to `scheme:<schemeName>`.
+   * Opt in to the deployment-wide fallback key when no tenant-scoped secret
+   * exists. Disabled by default so a missing per-tenant secret fails closed
+   * instead of silently authenticating with a shared credential.
+   */
+  allowGlobalFallback?: boolean;
+  /**
+   * Custom key derivation function. The default derives the tenant-scoped key
+   * `buildCredentialStoreKey({ tenantId, schemeName })`, and falls back to
+   * `buildCredentialStoreKey({ schemeName })` when `allowGlobalFallback` is on.
    */
   deriveStoreKey?: (
     context: CredentialResolutionContext,
@@ -163,10 +210,19 @@ export class SecretStoreCredentialProvider implements UpstreamCredentialProvider
     this.store = options.store;
     this.deriveStoreKey =
       options.deriveStoreKey ??
-      ((ctx) => [
-        `tenant:${ctx.tenantId}:scheme:${ctx.schemeName}`,
-        `scheme:${ctx.schemeName}`,
-      ]);
+      (options.allowGlobalFallback === true
+        ? (ctx) => [
+            buildCredentialStoreKey({
+              tenantId: ctx.tenantId,
+              schemeName: ctx.schemeName,
+            }),
+            buildCredentialStoreKey({ schemeName: ctx.schemeName }),
+          ]
+        : (ctx) =>
+            buildCredentialStoreKey({
+              tenantId: ctx.tenantId,
+              schemeName: ctx.schemeName,
+            }));
   }
 
   async resolveCredential(
@@ -212,128 +268,244 @@ export class CompositeCredentialProvider implements UpstreamCredentialProvider {
   }
 }
 
-function normalizeCredentialValue(
-  value: StaticCredentialValue,
-  context: CredentialResolutionContext,
+const CREDENTIAL_LOCATIONS = new Set<string>(["header", "query", "cookie"]);
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+/**
+ * Validates credential material and returns a usable credential, or
+ * `undefined` when the value is not a valid credential.
+ *
+ * Credential values are an untrusted boundary: they come from environment
+ * variables, secret stores, and third-party provider implementations, so the
+ * runtime checks the shape before the value reaches request construction.
+ * Invalid material is treated as unresolved, which fails closed. Messages
+ * never echo a credential value.
+ */
+export function normalizeUpstreamCredential(
+  value: unknown,
 ): UpstreamCredential | undefined {
-  if (typeof value === "object" && "type" in value) {
-    return value;
-  }
+  if (typeof value !== "object" || value === null) return undefined;
+  const candidate = value as Record<string, unknown>;
 
-  if (typeof value === "object" && "username" in value && "password" in value) {
-    return {
-      type: "http",
-      scheme: "basic",
-      username: value.username,
-      password: value.password,
-    };
-  }
-
-  if (typeof value === "string") {
-    // Try parsing as JSON credential object first
-    if (value.startsWith("{") && value.endsWith("}")) {
-      try {
-        const parsed = JSON.parse(value) as Record<string, unknown>;
-        if (typeof parsed === "object" && parsed !== null) {
-          if (parsed.type === "apiKey" && typeof parsed.value === "string") {
-            return {
-              type: "apiKey",
-              name:
-                (parsed.name as string) ??
-                context.parameterName ??
-                context.schemeName,
-              location:
-                (parsed.location as "header" | "query" | "cookie") ??
-                context.parameterLocation ??
-                "header",
-              value: parsed.value,
-            };
-          }
-          if (
-            parsed.type === "http" &&
-            parsed.scheme === "basic" &&
-            typeof parsed.username === "string" &&
-            typeof parsed.password === "string"
-          ) {
-            return {
-              type: "http",
-              scheme: "basic",
-              username: parsed.username,
-              password: parsed.password,
-            };
-          }
-          if (
-            (parsed.type === "http" && parsed.scheme === "bearer") ||
-            typeof parsed.token === "string"
-          ) {
-            const token = (parsed.token as string) ?? (parsed.value as string);
-            if (typeof token === "string") {
-              if (context.schemeType === "oauth2") {
-                return {
-                  type: "oauth2",
-                  token,
-                  tokenType: (parsed.tokenType as string) ?? "Bearer",
-                  ...(typeof parsed.expiresAt === "number"
-                    ? { expiresAt: parsed.expiresAt }
-                    : {}),
-                  ...(Array.isArray(parsed.scopes)
-                    ? { scopes: parsed.scopes as string[] }
-                    : {}),
-                };
-              }
-              return {
-                type: "http",
-                scheme: "bearer",
-                token,
-              };
-            }
-          }
-        }
-      } catch {
-        // Fall back to plain string interpretation below
+  switch (candidate.type) {
+    case "apiKey": {
+      if (!isNonEmptyString(candidate.name)) return undefined;
+      if (
+        typeof candidate.location !== "string" ||
+        !CREDENTIAL_LOCATIONS.has(candidate.location)
+      ) {
+        return undefined;
       }
-    }
-
-    // Direct string secret
-    if (context.schemeType === "apiKey") {
+      if (!isNonEmptyString(candidate.value)) return undefined;
       return {
         type: "apiKey",
-        name: context.parameterName ?? context.schemeName,
-        location: context.parameterLocation ?? "header",
-        value,
+        name: candidate.name,
+        location: candidate.location as "header" | "query" | "cookie",
+        value: candidate.value,
       };
     }
-
-    if (context.schemeType === "http") {
-      const httpScheme = context.httpScheme?.toLowerCase();
-      if (httpScheme === "basic") {
-        const colonIndex = value.indexOf(":");
-        if (colonIndex > 0) {
-          return {
-            type: "http",
-            scheme: "basic",
-            username: value.slice(0, colonIndex),
-            password: value.slice(colonIndex + 1),
-          };
+    case "http": {
+      if (candidate.scheme === "bearer") {
+        if (!isNonEmptyString(candidate.token)) return undefined;
+        return { type: "http", scheme: "bearer", token: candidate.token };
+      }
+      if (candidate.scheme === "basic") {
+        if (
+          typeof candidate.username !== "string" ||
+          typeof candidate.password !== "string"
+        ) {
+          return undefined;
         }
+        if (
+          candidate.username.length === 0 &&
+          candidate.password.length === 0
+        ) {
+          return undefined;
+        }
+        return {
+          type: "http",
+          scheme: "basic",
+          username: candidate.username,
+          password: candidate.password,
+        };
+      }
+      return undefined;
+    }
+    case "oauth2": {
+      if (!isNonEmptyString(candidate.token)) return undefined;
+      // Optional fields are either valid or absent. Silently dropping a
+      // malformed value would let invalid credential material pass as valid.
+      if (
+        candidate.tokenType !== undefined &&
+        !isNonEmptyString(candidate.tokenType)
+      ) {
+        return undefined;
+      }
+      if (
+        candidate.expiresAt !== undefined &&
+        !(
+          typeof candidate.expiresAt === "number" &&
+          Number.isFinite(candidate.expiresAt)
+        )
+      ) {
+        return undefined;
+      }
+      if (
+        candidate.scopes !== undefined &&
+        !(
+          Array.isArray(candidate.scopes) &&
+          candidate.scopes.every((scope) => typeof scope === "string")
+        )
+      ) {
+        return undefined;
       }
       return {
-        type: "http",
-        scheme: "bearer",
-        token: value,
-      };
-    }
-
-    if (
-      context.schemeType === "oauth2" ||
-      context.schemeType === "openIdConnect"
-    ) {
-      return {
         type: "oauth2",
-        token: value,
-        tokenType: "Bearer",
+        token: candidate.token,
+        ...(candidate.tokenType !== undefined
+          ? { tokenType: candidate.tokenType as string }
+          : {}),
+        ...(candidate.expiresAt !== undefined
+          ? { expiresAt: candidate.expiresAt as number }
+          : {}),
+        ...(candidate.scopes !== undefined
+          ? { scopes: candidate.scopes as readonly string[] }
+          : {}),
       };
     }
+    default:
+      return undefined;
+  }
+}
+
+/** Parses a JSON credential object, returning undefined for any other text. */
+function parseJsonCredentialObject(
+  value: string,
+): Record<string, unknown> | undefined {
+  if (!value.startsWith("{") || !value.endsWith("}")) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return undefined;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Interprets a bare secret string using the scheme declared by the contract.
+ * A declared `basic` scheme without a `user:password` separator is malformed
+ * and resolves to no credential rather than being sent as a bearer token.
+ */
+function credentialFromSecret(
+  secret: string,
+  context: CredentialResolutionContext,
+  extra: {
+    tokenType?: string;
+    scopes?: readonly string[];
+    expiresAt?: number;
+  } = {},
+): UpstreamCredential | undefined {
+  if (context.schemeType === "apiKey") {
+    return normalizeUpstreamCredential({
+      type: "apiKey",
+      name: context.parameterName ?? context.schemeName,
+      location: context.parameterLocation ?? "header",
+      value: secret,
+    });
+  }
+
+  if (context.schemeType === "http") {
+    if (context.httpScheme?.toLowerCase() === "basic") {
+      const colonIndex = secret.indexOf(":");
+      if (colonIndex <= 0) return undefined;
+      return normalizeUpstreamCredential({
+        type: "http",
+        scheme: "basic",
+        username: secret.slice(0, colonIndex),
+        password: secret.slice(colonIndex + 1),
+      });
+    }
+    return normalizeUpstreamCredential({
+      type: "http",
+      scheme: "bearer",
+      token: secret,
+    });
+  }
+
+  if (
+    context.schemeType === "oauth2" ||
+    context.schemeType === "openIdConnect"
+  ) {
+    return normalizeUpstreamCredential({
+      type: "oauth2",
+      token: secret,
+      ...extra,
+    });
+  }
+
+  return undefined;
+}
+
+function normalizeCredentialValue(
+  value: unknown,
+  context: CredentialResolutionContext,
+): UpstreamCredential | undefined {
+  if (typeof value === "string") {
+    const parsed = parseJsonCredentialObject(value);
+    if (parsed !== undefined) {
+      // A fully specified credential object is validated as-is.
+      const direct = normalizeUpstreamCredential(parsed);
+      if (direct !== undefined) return direct;
+      // Otherwise a JSON envelope may carry a bare token for the declared
+      // scheme, for example `{"token": "..."}` from an external secret.
+      const token = isNonEmptyString(parsed.token)
+        ? parsed.token
+        : isNonEmptyString(parsed.value)
+          ? parsed.value
+          : undefined;
+      if (token === undefined) return undefined;
+      return credentialFromSecret(token, context, {
+        ...(isNonEmptyString(parsed.tokenType)
+          ? { tokenType: parsed.tokenType }
+          : {}),
+        ...(typeof parsed.expiresAt === "number" &&
+        Number.isFinite(parsed.expiresAt)
+          ? { expiresAt: parsed.expiresAt }
+          : {}),
+        ...(Array.isArray(parsed.scopes) &&
+        parsed.scopes.every((scope) => typeof scope === "string")
+          ? { scopes: parsed.scopes as string[] }
+          : {}),
+      });
+    }
+    return credentialFromSecret(value, context);
+  }
+
+  if (typeof value === "object" && value !== null) {
+    const candidate = value as Record<string, unknown>;
+    if (
+      !("type" in candidate) &&
+      "username" in candidate &&
+      "password" in candidate
+    ) {
+      return normalizeUpstreamCredential({
+        type: "http",
+        scheme: "basic",
+        username: candidate.username,
+        password: candidate.password,
+      });
+    }
+    return normalizeUpstreamCredential(value);
   }
 
   return undefined;

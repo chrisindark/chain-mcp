@@ -223,7 +223,10 @@ import {
   SecretStoreCredentialProvider,
   CompositeCredentialProvider,
   OAuthClientCredentialsProvider,
+  buildCredentialStoreKey,
+  buildOAuthTokenStoreKey,
   defaultTokenFetcher,
+  normalizeUpstreamCredential,
   MAX_TOKEN_RESPONSE_BYTES,
 } from "../src/index.js";
 
@@ -498,10 +501,10 @@ describe("UpstreamCredentialProviders", () => {
     });
   });
 
-  it("resolves credentials from an encrypted SecretStore", async () => {
+  it("resolves credentials from an encrypted SecretStore by tenant", async () => {
     const secretStore = new InMemorySecretStore();
     await secretStore.set(
-      "tenant:tenant-1:scheme:api_key",
+      buildCredentialStoreKey({ tenantId: "tenant-1", schemeName: "api_key" }),
       JSON.stringify({
         type: "apiKey",
         name: "X-Key",
@@ -509,7 +512,10 @@ describe("UpstreamCredentialProviders", () => {
         value: "tenant1-secret",
       }),
     );
-    await secretStore.set("scheme:global_bearer", "global-token-xyz");
+    await secretStore.set(
+      buildCredentialStoreKey({ schemeName: "global_bearer" }),
+      "global-token-xyz",
+    );
 
     const provider = new SecretStoreCredentialProvider({ store: secretStore });
 
@@ -526,7 +532,37 @@ describe("UpstreamCredentialProviders", () => {
       value: "tenant1-secret",
     });
 
-    // Fallback to global scheme key
+    // The deployment-wide key must not satisfy another tenant by default.
+    const otherTenant = await provider.resolveCredential({
+      tenantId: "tenant-2",
+      toolName: "lookup",
+      schemeName: "api_key",
+      schemeType: "apiKey",
+    });
+    expect(otherTenant).toBeUndefined();
+
+    const globalWithoutOptIn = await provider.resolveCredential({
+      tenantId: "tenant-2",
+      toolName: "lookup",
+      schemeName: "global_bearer",
+      schemeType: "http",
+      httpScheme: "bearer",
+    });
+    expect(globalWithoutOptIn).toBeUndefined();
+  });
+
+  it("uses the shared credential only when allowGlobalFallback is enabled", async () => {
+    const secretStore = new InMemorySecretStore();
+    await secretStore.set(
+      buildCredentialStoreKey({ schemeName: "global_bearer" }),
+      "global-token-xyz",
+    );
+
+    const provider = new SecretStoreCredentialProvider({
+      store: secretStore,
+      allowGlobalFallback: true,
+    });
+
     const globalBearer = await provider.resolveCredential({
       tenantId: "tenant-2",
       toolName: "lookup",
@@ -538,6 +574,112 @@ describe("UpstreamCredentialProviders", () => {
       type: "http",
       scheme: "bearer",
       token: "global-token-xyz",
+    });
+  });
+
+  it("derives store keys that satisfy the secret-store key grammar", async () => {
+    // Tenant and principal identifiers from real identity systems often
+    // contain characters the secret store rejects, such as '@' or spaces.
+    const secretStore = new EncryptedSecretStore({
+      store: new InMemorySecretStore(),
+      activeKeyId: "k1",
+      keys: { k1: crypto.randomBytes(32) },
+    });
+    const key = buildCredentialStoreKey({
+      tenantId: "user@example.com / tenant one",
+      schemeName: "my scheme",
+    });
+    await secretStore.set(key, "secret-value");
+    await expect(secretStore.get(key)).resolves.toBe("secret-value");
+    expect(key).not.toContain("@");
+    expect(key).not.toContain(" ");
+  });
+
+  it("treats malformed credential material as unresolved instead of trusting the type", async () => {
+    // A configured value that is not a valid credential must fail closed with
+    // no credential, not reach request construction as an unvalidated object.
+    const provider = new StaticCredentialProvider({
+      credentials: {
+        missing_value: { type: "apiKey", name: "X-Key" } as never,
+        missing_token: { type: "http", scheme: "bearer" } as never,
+        null_value: null as never,
+        colonless_basic: "userpass",
+      },
+    });
+
+    const apiKey = await provider.resolveCredential({
+      tenantId: "t1",
+      toolName: "op",
+      schemeName: "missing_value",
+      schemeType: "apiKey",
+    });
+    expect(apiKey).toBeUndefined();
+
+    const bearer = await provider.resolveCredential({
+      tenantId: "t1",
+      toolName: "op",
+      schemeName: "missing_token",
+      schemeType: "http",
+    });
+    expect(bearer).toBeUndefined();
+
+    const nullValue = await provider.resolveCredential({
+      tenantId: "t1",
+      toolName: "op",
+      schemeName: "null_value",
+      schemeType: "http",
+    });
+    expect(nullValue).toBeUndefined();
+
+    // A declared basic scheme needs a `user:password` separator.
+    const basic = await provider.resolveCredential({
+      tenantId: "t1",
+      toolName: "op",
+      schemeName: "colonless_basic",
+      schemeType: "http",
+      httpScheme: "basic",
+    });
+    expect(basic).toBeUndefined();
+  });
+
+  it("validates credential shapes and rejects unknown variants", () => {
+    expect(
+      normalizeUpstreamCredential({
+        type: "apiKey",
+        name: "X-Key",
+        location: "sideways",
+        value: "secret",
+      }),
+    ).toBeUndefined();
+    expect(
+      normalizeUpstreamCredential({
+        type: "oauth2",
+        token: "token",
+        scopes: ["read", 7],
+      }),
+    ).toBeUndefined();
+    expect(normalizeUpstreamCredential(null)).toBeUndefined();
+    expect(normalizeUpstreamCredential({ type: "unknown" })).toBeUndefined();
+    expect(
+      normalizeUpstreamCredential({
+        type: "http",
+        scheme: "basic",
+        username: "",
+        password: "",
+      }),
+    ).toBeUndefined();
+    expect(
+      normalizeUpstreamCredential({
+        type: "http",
+        scheme: "basic",
+        username: "user",
+        password: "",
+      }),
+    ).toEqual({
+      type: "http",
+      scheme: "basic",
+      username: "user",
+      password: "",
     });
   });
 
@@ -801,6 +943,7 @@ describe("defaultTokenFetcher", () => {
         "https://auth.example.com/token",
         new URLSearchParams({ grant_type: "client_credentials" }),
         {},
+        { allowedHosts: ["auth.example.com"] },
       );
       expect(res.access_token).toBe("fetched-token-123");
       expect(res.token_type).toBe("Bearer");
@@ -824,6 +967,7 @@ describe("defaultTokenFetcher", () => {
           "https://auth.example.com/token",
           new URLSearchParams(),
           {},
+          { allowedHosts: ["auth.example.com"] },
         ),
       ).rejects.toThrow(/non-JSON/);
     } finally {
@@ -847,6 +991,7 @@ describe("defaultTokenFetcher", () => {
           "https://auth.example.com/token",
           new URLSearchParams(),
           {},
+          { allowedHosts: ["auth.example.com"] },
         ),
       ).rejects.toThrow(/exceeded maximum size/);
     } finally {
@@ -863,8 +1008,370 @@ describe("defaultTokenFetcher", () => {
         "https://auth.example.com/token",
         new URLSearchParams(),
         {},
-        { signal: controller.signal },
+        { signal: controller.signal, allowedHosts: ["auth.example.com"] },
       ),
     ).rejects.toThrow("caller cancelled");
+  });
+});
+
+describe("OAuth token cache persistence and revocation", () => {
+  const oauthContext = {
+    tenantId: "tenant-1",
+    toolName: "op",
+    schemeName: "oauth",
+    schemeType: "oauth2",
+  };
+
+  const encryptedStore = (): EncryptedSecretStore =>
+    new EncryptedSecretStore({
+      store: new InMemorySecretStore(),
+      activeKeyId: "k1",
+      keys: { k1: crypto.randomBytes(32) },
+    });
+
+  it("persists tokens across provider instances when a scheme has several scopes", async () => {
+    const tokenStore = encryptedStore();
+    let fetchCount = 0;
+    const fetchToken = vi.fn(async () => {
+      fetchCount += 1;
+      return {
+        access_token: `token-${fetchCount}`,
+        token_type: "Bearer",
+        expires_in: 3600,
+      };
+    });
+    const config = {
+      tokenUrl: "https://auth.example.com/token",
+      clientId: "c",
+      clientSecret: "s",
+      scopes: ["catalog:read", "catalog:write"],
+      tokenStore,
+      fetchToken,
+      now: () => 1_000_000,
+    };
+
+    const first = new OAuthClientCredentialsProvider(config);
+    await expect(first.resolveCredential(oauthContext)).resolves.toMatchObject({
+      token: "token-1",
+    });
+
+    // A restarted process shares only the persistent store.
+    const second = new OAuthClientCredentialsProvider(config);
+    await expect(second.resolveCredential(oauthContext)).resolves.toMatchObject(
+      { token: "token-1" },
+    );
+    expect(fetchToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps partitions store-safe for principals with reserved characters", async () => {
+    const tokenStore = encryptedStore();
+    let fetchCount = 0;
+    const fetchToken = vi.fn(async () => {
+      fetchCount += 1;
+      return {
+        access_token: `token-${fetchCount}`,
+        token_type: "Bearer",
+        expires_in: 3600,
+      };
+    });
+    const config = {
+      tokenUrl: "https://auth.example.com/token",
+      clientId: "c",
+      clientSecret: "s",
+      tokenStore,
+      fetchToken,
+      now: () => 1_000_000,
+    };
+
+    const context = {
+      ...oauthContext,
+      principalId: "user@example.com/work group",
+    };
+    const first = new OAuthClientCredentialsProvider(config);
+    await expect(first.resolveCredential(context)).resolves.toMatchObject({
+      token: "token-1",
+    });
+    const second = new OAuthClientCredentialsProvider(config);
+    await expect(second.resolveCredential(context)).resolves.toMatchObject({
+      token: "token-1",
+    });
+    expect(fetchToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes the persistent copy when invalidate() is called without filters", async () => {
+    const tokenStore = encryptedStore();
+    let fetchCount = 0;
+    const fetchToken = vi.fn(async () => {
+      fetchCount += 1;
+      return {
+        access_token: `token-${fetchCount}`,
+        token_type: "Bearer",
+        expires_in: 3600,
+      };
+    });
+    const config = {
+      tokenUrl: "https://auth.example.com/token",
+      clientId: "c",
+      clientSecret: "s",
+      tokenStore,
+      fetchToken,
+      now: () => 1_000_000,
+    };
+
+    const first = new OAuthClientCredentialsProvider(config);
+    await first.resolveCredential(oauthContext);
+    await first.invalidate();
+
+    // Another process must not resurrect the revoked token from the store.
+    const second = new OAuthClientCredentialsProvider(config);
+    await expect(second.resolveCredential(oauthContext)).resolves.toMatchObject(
+      { token: "token-2" },
+    );
+    expect(fetchToken).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidates only the matching tenant", async () => {
+    const tokenStore = encryptedStore();
+    let fetchCount = 0;
+    const fetchToken = vi.fn(async () => {
+      fetchCount += 1;
+      return {
+        access_token: `token-${fetchCount}`,
+        token_type: "Bearer",
+        expires_in: 3600,
+      };
+    });
+    const config = {
+      tokenUrl: "https://auth.example.com/token",
+      clientId: "c",
+      clientSecret: "s",
+      tokenStore,
+      fetchToken,
+      now: () => 1_000_000,
+    };
+
+    const provider = new OAuthClientCredentialsProvider(config);
+    await provider.resolveCredential({ ...oauthContext, tenantId: "tenant-1" });
+    await provider.resolveCredential({ ...oauthContext, tenantId: "tenant-2" });
+    expect(fetchToken).toHaveBeenCalledTimes(2);
+
+    await provider.invalidate("tenant-1", "oauth");
+
+    await expect(
+      provider.resolveCredential({ ...oauthContext, tenantId: "tenant-2" }),
+    ).resolves.toMatchObject({ token: "token-2" });
+    await expect(
+      provider.resolveCredential({ ...oauthContext, tenantId: "tenant-1" }),
+    ).resolves.toMatchObject({ token: "token-3" });
+    expect(fetchToken).toHaveBeenCalledTimes(3);
+  });
+
+  it("bypasses a failing token store instead of failing credential resolution", async () => {
+    let fetchCount = 0;
+    const fetchToken = vi.fn(async () => {
+      fetchCount += 1;
+      return {
+        access_token: `token-${fetchCount}`,
+        token_type: "Bearer",
+        expires_in: 3600,
+      };
+    });
+    const provider = new OAuthClientCredentialsProvider({
+      tokenUrl: "https://auth.example.com/token",
+      clientId: "c",
+      clientSecret: "s",
+      fetchToken,
+      now: () => 1_000_000,
+      tokenStore: {
+        get: async () => {
+          throw new Error("store offline");
+        },
+        set: async () => {
+          throw new Error("store offline");
+        },
+        delete: async () => {
+          throw new Error("store offline");
+        },
+      },
+    });
+
+    await expect(
+      provider.resolveCredential(oauthContext),
+    ).resolves.toMatchObject({ token: "token-1" });
+    await expect(
+      provider.resolveCredential(oauthContext),
+    ).resolves.toMatchObject({ token: "token-1" });
+    expect(fetchToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds the length of a derived token store key", () => {
+    const key = buildOAuthTokenStoreKey({
+      tenantId: "tenant-1",
+      principalId: "user-1",
+      schemeName: "oauth",
+      normalizedScopes: Array.from({ length: 60 }, (_, i) => `scope:${i}`).join(
+        " ",
+      ),
+    });
+    expect(key.length).toBeLessThanOrEqual(256);
+    expect(key).toMatch(/^[a-zA-Z0-9_:./-]{1,256}$/);
+  });
+});
+
+describe("OAuth token endpoint policy", () => {
+  const config = {
+    tokenUrl: "https://auth.example.com/token",
+    clientId: "c",
+    clientSecret: "s",
+  };
+  const oauthContext = {
+    tenantId: "tenant-1",
+    toolName: "op",
+    schemeName: "oauth",
+    schemeType: "oauth2",
+  };
+
+  it("requires an allowlist or an explicit opt-out", async () => {
+    await expect(
+      defaultTokenFetcher(
+        "https://auth.example.com/token",
+        new URLSearchParams(),
+        {},
+      ),
+    ).rejects.toThrow(/must be allowlisted/);
+  });
+
+  it("rejects a host outside the declared allowlist", async () => {
+    await expect(
+      defaultTokenFetcher(
+        "https://evil.example/token",
+        new URLSearchParams(),
+        {},
+        { allowedHosts: ["auth.example.com"] },
+      ),
+    ).rejects.toThrow(/not allowlisted/);
+  });
+
+  it("requires HTTPS unless plain HTTP is explicitly allowed", async () => {
+    await expect(
+      defaultTokenFetcher(
+        "http://auth.example.com/token",
+        new URLSearchParams(),
+        {},
+        {
+          allowedHosts: ["auth.example.com"],
+        },
+      ),
+    ).rejects.toThrow(/Plain HTTP/);
+
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ redirect?: string | undefined }> = [];
+    globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      calls.push({ redirect: init?.redirect });
+      return new Response(JSON.stringify({ access_token: "t" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    try {
+      await expect(
+        defaultTokenFetcher(
+          "http://auth.example.com/token",
+          new URLSearchParams(),
+          {},
+          { allowedHosts: ["auth.example.com"], allowInsecureHttp: true },
+        ),
+      ).resolves.toMatchObject({ access_token: "t" });
+      expect(calls[0]?.redirect).toBe("manual");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("refuses redirects instead of following them to another origin", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: "https://attacker.example/token" },
+        }),
+    ) as typeof fetch;
+    try {
+      await expect(
+        defaultTokenFetcher(
+          "https://auth.example.com/token",
+          new URLSearchParams(),
+          {},
+          { allowedHosts: ["auth.example.com"] },
+        ),
+      ).rejects.toThrow(/redirects are not followed/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("validates configured token hosts at construction", () => {
+    expect(
+      () =>
+        new OAuthClientCredentialsProvider({
+          ...config,
+          allowedTokenHosts: ["https://auth.example.com/token"],
+        }),
+    ).toThrow(TypeError);
+    expect(
+      () =>
+        new OAuthClientCredentialsProvider({
+          ...config,
+          allowedTokenHosts: ["*.example.com"],
+        }),
+    ).toThrow(/wildcards/);
+  });
+
+  it("forwards the allowlist and caller signal to the configured fetcher", async () => {
+    let received: { allowedHosts?: readonly string[]; signal?: AbortSignal } =
+      {};
+    const fetchToken = vi.fn(
+      async (
+        _url: string,
+        _body: URLSearchParams,
+        _headers: Readonly<Record<string, string>>,
+        options?: { allowedHosts?: readonly string[]; signal?: AbortSignal },
+      ) => {
+        received = options ?? {};
+        return { access_token: "tok", token_type: "Bearer" };
+      },
+    );
+    const controller = new AbortController();
+    const provider = new OAuthClientCredentialsProvider({
+      ...config,
+      allowedTokenHosts: ["auth.example.com"],
+      fetchToken,
+    });
+
+    await provider.resolveCredential({
+      ...oauthContext,
+      signal: controller.signal,
+    });
+    expect(received.allowedHosts).toEqual(["auth.example.com"]);
+    expect(received.signal).toBe(controller.signal);
+  });
+
+  it("prefers an executor-supplied token endpoint fetcher over the local one", async () => {
+    const localFetcher = vi.fn(async () => ({ access_token: "local" }));
+    const egressFetcher = vi.fn(async () => ({ access_token: "pinned" }));
+    const provider = new OAuthClientCredentialsProvider({
+      ...config,
+      fetchToken: localFetcher,
+    });
+
+    await expect(
+      provider.resolveCredential({
+        ...oauthContext,
+        tokenEndpointFetch: egressFetcher,
+      }),
+    ).resolves.toMatchObject({ token: "pinned" });
+    expect(localFetcher).not.toHaveBeenCalled();
+    expect(egressFetcher).toHaveBeenCalledTimes(1);
   });
 });

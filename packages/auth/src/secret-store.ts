@@ -58,6 +58,27 @@ const KEY_NAME_PATTERN = /^[a-zA-Z0-9_:./-]{1,256}$/;
 const KEY_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 const RESERVED_NAMES = new Set(["__proto__", "prototype", "constructor"]);
 
+/** Maximum length accepted by `validateKeyName`, in characters. */
+export const MAX_SECRET_KEY_LENGTH = 256;
+
+/**
+ * Encodes an arbitrary identifier (tenant ID, principal ID, scheme name,
+ * scope list) into one secret-store key segment.
+ *
+ * Store keys are restricted to `[a-zA-Z0-9_:./-]`, while tenant and principal
+ * identifiers come from deployment identity systems and may contain any
+ * character. Encoding every segment keeps derived keys valid without silently
+ * dropping characters, and base64url is injective, so two distinct inputs can
+ * never map to the same segment. Use this instead of interpolating raw
+ * identifiers into a `SecretStore` key.
+ */
+export function encodeSecretKeySegment(value: string): string {
+  if (typeof value !== "string") {
+    throw new TypeError("Secret key segments must be strings");
+  }
+  return Buffer.from(value, "utf8").toString("base64url");
+}
+
 function validateKeyName(key: string): void {
   if (
     typeof key !== "string" ||
