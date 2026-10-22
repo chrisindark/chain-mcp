@@ -109,3 +109,58 @@ describe("InMemoryRateLimiter", () => {
     expect(runtimeError.retryAfterSeconds).toBe(20);
   });
 });
+
+describe("InMemoryRateLimiter window bounds", () => {
+  it("evicts the least recently used window when the cap is reached", async () => {
+    const mockTime = 900_000;
+    const limiter = new InMemoryRateLimiter({
+      now: () => mockTime,
+      toolQuota: { maxRequests: 1, windowMs: 60_000 },
+      maxTrackedWindows: 2,
+    });
+    const ctx = context();
+
+    expect((await limiter.check(ctx, "a")).allowed).toBe(true);
+    expect((await limiter.check(ctx, "b")).allowed).toBe(true);
+    expect(limiter.trackedWindowCount).toBe(2);
+
+    // Adding a third tool evicts the oldest window and stays within the cap.
+    expect((await limiter.check(ctx, "c")).allowed).toBe(true);
+    expect(limiter.trackedWindowCount).toBe(2);
+
+    // Retained windows still enforce their quota.
+    expect((await limiter.check(ctx, "b")).allowed).toBe(false);
+    expect((await limiter.check(ctx, "c")).allowed).toBe(false);
+
+    // The evicted window was forgotten, so its identity can call once more
+    // before the rebuilt window applies. This is the documented trade-off.
+    expect((await limiter.check(ctx, "a")).allowed).toBe(true);
+    expect((await limiter.check(ctx, "a")).allowed).toBe(false);
+    expect(limiter.trackedWindowCount).toBe(2);
+  });
+
+  it("drops a window once every timestamp has expired", async () => {
+    let mockTime = 400_000;
+    const limiter = new InMemoryRateLimiter({
+      now: () => mockTime,
+      toolQuota: { maxRequests: 1, windowMs: 1_000 },
+    });
+    const ctx = context();
+
+    expect((await limiter.check(ctx, "slow_tool")).allowed).toBe(true);
+    expect(limiter.trackedWindowCount).toBe(1);
+
+    mockTime += 1_001;
+    expect((await limiter.check(ctx, "slow_tool")).allowed).toBe(true);
+    expect(limiter.trackedWindowCount).toBe(1);
+  });
+
+  it("rejects an invalid window cap", () => {
+    expect(() => new InMemoryRateLimiter({ maxTrackedWindows: 0 })).toThrow(
+      TypeError,
+    );
+    expect(() => new InMemoryRateLimiter({ maxTrackedWindows: 1.5 })).toThrow(
+      TypeError,
+    );
+  });
+});

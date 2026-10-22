@@ -1,5 +1,6 @@
 import type { ToolContext } from "@chainmcp/core";
 import { describe, expect, it } from "vitest";
+import { InMemoryRateLimiter } from "../src/index.js";
 import {
   DistributedRateLimiter,
   type RedisRateLimitClient,
@@ -12,8 +13,23 @@ class MockRedisClient implements RedisRateLimitClient {
   >();
   private readonly strings = new Map<string, number>();
 
+  /** Number of recorded quota entries for a key, for assertions. */
+  quotaEntries(key: string): number {
+    return (this.zsets.get(key) ?? []).length;
+  }
+
   async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const key = keys[0]!;
+
+    if (script.includes("chainmcp:quota_rollback")) {
+      // Quota rollback: remove only this request's entry.
+      const requestId = args[0]!;
+      const set = (this.zsets.get(key) ?? []).filter(
+        (entry) => entry.member !== requestId,
+      );
+      this.zsets.set(key, set);
+      return 1;
+    }
 
     if (script.includes("ZREMRANGEBYSCORE")) {
       // Sliding window quota script
@@ -204,5 +220,69 @@ describe("DistributedRateLimiter across multiple processes", () => {
     throwOnQuota = false;
     const retry = await limiter.check(ctx, "tool-1");
     expect(retry.allowed).toBe(true);
+  });
+});
+
+describe("DistributedRateLimiter multi-scope accounting", () => {
+  it("does not consume quota in an allowed scope when a later scope denies", async () => {
+    let mockTime = 500_000;
+    const sharedRedis = new MockRedisClient();
+    const limiter = new DistributedRateLimiter({
+      client: sharedRedis,
+      now: () => mockTime,
+      tenantQuota: { maxRequests: 2, windowMs: 60_000 },
+      toolQuota: { maxRequests: 1, windowMs: 1_000 },
+    });
+    const ctx = context("tenant-multi-scope");
+    const tenantKey = "chainmcp:ratelimit:quota:tenant:tenant-multi-scope";
+
+    // First call consumes one tenant and one tool permit.
+    expect((await limiter.check(ctx, "tool-1")).allowed).toBe(true);
+    expect(sharedRedis.quotaEntries(tenantKey)).toBe(1);
+
+    // Second call is denied by the tool quota. The tenant permit it recorded
+    // before reaching the tool scope must be rolled back.
+    const denied = await limiter.check(ctx, "tool-1");
+    expect(denied.allowed).toBe(false);
+    expect(sharedRedis.quotaEntries(tenantKey)).toBe(1);
+
+    // After the tool window passes, the tenant budget still allows one call.
+    mockTime += 1_001;
+    expect((await limiter.check(ctx, "tool-1")).allowed).toBe(true);
+    expect(sharedRedis.quotaEntries(tenantKey)).toBe(2);
+
+    // The tenant quota is now exhausted.
+    mockTime += 1_001;
+    expect((await limiter.check(ctx, "tool-1")).allowed).toBe(false);
+    expect(sharedRedis.quotaEntries(tenantKey)).toBe(2);
+  });
+
+  it("matches the in-memory limiter for multi-scope decisions", async () => {
+    let mockTime = 700_000;
+    const redis = new MockRedisClient();
+    const rules = {
+      tenantQuota: { maxRequests: 2, windowMs: 60_000 },
+      toolQuota: { maxRequests: 1, windowMs: 1_000 },
+    };
+    const distributed = new DistributedRateLimiter({
+      client: redis,
+      now: () => mockTime,
+      ...rules,
+    });
+    const inMemory = new InMemoryRateLimiter({ now: () => mockTime, ...rules });
+    const ctx = context("tenant-parity");
+
+    const decisions: boolean[] = [];
+    for (const step of [0, 0, 1_001, 1_001, 1_002]) {
+      mockTime += step;
+      const [distributedDecision, inMemoryDecision] = await Promise.all([
+        distributed.check(ctx, "tool-1"),
+        inMemory.check(ctx, "tool-1"),
+      ]);
+      expect(distributedDecision.allowed).toBe(inMemoryDecision.allowed);
+      decisions.push(distributedDecision.allowed);
+    }
+
+    expect(decisions).toEqual([true, false, true, false, false]);
   });
 });

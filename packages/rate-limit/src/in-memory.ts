@@ -22,6 +22,7 @@ interface ActiveConcurrencyCheck {
 export class InMemoryRateLimiter implements RateLimiter {
   private readonly options: InMemoryRateLimiterOptions;
   private readonly now: () => number;
+  private readonly maxTrackedWindows: number;
 
   private readonly slidingWindows = new Map<string, number[]>();
   private readonly activeConcurrency = new Map<string, number>();
@@ -29,6 +30,17 @@ export class InMemoryRateLimiter implements RateLimiter {
   constructor(options: InMemoryRateLimiterOptions = {}) {
     this.options = options;
     this.now = options.now ?? (() => Date.now());
+    const maxTrackedWindows =
+      options.maxTrackedWindows ?? DEFAULT_MAX_TRACKED_WINDOWS;
+    if (!Number.isSafeInteger(maxTrackedWindows) || maxTrackedWindows < 1) {
+      throw new TypeError("maxTrackedWindows must be a positive integer");
+    }
+    this.maxTrackedWindows = maxTrackedWindows;
+  }
+
+  /** Number of sliding windows currently retained. */
+  get trackedWindowCount(): number {
+    return this.slidingWindows.size;
   }
 
   async check(
@@ -54,9 +66,20 @@ export class InMemoryRateLimiter implements RateLimiter {
     let maxRetryAfterSeconds = 0;
     for (const check of quotaChecks) {
       const windowStart = currentTime - check.policy.windowMs;
-      const timestamps = this.slidingWindows.get(check.key) ?? [];
-      const validTimestamps = timestamps.filter((ts) => ts > windowStart);
-      this.slidingWindows.set(check.key, validTimestamps);
+      const timestamps = this.slidingWindows.get(check.key);
+      const validTimestamps =
+        timestamps === undefined
+          ? []
+          : timestamps.filter((ts) => ts > windowStart);
+      if (timestamps !== undefined) {
+        // Pruning is also the eviction point: an empty window holds no
+        // information, and a touched window becomes the most recently used.
+        if (validTimestamps.length === 0) {
+          this.slidingWindows.delete(check.key);
+        } else {
+          this.setWindow(check.key, validTimestamps);
+        }
+      }
 
       if (validTimestamps.length >= check.policy.maxRequests) {
         const oldestInWindow = validTimestamps[0] ?? currentTime;
@@ -79,7 +102,7 @@ export class InMemoryRateLimiter implements RateLimiter {
     for (const check of quotaChecks) {
       const timestamps = this.slidingWindows.get(check.key) ?? [];
       timestamps.push(currentTime);
-      this.slidingWindows.set(check.key, timestamps);
+      this.setWindow(check.key, timestamps);
     }
 
     for (const check of concurrencyChecks) {
@@ -105,6 +128,22 @@ export class InMemoryRateLimiter implements RateLimiter {
   reset(): void {
     this.slidingWindows.clear();
     this.activeConcurrency.clear();
+  }
+
+  /**
+   * Stores a window and marks it most recently used.
+   *
+   * `Map` keeps insertion order, so re-inserting after a delete moves the key to
+   * the tail. Eviction removes from the head (least recently used).
+   */
+  private setWindow(key: string, timestamps: number[]): void {
+    this.slidingWindows.delete(key);
+    this.slidingWindows.set(key, timestamps);
+    while (this.slidingWindows.size > this.maxTrackedWindows) {
+      const oldest = this.slidingWindows.keys().next();
+      if (oldest.done === true) break;
+      this.slidingWindows.delete(oldest.value);
+    }
   }
 
   private resolveQuotaChecks(
@@ -220,6 +259,8 @@ export class InMemoryRateLimiter implements RateLimiter {
     return checks;
   }
 }
+
+const DEFAULT_MAX_TRACKED_WINDOWS = 10_000;
 
 function normalizeConcurrencyPolicy(
   policy: number | ConcurrencyPolicy | undefined,
