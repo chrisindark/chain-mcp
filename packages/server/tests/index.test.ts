@@ -743,3 +743,104 @@ describe("multi-tenant per-request listing (ADR 0008)", () => {
     expect(switched.content).toEqual([{ type: "text", text: '{"item":"y"}' }]);
   });
 });
+
+describe("rate limit retry hints", () => {
+  it("renders the retry hint when a limiter attaches one", async () => {
+    const runtime = new InMemoryToolRuntime();
+    runtime.register({
+      name: "limited_tool",
+      description: "Limited",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+      operation: {},
+      execute: async () => {
+        throw new RuntimeError("RATE_LIMITED", "quota exhausted for tenant", {
+          retryAfterSeconds: 20,
+        });
+      },
+    });
+    const client = await connected(runtime);
+
+    const result = await client.callTool({
+      name: "limited_tool",
+      arguments: {},
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([
+      {
+        type: "text",
+        text: "RATE_LIMITED: Rate limit exceeded. Retry after 20 seconds",
+      },
+    ]);
+    // The internal message and limit details stay server-side.
+    expect(JSON.stringify(result)).not.toContain("quota exhausted for tenant");
+  });
+
+  it("omits the hint when no usable retry value is attached", async () => {
+    const runtime = new InMemoryToolRuntime();
+    runtime.register({
+      name: "limited_tool",
+      description: "Limited",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+      operation: {},
+      execute: async () => {
+        throw new RuntimeError("RATE_LIMITED", "quota exhausted");
+      },
+    });
+    const client = await connected(runtime);
+
+    const result = await client.callTool({
+      name: "limited_tool",
+      arguments: {},
+    });
+    expect(result.content).toEqual([
+      { type: "text", text: "RATE_LIMITED: Rate limit exceeded" },
+    ]);
+  });
+
+  it("surfaces a rate limit raised by the runtime limiter end to end", async () => {
+    const limiter = {
+      calls: 0,
+      async check() {
+        this.calls += 1;
+        return this.calls === 1
+          ? { allowed: true as const }
+          : { allowed: false as const, retryAfterSeconds: 5 };
+      },
+      async release() {},
+    };
+    const runtime = new InMemoryToolRuntime({ rateLimiter: limiter });
+    runtime.register({
+      name: "counted_tool",
+      description: "Counted",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+      operation: {},
+      execute: async () => ({ ok: true }),
+    });
+    const client = await connected(runtime);
+
+    await client.callTool({ name: "counted_tool", arguments: {} });
+    const result = await client.callTool({
+      name: "counted_tool",
+      arguments: {},
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([
+      {
+        type: "text",
+        text: "RATE_LIMITED: Rate limit exceeded. Retry after 5 seconds",
+      },
+    ]);
+  });
+});

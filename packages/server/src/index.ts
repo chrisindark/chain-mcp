@@ -299,8 +299,30 @@ const SAFE_RUNTIME_ERROR_MESSAGES: Record<RuntimeErrorCode, string> = {
   UPSTREAM_FAILURE: "Tool invocation failed",
 };
 
+/**
+ * Upper bound for a rendered retry hint. Larger values are not client
+ * actionable and would only pad the response.
+ */
+const MAX_RETRY_AFTER_HINT_SECONDS = 86_400;
+
 function safeRuntimeErrorMessage(error: RuntimeError): string {
-  return SAFE_RUNTIME_ERROR_MESSAGES[error.code];
+  const base = SAFE_RUNTIME_ERROR_MESSAGES[error.code];
+  if (error.code !== "RATE_LIMITED") return base;
+  // Retry hints are client-actionable, so surface the runtime's value when it is
+  // an integer we can render safely. Values are sanitized rather than
+  // interpolated blindly: the field is typed, but the runtime is a trust
+  // boundary between the limiter and the wire.
+  const retryAfterSeconds = error.retryAfterSeconds;
+  if (
+    typeof retryAfterSeconds !== "number" ||
+    !Number.isSafeInteger(retryAfterSeconds) ||
+    retryAfterSeconds < 1 ||
+    retryAfterSeconds > MAX_RETRY_AFTER_HINT_SECONDS
+  ) {
+    return base;
+  }
+  const unit = retryAfterSeconds === 1 ? "second" : "seconds";
+  return `${base}. Retry after ${retryAfterSeconds} ${unit}`;
 }
 
 /** Connects a server and returns an idempotent close handle. */
