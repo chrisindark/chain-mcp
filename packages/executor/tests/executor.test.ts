@@ -1,5 +1,9 @@
 import { InMemoryToolRuntime, RuntimeError } from "@chainmcp/core";
 import type { CompiledOperation } from "@chainmcp/compiler";
+import {
+  OAuthClientCredentialsProvider,
+  type UpstreamCredentialProvider,
+} from "@chainmcp/auth";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -1250,5 +1254,173 @@ describe("Upstream authentication & credential injection", () => {
     expect(sentUrl?.searchParams.getAll("api_key")).toEqual([
       "system-secret-query",
     ]);
+  });
+});
+
+describe("OAuth token acquisition through the outbound policy", () => {
+  const oauthOperation = () =>
+    operation({
+      authentication: {
+        alternatives: [
+          {
+            schemes: [{ name: "oauth", type: "oauth2", scopes: ["read"] }],
+          },
+        ],
+        allowsAnonymous: false,
+      },
+    });
+
+  const tokenProvider = (
+    overrides: Partial<
+      ConstructorParameters<typeof OAuthClientCredentialsProvider>[0]
+    > = {},
+  ) =>
+    new OAuthClientCredentialsProvider({
+      tokenUrl: "https://auth.example.com/oauth/token",
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      allowedTokenHosts: ["auth.example.com"],
+      now: () => 1_000_000,
+      ...overrides,
+    });
+
+  it("fetches the token and the API request through the same transport", async () => {
+    const transport = new FakeTransport([
+      jsonResponse({
+        access_token: "token-1",
+        token_type: "Bearer",
+        expires_in: 3600,
+      }),
+      jsonResponse({ ok: true }),
+    ]);
+
+    const tool = createUpstreamExecutor(
+      options(transport, {
+        credentialProvider: tokenProvider(),
+      }),
+    ).createTool(oauthOperation());
+
+    await expect(tool.execute({}, context)).resolves.toEqual({ ok: true });
+
+    expect(transport.requests).toHaveLength(2);
+    const tokenRequest = transport.requests[0]!;
+    expect(tokenRequest.method).toBe("POST");
+    expect(tokenRequest.hostname).toBe("auth.example.com");
+    expect(tokenRequest.address).toBe("8.8.8.8");
+    expect(Buffer.from(tokenRequest.body ?? []).toString("utf8")).toContain(
+      "grant_type=client_credentials",
+    );
+    expect(tokenRequest.headers.authorization).toMatch(/^Basic /);
+
+    const apiRequest = transport.requests[1]!;
+    expect(apiRequest.hostname).toBe("api.example.com");
+    expect(apiRequest.headers.authorization).toBe("Bearer token-1");
+  });
+
+  it("rejects a token endpoint that resolves to a non-public address", async () => {
+    const transport = new FakeTransport([]);
+    const tool = createUpstreamExecutor(
+      options(transport, {
+        resolveHost: async (hostname) =>
+          hostname === "auth.example.com" ? ["127.0.0.1"] : ["8.8.8.8"],
+        credentialProvider: tokenProvider(),
+      }),
+    ).createTool(oauthOperation());
+
+    const error = await expectRuntimeError(
+      tool.execute({}, context),
+      "AUTH_REQUIRED",
+    );
+    expect(error.cause).toMatchObject({ name: "DestinationPolicyError" });
+    expect(transport.requests).toHaveLength(0);
+  });
+
+  it("refuses token endpoint redirects", async () => {
+    const transport = new FakeTransport([
+      {
+        status: 302,
+        headers: { location: "https://attacker.example/token" },
+        body: new Uint8Array(),
+      },
+    ]);
+    const tool = createUpstreamExecutor(
+      options(transport, { credentialProvider: tokenProvider() }),
+    ).createTool(oauthOperation());
+
+    const error = await expectRuntimeError(
+      tool.execute({}, context),
+      "AUTH_REQUIRED",
+    );
+    expect(error.cause).toMatchObject({
+      message: expect.stringContaining("redirects are not followed"),
+    });
+    expect(transport.requests).toHaveLength(1);
+  });
+
+  it("rejects token responses that are not JSON", async () => {
+    const transport = new FakeTransport([
+      {
+        status: 200,
+        headers: { "content-type": "text/html" },
+        body: new TextEncoder().encode("<html>hi</html>"),
+      },
+    ]);
+    const tool = createUpstreamExecutor(
+      options(transport, { credentialProvider: tokenProvider() }),
+    ).createTool(oauthOperation());
+
+    const error = await expectRuntimeError(
+      tool.execute({}, context),
+      "AUTH_REQUIRED",
+    );
+    expect(error.cause).toMatchObject({
+      message: expect.stringContaining("non-JSON"),
+    });
+  });
+
+  it("rejects a token host outside the provider allowlist", async () => {
+    const transport = new FakeTransport([]);
+    const tool = createUpstreamExecutor(
+      options(transport, {
+        credentialProvider: tokenProvider({
+          allowedTokenHosts: ["other.example"],
+        }),
+      }),
+    ).createTool(oauthOperation());
+
+    const error = await expectRuntimeError(
+      tool.execute({}, context),
+      "AUTH_REQUIRED",
+    );
+    expect(error.cause).toMatchObject({ name: "DestinationPolicyError" });
+    expect(transport.requests).toHaveLength(0);
+  });
+
+  it("fails closed when a provider returns malformed credential material", async () => {
+    const transport = new FakeTransport([]);
+    const tool = createUpstreamExecutor(
+      options(transport, {
+        credentialProvider: {
+          // Simulates third-party provider code returning an invalid shape.
+          resolveCredential: (async () => ({
+            type: "http",
+            scheme: "bearer",
+            token: "",
+          })) as unknown as UpstreamCredentialProvider["resolveCredential"],
+        },
+      }),
+    ).createTool(
+      operation({
+        authentication: {
+          alternatives: [
+            { schemes: [{ name: "bearer", type: "http", scopes: [] }] },
+          ],
+          allowsAnonymous: false,
+        },
+      }),
+    );
+
+    await expectRuntimeError(tool.execute({}, context), "AUTH_REQUIRED");
+    expect(transport.requests).toHaveLength(0);
   });
 });

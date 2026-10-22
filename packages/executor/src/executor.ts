@@ -4,9 +4,11 @@ import {
   type ToolDefinition,
 } from "@chainmcp/core";
 import type { CompiledOperation } from "@chainmcp/compiler";
-import type {
-  UpstreamCredential,
-  UpstreamCredentialProvider,
+import {
+  normalizeUpstreamCredential,
+  type OAuthTokenFetcher,
+  type UpstreamCredential,
+  type UpstreamCredentialProvider,
 } from "@chainmcp/auth";
 
 import {
@@ -28,6 +30,8 @@ import {
   UpstreamStatusError,
 } from "./errors.js";
 import { createNodeUpstreamTransport } from "./transport.js";
+import { createTokenEndpointFetcher } from "./oauth-egress.js";
+import { createStopSignal, type StopSignal } from "./stop-signal.js";
 import type {
   HostResolver,
   UpstreamExecutor,
@@ -87,6 +91,8 @@ interface NormalizedExecutorOptions {
   resolver: HostResolver;
   transport: UpstreamTransport;
   credentialProvider?: UpstreamCredentialProvider;
+  /** Token endpoint fetcher that reuses the executor's outbound policy. */
+  tokenEndpointFetch?: OAuthTokenFetcher;
   maxResponseBytes: number;
   maxRequestBytes: number;
   maxRedirects: number;
@@ -102,20 +108,15 @@ interface BuiltRequest {
   body?: Uint8Array;
 }
 
-interface StopSignal {
-  signal: AbortSignal;
-  timedOut: () => boolean;
-  dispose: () => void;
-}
-
 /**
  * Creates an executor that turns compiled operations into runtime tools.
  * `execute` maps declared path/query/header parameters and a JSON `body` into a
- * bounded upstream request, follows only same-host redirects, and returns
- * parsed JSON.
+ * bounded upstream request, follows only same-host redirects, returns parsed
+ * JSON, and injects upstream credentials when a provider is configured.
  *
- * Authentication policies are metadata only in this slice: no credentials are
- * resolved or injected.
+ * Inbound caller identity never reaches the upstream request: credentials come
+ * from the configured provider, resolved per scheme and tenant. Nothing is
+ * resolved when no provider is configured.
  */
 export function createUpstreamExecutor(
   options: UpstreamExecutorOptions,
@@ -161,12 +162,7 @@ async function executeOperation(
   const stop = createStopSignal(context.signal, settings.timeoutMs);
   try {
     const credentials = await abortable(
-      resolveUpstreamCredentials(
-        operation,
-        context,
-        settings.credentialProvider,
-        stop.signal,
-      ),
+      resolveUpstreamCredentials(operation, context, settings, stop.signal),
       stop.signal,
     );
     let current = buildInitialRequest(
@@ -382,6 +378,9 @@ function normalizeOptions(
     );
   }
 
+  const resolver = options.resolveHost ?? systemHostResolver;
+  const transport = options.transport ?? createNodeUpstreamTransport();
+
   return {
     baseUrl,
     policy: {
@@ -391,11 +390,19 @@ function normalizeOptions(
       allowInsecureHttp,
       maxUrlLength: DEFAULT_MAX_URL_LENGTH,
     },
-    resolver: options.resolveHost ?? systemHostResolver,
-    transport: options.transport ?? createNodeUpstreamTransport(),
+    resolver,
+    transport,
     ...(options.credentialProvider === undefined
       ? {}
-      : { credentialProvider: options.credentialProvider }),
+      : {
+          credentialProvider: options.credentialProvider,
+          // Token acquisition is outbound HTTP: run it through the same
+          // policy and pinned transport as upstream requests.
+          tokenEndpointFetch: createTokenEndpointFetcher({
+            resolver,
+            transport,
+          }),
+        }),
     maxResponseBytes,
     maxRequestBytes,
     maxRedirects,
@@ -461,13 +468,15 @@ function validateOperation(operation: CompiledOperation): void {
 async function resolveUpstreamCredentials(
   operation: CompiledOperation,
   context: ToolContext,
-  provider?: UpstreamCredentialProvider,
+  settings: NormalizedExecutorOptions,
   signal?: AbortSignal,
 ): Promise<readonly UpstreamCredential[] | undefined> {
   const policy = operation.authentication;
   if (!policy || policy.alternatives.length === 0) {
     return undefined;
   }
+
+  const provider = settings.credentialProvider;
 
   for (const alternative of policy.alternatives) {
     if (alternative.schemes.length === 0) {
@@ -484,7 +493,7 @@ async function resolveUpstreamCredentials(
     for (const scheme of alternative.schemes) {
       let cred: UpstreamCredential | undefined;
       try {
-        cred = await provider.resolveCredential({
+        const resolved = await provider.resolveCredential({
           tenantId: context.tenantId,
           ...(context.principal?.id !== undefined
             ? { principalId: context.principal.id }
@@ -505,7 +514,14 @@ async function resolveUpstreamCredentials(
             ? { requiredScopes: scheme.scopes }
             : {}),
           ...(signal !== undefined ? { signal } : {}),
+          ...(settings.tokenEndpointFetch !== undefined
+            ? { tokenEndpointFetch: settings.tokenEndpointFetch }
+            : {}),
         });
+        // Providers are deployment code: whatever they return is validated
+        // here, and invalid material counts as an unresolved scheme so the
+        // call fails closed instead of sending a malformed credential.
+        cred = normalizeUpstreamCredential(resolved);
       } catch (error) {
         if (signal?.aborted) {
           throw error;
@@ -938,32 +954,6 @@ function headerValue(
     return Array.isArray(value) ? value[0] : value;
   }
   return undefined;
-}
-
-function createStopSignal(
-  parent: AbortSignal | undefined,
-  timeoutMs: number,
-): StopSignal {
-  const controller = new AbortController();
-  let timedOut = false;
-  const onParentAbort = (): void => controller.abort(parent?.reason);
-  if (parent !== undefined) {
-    if (parent.aborted) controller.abort(parent.reason);
-    else parent.addEventListener("abort", onParentAbort, { once: true });
-  }
-  const timer = setTimeout(() => {
-    timedOut = true;
-    controller.abort(new Error("Upstream timeout"));
-  }, timeoutMs);
-  timer.unref();
-  return {
-    signal: controller.signal,
-    timedOut: () => timedOut,
-    dispose: () => {
-      clearTimeout(timer);
-      parent?.removeEventListener("abort", onParentAbort);
-    },
-  };
 }
 
 function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
