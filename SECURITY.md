@@ -43,10 +43,14 @@ The implementation must address:
 Current implementation: `@chainmcp/executor` enforces exact host allowlists,
 HTTPS by default, public-address classification for every DNS answer, pinned
 lookups with peer verification, same-origin redirect revalidation, request and
-response caps, and cancellation binding. It performs no credential injection or
-authentication. The default transport does not honor proxy environment
-variables or decompress responses. These controls are covered by unit and local
-transport tests, not by a production security review.
+response caps, and cancellation binding. Upstream credential resolution and
+injection are implemented and covered by `docs/authentication.md`; the executor
+validates provider output and never forwards inbound identity. OAuth token
+requests are outbound calls too, so the executor fetches them through the same
+policy and pinned transport instead of the platform fetch. The default transport
+does not honor proxy environment variables or decompress responses. These
+controls are covered by unit and local transport tests, not by a production
+security review.
 
 ### Input validation
 
@@ -77,6 +81,34 @@ executors and adapters must bound request bodies and caller memory.
 - Support expiry, revocation, and rotation.
 - Fail closed when identity or authorization cannot be verified. Treat untyped authorization adapter failures as denials and do not expose their details to clients.
 - Express rate-limit denials as explicit decisions and fail closed when a decision is missing, so an adapter outage is not confused with a quota denial.
+
+Current implementation: `@chainmcp/auth` keeps inbound identity
+(`OperationScopeAuthorizer` over `ToolContext.principal`) separate from upstream
+credentials, which only `@chainmcp/executor` injects after declared parameters
+are mapped, so caller arguments cannot supply or override `authorization`,
+`cookie`, or other reserved headers. Credentials come from pluggable providers
+and are validated against the declared credential shapes; invalid material is
+unresolved and fails closed as `AUTH_REQUIRED`. `SecretStoreCredentialProvider`
+reads tenant-scoped keys only, so a missing tenant secret never falls back to a
+deployment-wide credential unless `allowGlobalFallback` is enabled explicitly.
+`EncryptedSecretStore` protects secrets at rest with AES-256-GCM, random IVs,
+key-name AAD binding, and key rotation. OAuth client-credentials token requests
+run through the executor's destination policy and pinned transport (exact host
+allowlist, public-address classification, peer verification, redirect refusal,
+response cap) when the provider runs inside the executor; the standalone fetcher
+enforces HTTPS, an explicit host allowlist, redirect refusal, and caps but
+cannot pin the resolved address. Token cache keys are derived with a
+segment-encoding helper, so identifiers cannot corrupt or collide in the store.
+Token invalidation removes in-memory and persistent copies for entries the
+instance knows about; because `SecretStore` has no scan operation, cross-process
+revocation requires deleting `buildOAuthTokenStoreKey(...)` or relying on token
+expiry. `@chainmcp/rate-limit` turns quota and concurrency limits into explicit
+decisions, fails closed when Redis commands fail or time out, rolls back quota
+recorded by a rejected multi-scope check, bounds local window memory with
+least-recently-used eviction, and bounds concurrency permits with safety TTLs.
+These controls are covered by unit tests, executor credential/egress tests, and
+an opt-in real-Redis integration suite; they have not had a production security
+review.
 
 ### Caching
 

@@ -41,15 +41,15 @@ as a separate backlog.
 
 ## Phase 1 — Security
 
-| ID     | Risk                                                      | Status                                                                                                                                                                          | Disposition                | Target or trigger                                       |
-| ------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------- |
-| SEC-01 | Authenticate protected MCP endpoints                      | Not applicable: stdio only, no inbound HTTP                                                                                                                                     | Defer                      | Before any remote transport (M5)                        |
-| SEC-02 | Translate OpenAPI security schemes correctly              | Done: explicit OR/AND policy, credential metadata, scope validation, pluggable credential resolution, and executor injection are implemented and tested                         | Done                       | Regression check                                        |
-| SEC-03 | Robust OAuth discovery and token refresh                  | Partial: OAuth 2.0 Client Credentials flow with expiry margin, automatic refresh, and invalidation done; interactive browser discovery deferred                                 | Done / Defer (interactive) | Interactive OAuth when an end-user contract requires it |
-| SEC-04 | Enforce tenant isolation and resource ownership           | Done in core and server (ADR 0008); gateway coverage open                                                                                                                       | Done / Defer               | Gateway path in M9                                      |
-| SEC-05 | Argument-level and output-level policy enforcement        | Partial: argument validation, operation scopes, output hook/budget, and built-in field projection are done; generated-tool contract policy remains open                         | **Now** (generated policy) | Runtime policy in M4; contract-level field policy in M6 |
-| SEC-06 | Block SSRF, unsafe redirects, and private-network targets | Done in `@chainmcp/executor` for HTTP: exact allowlist, public-address classification, DNS pinning/peer check, same-origin redirects, caps, signal; explicit proxy support open | Done / Defer (proxy)       | Proxy support when required                             |
-| SEC-07 | Explicit policy-denial errors and audit events            | Partial: typed denials and safe mapping done; audit events open                                                                                                                 | Defer (audit)              | M6                                                      |
+| ID     | Risk                                                      | Status                                                                                                                                                                                                                                                               | Disposition                                  | Target or trigger                                       |
+| ------ | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------- |
+| SEC-01 | Authenticate protected MCP endpoints                      | Not applicable: stdio only, no inbound HTTP                                                                                                                                                                                                                          | Defer                                        | Before any remote transport (M5)                        |
+| SEC-02 | Translate OpenAPI security schemes correctly              | Done: explicit OR/AND policy, credential metadata, scope validation, pluggable credential resolution, and executor injection are implemented and tested                                                                                                              | Done                                         | Regression check                                        |
+| SEC-03 | Robust OAuth discovery and token refresh                  | Partial: OAuth 2.0 Client Credentials flow with expiry margin and automatic re-acquisition; token endpoint policy, cache-key derivation, and invalidation done. No refresh-token flow, no cross-process token revocation, and interactive browser discovery deferred | Done / Defer (interactive)                   | Interactive OAuth or a refresh-token contract           |
+| SEC-04 | Enforce tenant isolation and resource ownership           | Done in core and server (ADR 0008); gateway coverage open                                                                                                                                                                                                            | Done / Defer                                 | Gateway path in M9                                      |
+| SEC-05 | Argument-level and output-level policy enforcement        | Partial: argument validation, operation scopes, output hook/budget, and built-in field projection are done; generated-tool contract policy remains open                                                                                                              | **Now** (generated policy)                   | Runtime policy in M4; contract-level field policy in M6 |
+| SEC-06 | Block SSRF, unsafe redirects, and private-network targets | Done in `@chainmcp/executor` for HTTP, including OAuth token requests: exact allowlist, public-address classification, DNS pinning/peer check, same-origin redirects, caps, signal. The standalone token fetcher cannot pin addresses; explicit proxy support open   | Done / Defer (proxy, standalone token fetch) | Proxy support when required                             |
+| SEC-07 | Explicit policy-denial errors and audit events            | Partial: typed denials and safe mapping done; audit events open                                                                                                                                                                                                      | Defer (audit)                                | M6                                                      |
 
 Notes:
 
@@ -75,18 +75,34 @@ Notes:
 
 ## Phase 3 — Runtime reliability
 
-| ID     | Risk                                                  | Status                                                                                                | Disposition | Target or trigger                               |
-| ------ | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------- | ----------------------------------------------- |
-| RUN-01 | Isolate blocking synchronous operations               | Controlled: no sync I/O found in `packages/*/src`                                                     | **Now**     | Lint/CI rule, not a feature                     |
-| RUN-02 | Enforce execution deadlines and cancellation limits   | Done: timeout rejection and cooperative abort (M1)                                                    | Done        | Regression tests exist                          |
-| RUN-03 | Retries, backoff, circuit breakers, and health checks | Open                                                                                                  | Defer       | Only when a real upstream demonstrates the need |
-| RUN-04 | Clean up orphaned processes and containers            | Open                                                                                                  | Defer       | Only if container templates ship (M7)           |
-| RUN-05 | Support and test required HTTP transports             | Open: stdio only                                                                                      | Defer       | With SEC-01 and SEC-03 (M5)                     |
-| RUN-06 | Concurrent startup and supported operating systems    | Open                                                                                                  | Defer       | Release hardening (M10)                         |
-| RUN-07 | Prevent stale OAuth state and refresh failures        | Done: Client Credentials flow tracks token expiry with configurable skew margin and automatic refresh | Done        | Regression check                                |
+| ID     | Risk                                                  | Status                                                                                                                                                                                                                                             | Disposition | Target or trigger                               |
+| ------ | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ----------------------------------------------- |
+| RUN-01 | Isolate blocking synchronous operations               | Controlled: no sync I/O found in `packages/*/src`                                                                                                                                                                                                  | **Now**     | Lint/CI rule, not a feature                     |
+| RUN-02 | Enforce execution deadlines and cancellation limits   | Done: timeout rejection and cooperative abort (M1)                                                                                                                                                                                                 | Done        | Regression tests exist                          |
+| RUN-03 | Retries, backoff, circuit breakers, and health checks | Open                                                                                                                                                                                                                                               | Defer       | Only when a real upstream demonstrates the need |
+| RUN-04 | Clean up orphaned processes and containers            | Open                                                                                                                                                                                                                                               | Defer       | Only if container templates ship (M7)           |
+| RUN-05 | Support and test required HTTP transports             | Open: stdio only                                                                                                                                                                                                                                   | Defer       | With SEC-01 and SEC-03 (M5)                     |
+| RUN-06 | Concurrent startup and supported operating systems    | Open                                                                                                                                                                                                                                               | Defer       | Release hardening (M10)                         |
+| RUN-07 | Prevent stale OAuth state and refresh failures        | Done for the Client Credentials flow: expiry with configurable skew margin, automatic re-acquisition, store-safe cache keys, and invalidation that removes persistent copies. Stale entries written by another process are bounded by token expiry | Done        | Revisit with a refresh-token flow               |
 
 Note: `RUN-03` must not introduce implicit retries for non-idempotent
 operations, per `DEVELOPMENT.md`.
+
+Notes on Milestone 5 limits after the implementation audit:
+
+- `SEC-03`/`RUN-07`: a `SecretStore` cannot be scanned, so `invalidate()` clears
+  only entries the instance knows about. Cross-process revocation requires
+  deleting `buildOAuthTokenStoreKey(...)` from the shared store or relying on
+  token expiry.
+- `SEC-06`: inside `@chainmcp/executor`, OAuth token requests run through the
+  same destination policy and pinned transport as API requests. Used standalone,
+  the built-in fetcher enforces HTTPS, an explicit host allowlist, redirect
+  refusal, and size caps but uses the platform fetch, which does not pin the
+  resolved address.
+- Rate limiting: in-memory windows are bounded by least-recently-used eviction
+  (`maxTrackedWindows`, default 10,000), so an evicted identity can make one
+  extra request before its window rebuilds. Concurrency denials report a
+  one-second lower bound rather than an exact release time.
 
 ## Phase 4 — SaaS and enterprise
 

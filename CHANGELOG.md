@@ -35,8 +35,19 @@ The project is pre-release. Versions and release dates must reflect actual publi
   - Add pluggable upstream credential providers (`StaticCredentialProvider`, `EnvCredentialProvider`, `SecretStoreCredentialProvider`, `CompositeCredentialProvider`, and `OAuthClientCredentialsProvider`) to `@chainmcp/auth`.
   - Implement OAuth 2.0 Client Credentials flow (RFC 6749) with token caching, expiration safety margins, automatic refresh, and manual invalidation.
   - Wire `credentialProvider` into `@chainmcp/executor` with explicit OR/AND authentication policy evaluation, header/query/cookie injection, and fail-closed `AUTH_REQUIRED` enforcement.
-  - Add `@chainmcp/rate-limit` package providing `InMemoryRateLimiter` and `DistributedRateLimiter` (Redis-backed with atomic Lua scripts for rolling window quotas and concurrency permits) with exact `retryAfterSeconds` calculation across server processes.
+  - Add `@chainmcp/rate-limit` package providing `InMemoryRateLimiter` and `DistributedRateLimiter` (Redis-backed with atomic Lua scripts for rolling window quotas and concurrency permits). Quota denials report the time until the oldest request leaves the window; concurrency denials report a one-second lower bound.
   - Extend `@chainmcp/core` with `retryAfterSeconds` on `RateLimitDecision` and `RuntimeError`, and `release?(context, toolName)` concurrency permit release hook.
+- Harden Milestone 5 after an implementation audit:
+  - Derive `SecretStore` keys for OAuth token cache entries and upstream credentials with a segment-encoding helper (`buildCredentialStoreKey`, `buildOAuthTokenStoreKey`), so tenant, principal, scheme, or scope values outside the key grammar can no longer break lookups. Over-long keys become a stable SHA-256 digest.
+  - Delete persistent token copies on `invalidate(...)`, accept an optional `principalId` filter, and bypass a failing token store on read instead of failing credential resolution.
+  - Validate credential material returned by any provider with `normalizeUpstreamCredential`; malformed values now fail closed as `AUTH_REQUIRED`.
+  - Default `SecretStoreCredentialProvider` to tenant-scoped keys. A tenant secret no longer falls back to a deployment-wide credential unless `allowGlobalFallback: true` is set.
+  - Require an explicit token endpoint allowlist (`allowedTokenHosts`) or `allowAnyTokenHost`, require HTTPS unless `allowInsecureHttp` is set, and refuse redirects and URL credentials in the built-in OAuth fetcher.
+  - Fetch OAuth tokens through the executor's destination policy and pinned transport, so token requests inherit allowlisting, public-address classification, DNS pinning, peer verification, redirect refusal, and the response cap.
+  - Roll back quota recorded earlier in the same check when a later scope denies, so a rejected request no longer consumes another scope's budget.
+  - Bound in-memory sliding windows with least-recently-used eviction (`maxTrackedWindows`, default 10,000), drop fully expired windows, and expose `trackedWindowCount`.
+  - Include the retry hint in the client-visible `RATE_LIMITED` MCP error text as `Retry after N seconds` when `retryAfterSeconds` is a whole number from 1 to 86,400.
+  - Add an opt-in integration suite that runs the distributed limiter's Lua scripts against a real Redis, plus a CI job with a Redis service container.
 - Add a pnpm workspace with strict TypeScript, lint/format, test, typecheck, build, and CI configuration.
 - Add `@chainmcp/core` with registration, discovery, supported-subset input validation, authorization/rate-limit hooks, timeout/cancellation handling, metrics, and deterministic identity-partitioned cache-key serialization.
 - Add `@chainmcp/config` with strict Zod validation and defaults for the implemented configuration subset.

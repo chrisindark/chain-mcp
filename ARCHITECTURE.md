@@ -154,9 +154,10 @@ The pipeline is:
    used to validate upstream payloads yet.
 8. Derive an explicit authentication policy: OR alternatives, AND scheme sets,
    copied credential metadata, required scopes, and preserved anonymous
-   alternatives. It is metadata; authentication and credential injection remain
-   unimplemented, while the executor added by ADR 0018 performs no credential
-   lookup or scope enforcement.
+   alternatives. The policy is metadata at compile time; the runtime enforces
+   declared scopes through its authorizer, and `@chainmcp/executor` evaluates
+   the alternative structure and resolves credentials when a
+   `credentialProvider` is configured (ADR 0018, ADR 0021).
 9. Emit `sourceHash`, a canonical-document `contractRevision`, per-tool hashes,
    a `toolsetHash`, and `diffManifests()` output.
 
@@ -200,7 +201,13 @@ lint rule enforces that invariant for runtime source.
 
 The executor resolves upstream credentials via a configured `credentialProvider`,
 injecting API keys, Basic/Bearer auth, or OAuth 2.0 tokens into outgoing requests.
-It does not validate response schemas, retry requests, or honor proxy
+Provider output is validated against the declared credential shapes, and invalid
+material counts as unresolved so the call fails closed. OAuth token acquisition
+is itself an outbound call: the executor hands the provider a token fetcher built
+from its own resolver and transport, so the token request inherits the host
+allowlist, public-address classification, DNS pinning, peer verification,
+redirect refusal, and response cap rather than using the platform fetch. The
+executor does not validate response schemas, retry requests, or honor proxy
 environment variables. A custom transport is trusted adapter code; the default
 Node transport is the component that pins DNS and verifies the peer.
 

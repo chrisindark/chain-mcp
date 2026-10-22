@@ -2,6 +2,7 @@
 
 - Status: proposed
 - Date: 2026-10-22
+- Amended: 2026-10-22 (implementation audit; see "Amendment: audit findings")
 
 ## Context and problem
 
@@ -56,15 +57,17 @@ Prior to this work:
 ### 4. OAuth 2.0 & Token Lifecycle Management (`@chainmcp/auth`)
 
 - Implemented `OAuthClientCredentialsProvider`:
-  - Executes OAuth 2.0 Client Credentials Grant (RFC 6749 Section 4.4).
-  - Caches access tokens in memory or optional `SecretStore`.
+  - Executes OAuth 2.0 Client Credentials Grant (RFC 6749 Section 4.4). This grant issues no refresh token, so expiry means re-acquiring a token.
+  - Caches access tokens in memory or an optional `SecretStore`, keyed by tenant, principal, scheme, and normalized scopes with a segment-encoded store key.
   - Tracks token expiration with safety margin (`expirySkewSeconds`, default 30s).
   - Automatically fetches fresh tokens when expired or nearing expiry.
-  - Supports manual token invalidation and revocation (`invalidate(tenantId, schemeName)`).
+  - Supports manual invalidation (`invalidate(tenantId?, schemeName?, principalId?)`), which drops matching in-memory entries and deletes their persistent copies. Cross-process revocation of entries another process wrote is explicitly out of scope because `SecretStore` has no scan operation; delete the derived key or rely on expiry.
+  - Treats the token endpoint as a policy-bound outbound destination (see section 5).
 
 ### 5. Upstream Executor Credential Injection (`@chainmcp/executor`)
 
 - Added optional `credentialProvider` to `UpstreamExecutorOptions`.
+- Validates every resolved credential with `normalizeUpstreamCredential`; invalid material counts as unresolved and fails closed.
 - For operations declaring `CompiledAuthenticationPolicy`:
   - Evaluates alternative scheme sets (OR list) in contract order.
   - For each alternative, resolves all required schemes (AND list).
@@ -78,6 +81,21 @@ Prior to this work:
     - Otherwise, fails closed with `RuntimeError("AUTH_REQUIRED", "Authentication required")`.
   - All injected headers and query parameters are subject to existing executor byte caps.
 
+- Credential providers are deployment code, so the executor does not trust their
+  types: shapes are validated at the boundary.
+- OAuth token acquisition reuses the outbound policy. The executor supplies a
+  `tokenEndpointFetch` built from its resolver and transport, so token requests
+  inherit the exact host allowlist (the provider's `allowedTokenHosts`, else the
+  configured token URL host), HTTPS enforcement, public-address classification,
+  DNS pinning, peer verification, redirect refusal, and the response cap. The provider's
+  built-in fetcher remains for standalone use and requires an explicit
+  allowlist, refuses redirects, and enforces HTTPS and size caps, but cannot pin
+  the resolved address.
+- `SecretStoreCredentialProvider` resolves tenant-scoped keys only. A shared
+  deployment-wide credential is opt-in via `allowGlobalFallback`, so a tenant
+  without its own secret fails closed instead of authenticating with another
+  tenant's credential.
+
 ### 6. Quotas, Concurrency Limits, and Distributed Rate Limiting (`@chainmcp/rate-limit`)
 
 - Extended `@chainmcp/core`:
@@ -86,11 +104,43 @@ Prior to this work:
   - Propagated `retryAfterSeconds` onto `RuntimeError("RATE_LIMITED")`.
   - Added invocation cleanup in `finally` to trigger `rateLimiter.release()`.
 - Created package `@chainmcp/rate-limit`:
-  - `InMemoryRateLimiter`: Sliding-window quota tracker and concurrency manager with exact `retryAfterSeconds` calculation.
+  - `InMemoryRateLimiter`: Sliding-window quota tracker and concurrency manager. Quota denials report the time until the oldest request leaves the window; concurrency denials report a one-second lower bound. Sliding windows are bounded (`maxTrackedWindows`, default 10,000) with least-recently-used eviction and immediate removal of fully expired windows.
   - `DistributedRateLimiter`: Redis-backed distributed rate limiter using injectable `RedisRateLimitClient`.
-    - Sliding window quota check using atomic Lua scripts (sorted sets with score timestamps and automatic cleanup).
-    - Concurrency slot acquisition and release using atomic Lua scripts with safety TTLs.
-    - Operates uniformly across multiple processes sharing the same Redis cluster.
+    - Sliding window quota check using atomic Lua scripts (sorted sets with score timestamps, per-request members, and a key TTL of twice the window).
+    - Every matching scope is evaluated per call; when a later scope denies, the entries this call already recorded are removed with `ZREM`, so a rejected call never consumes another scope's budget. Rollback failures are isolated and can only over-count.
+    - Concurrency slot acquisition and release using atomic Lua scripts with safety TTLs (default 60 seconds).
+    - Operates uniformly across multiple processes sharing the same Redis cluster. The Lua scripts are proven against a real Redis by an opt-in integration suite that CI runs with a Redis service container.
+
+## Amendment: audit findings
+
+An implementation audit found four behavioral defects and several overstated
+claims. The decisions above incorporate the fixes:
+
+1. **Token cache keys were not valid secret-store keys.** Multi-scope or
+   character-rich tenant, principal, scheme, or scope values produced keys the
+   store rejects. Keys are now derived by a shared helper that base64url-encodes
+   each segment and digests over-long keys.
+2. **Invalidation left persistent entries usable by other instances.** Invalidation
+   now deletes the persistent copy of every entry it can identify, and the
+   remaining cross-process limitation is documented instead of being described as
+   revocation.
+3. **Distributed quota was consumed by denied requests.** A check recorded quota
+   for each allowed scope before a later scope could deny. Scope recording is now
+   rolled back on denial.
+4. **In-memory windows were unbounded.** A stream of new identities grew the map
+   without limit. Windows are now evicted least-recently-used first under a
+   configurable cap.
+5. **Token fetches bypassed the outbound policy.** The standalone fetch had no
+   host policy, followed redirects, and was not classified or pinned. Token
+   acquisition now runs through the executor's policy and transport.
+6. **Provider output and tenant fallback were trusted.** Credential shapes are
+   validated, and the tenant-to-global fallback is opt-in.
+7. **Retry-after was not client-visible.** The MCP adapter now renders a validated
+   retry hint for `RATE_LIMITED` results.
+
+Claims narrowed rather than implemented: no refresh-token flow, no cross-process
+token revocation, no exact concurrency retry-after, and no address pinning for
+the standalone token fetcher.
 
 ## Alternatives considered
 
@@ -103,16 +153,19 @@ Prior to this work:
 
 - Unauthenticated or unauthorized upstream calls fail closed with `AUTH_REQUIRED` or `AUTH_FORBIDDEN`.
 - Secrets remain encrypted at rest and are never included in telemetry, logs, or error responses.
-- Distributed quota and concurrency enforcement operates reliably across server processes.
+- Distributed quota and concurrency enforcement operates reliably across server processes, with a real-Redis integration suite as evidence.
 - Additional package `@chainmcp/rate-limit` is added to the monorepo workspace.
+- In-memory window eviction trades strict counting for bounded memory for the least recently used identities.
+- The standalone OAuth fetcher cannot pin the resolved address; deployments that need pinning must run the provider through the executor.
 
 ## Security implications
 
 - Secrets at rest cannot be read without the AES-256-GCM key and authentication tag verification.
 - AAD binding prevents ciphertexts from being transplanted across secret keys.
 - Untrusted caller inputs cannot inject or override upstream authorization headers.
-- Rate limit denials calculate retry delays without revealing internal quota metrics or infrastructure configurations.
-- Concurrency locks expire safely if processes terminate unexpectedly.
+- Rate limit denials calculate retry delays without revealing internal quota metrics or infrastructure configurations. MCP clients receive only a bounded whole-second hint.
+- Concurrency locks expire safely if processes terminate unexpectedly, at the cost of holding a permit for up to the safety TTL.
+- Token endpoint requests are allowlisted and classified like API requests when the executor wires the fetcher, so a token URL cannot become an SSRF path.
 
 ## Follow-up actions
 
