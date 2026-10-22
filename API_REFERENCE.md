@@ -1125,6 +1125,59 @@ Quotas and concurrency can be partitioned globally, by tenant, by principal, or 
 
 In distributed deployments, atomic Redis Lua scripts ensure quota and concurrency limits are enforced across server processes without race conditions. Every matching scope is evaluated for each call and the scopes recorded before a denial are rolled back, so a rejected call never consumes another scope's budget; rollback failures are isolated and can only over-count. Concurrency slots are acquired before tool execution and released in a `finally` block upon completion, with a safety TTL (default 60 seconds) for crashed holders. The Lua scripts are proven against a real Redis by the opt-in integration suite described in `DEVELOPMENT.md`.
 
+## `@chainmcp/config`
+
+Configuration schema, validation, and wiring helpers for ChainMcp servers:
+
+```ts
+export const ChainMcpConfigSchema: z.ZodType<ChainMcpConfig>;
+export function parseConfig(input: unknown): ChainMcpConfig;
+export function safeParseConfig(
+  input: unknown,
+): ReturnType<typeof ChainMcpConfigSchema.safeParse>;
+
+export function buildExecutorOptions(
+  config: ChainMcpConfig,
+  overrides: BuildExecutorOptionsOverrides,
+  factoryOptions?: CredentialProviderFactoryOptions,
+): UpstreamExecutorOptions;
+
+export function buildRuntimeOptions(
+  config: ChainMcpConfig,
+  overrides?: Partial<RuntimeOptions>,
+  factoryOptions?: {
+    rateLimiterOptions?: RateLimiterFactoryOptions;
+  },
+): RuntimeOptions;
+
+export function createRateLimiterFromConfig(
+  config: RateLimitConfig,
+  options?: RateLimiterFactoryOptions,
+): RateLimiter | undefined;
+
+export function createAuthorizerFromConfig(
+  config: InboundAuthConfig,
+): Authorizer | undefined;
+
+export function createUpstreamCredentialProviderFromConfig(
+  config: UpstreamAuthConfig,
+  options?: CredentialProviderFactoryOptions,
+): UpstreamCredentialProvider | undefined;
+```
+
+### Configuration Sections
+
+- **`server`:** Configures transport (`stdio`), host, port, `requestTimeoutMs` (default 15,000ms), and `maxResponseBytes` (default 1,000,000 bytes).
+- **`security`:** Configures `requireInboundAuth`, `allowedUpstreamHosts`, and `redactHeaders`. Each host in `allowedUpstreamHosts` is strictly validated against schemes, ports, paths, queries, credentials, and wildcards, and normalized to canonical lowercase.
+- **`rateLimit`:** Configures in-memory or Redis distributed rate limiting with shorthand (`requestsPerMinute`, `concurrency`) or explicit global, tenant, and tool quotas.
+- **`auth`:** Configures inbound authorization (`authorizer: "scope"`) and upstream credential providers (`static`, `env`, `secretStore`, `oauth`).
+- **`contract`:** Optional contract source and strict validation settings.
+
+### Wiring Helpers
+
+- `buildExecutorOptions(config, overrides)` maps `security.allowedUpstreamHosts` to `allowedHosts`, `server.requestTimeoutMs` to `timeoutMs`, `server.maxResponseBytes` to `maxResponseBytes`, and `auth.upstream` to `credentialProvider`. Fails closed if `allowedUpstreamHosts` is empty.
+- `buildRuntimeOptions(config, overrides)` maps `security.requireInboundAuth` / `auth.inbound` to `authorizer`, `config.rateLimit` to `rateLimiter`, and `server.requestTimeoutMs` to `defaultTimeoutMs`.
+
 ## Error codes
 
 Public-facing errors use stable codes such as:

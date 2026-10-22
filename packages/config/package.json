@@ -28,6 +28,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@chainmcp/auth": "workspace:*",
+    "@chainmcp/core": "workspace:*",
+    "@chainmcp/executor": "workspace:*",
+    "@chainmcp/rate-limit": "workspace:*",
     "zod": "^4.1.12"
   }
 }

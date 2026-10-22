@@ -8,6 +8,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Documentation
 
+- Document configuration wiring for network security, upstream credentials, and rate limiting in `CONFIGURATION.md`, `API_REFERENCE.md`, `ROADMAP.md`, and ADR 0022.
 - Document authentication, upstream credentials, encrypted secret storage, and distributed rate limiting in `docs/authentication.md`, `docs/rate-limiting.md`, `API_REFERENCE.md`, `CONFIGURATION.md`, `ARCHITECTURE.md`, `SECURITY.md`, and ADR 0021.
 - Define product vision and package boundaries.
 - Specify generated-server and dynamic-gateway modes.
@@ -37,6 +38,10 @@ The project is pre-release. Versions and release dates must reflect actual publi
   - Wire `credentialProvider` into `@chainmcp/executor` with explicit OR/AND authentication policy evaluation, header/query/cookie injection, and fail-closed `AUTH_REQUIRED` enforcement.
   - Add `@chainmcp/rate-limit` package providing `InMemoryRateLimiter` and `DistributedRateLimiter` (Redis-backed with atomic Lua scripts for rolling window quotas and concurrency permits). Quota denials report the time until the oldest request leaves the window; concurrency denials report a one-second lower bound.
   - Extend `@chainmcp/core` with `retryAfterSeconds` on `RateLimitDecision` and `RuntimeError`, and `release?(context, toolName)` concurrency permit release hook.
+- Wire network security allowlists, rate limiting, and upstream authentication into `@chainmcp/config`:
+  - Enforce strict hostname validation and lowercase normalization on `security.allowedUpstreamHosts`, rejecting schemes, ports, paths, queries, credentials, and wildcards.
+  - Add `rateLimit` and `auth` schema sections to `ChainMcpConfigSchema`.
+  - Add factory and wiring helpers: `buildExecutorOptions`, `buildRuntimeOptions`, `createRateLimiterFromConfig`, `createAuthorizerFromConfig`, and `createUpstreamCredentialProviderFromConfig`.
 - Harden Milestone 5 after an implementation audit:
   - Derive `SecretStore` keys for OAuth token cache entries and upstream credentials with a segment-encoding helper (`buildCredentialStoreKey`, `buildOAuthTokenStoreKey`), so tenant, principal, scheme, or scope values outside the key grammar can no longer break lookups. Over-long keys become a stable SHA-256 digest.
   - Delete persistent token copies on `invalidate(...)`, accept an optional `principalId` filter, and bypass a failing token store on read instead of failing credential resolution.

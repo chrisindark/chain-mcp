@@ -181,6 +181,8 @@ evidence combines unit tests, executor credential and egress tests, and an opt-i
 suite that runs the Lua scripts against a real Redis (CI job `redis-integration`); the default
 `pnpm check` path stays hermetic.
 
+`@chainmcp/config` wires `security.allowedUpstreamHosts` directly into executor options with strict hostname syntax validation (no schemes, ports, or wildcards), and wires `rateLimit` and `auth` (inbound authorizers and upstream providers) into runtime and executor options via factory helpers (`buildExecutorOptions`, `buildRuntimeOptions`, `createRateLimiterFromConfig`, and `createUpstreamCredentialProviderFromConfig`).
+
 ## Milestone 6 — JSON navigation, logging, and analytics
 
 - [ ] Add bounded JSON path selection.

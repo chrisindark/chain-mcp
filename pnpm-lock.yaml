@@ -88,6 +88,18 @@ importers:
 
   packages/config:
     dependencies:
+      "@chainmcp/auth":
+        specifier: workspace:*
+        version: link:../auth
+      "@chainmcp/core":
+        specifier: workspace:*
+        version: link:../core
+      "@chainmcp/executor":
+        specifier: workspace:*
+        version: link:../executor
+      "@chainmcp/rate-limit":
+        specifier: workspace:*
+        version: link:../rate-limit
       zod:
         specifier: ^4.1.12
         version: 4.6.7
