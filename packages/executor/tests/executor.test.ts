@@ -649,3 +649,606 @@ describe("executor option validation", () => {
     ).toThrow(TypeError);
   });
 });
+
+describe("Upstream authentication & credential injection", () => {
+  it("injects apiKey credentials into request header, query, and cookie", async () => {
+    const transport = new FakeTransport([
+      jsonResponse({ ok: true }),
+      jsonResponse({ ok: true }),
+      jsonResponse({ ok: true }),
+    ]);
+
+    const executor = createUpstreamExecutor(
+      options(transport, {
+        credentialProvider: {
+          resolveCredential: async (ctx) => {
+            if (ctx.schemeName === "header_key") {
+              return {
+                type: "apiKey",
+                name: "X-API-KEY",
+                location: "header",
+                value: "secret-head-val",
+              };
+            }
+            if (ctx.schemeName === "query_key") {
+              return {
+                type: "apiKey",
+                name: "api_key",
+                location: "query",
+                value: "secret-query-val",
+              };
+            }
+            if (ctx.schemeName === "cookie_key") {
+              return {
+                type: "apiKey",
+                name: "session_id",
+                location: "cookie",
+                value: "secret-cookie-val",
+              };
+            }
+            return undefined;
+          },
+        },
+      }),
+    );
+
+    // 1. Header apiKey
+    const headerOp = operation({
+      authentication: {
+        alternatives: [
+          {
+            schemes: [
+              {
+                name: "header_key",
+                type: "apiKey",
+                parameterName: "X-API-KEY",
+                parameterLocation: "header",
+                scopes: [],
+              },
+            ],
+          },
+        ],
+        allowsAnonymous: false,
+      },
+    });
+    const headerTool = executor.createTool(headerOp);
+    await headerTool.execute({}, context);
+    expect(transport.requests[0]?.headers["x-api-key"]).toBe("secret-head-val");
+
+    // 2. Query apiKey
+    const queryOp = operation({
+      authentication: {
+        alternatives: [
+          {
+            schemes: [
+              {
+                name: "query_key",
+                type: "apiKey",
+                parameterName: "api_key",
+                parameterLocation: "query",
+                scopes: [],
+              },
+            ],
+          },
+        ],
+        allowsAnonymous: false,
+      },
+    });
+    const queryTool = executor.createTool(queryOp);
+    await queryTool.execute({}, context);
+    expect(transport.requests[1]?.url.searchParams.get("api_key")).toBe(
+      "secret-query-val",
+    );
+
+    // 3. Cookie apiKey
+    const cookieOp = operation({
+      authentication: {
+        alternatives: [
+          {
+            schemes: [
+              {
+                name: "cookie_key",
+                type: "apiKey",
+                parameterName: "session_id",
+                parameterLocation: "cookie",
+                scopes: [],
+              },
+            ],
+          },
+        ],
+        allowsAnonymous: false,
+      },
+    });
+    const cookieTool = executor.createTool(cookieOp);
+    await cookieTool.execute({}, context);
+    expect(transport.requests[2]?.headers["cookie"]).toBe(
+      "session_id=secret-cookie-val",
+    );
+  });
+
+  it("injects HTTP bearer, HTTP basic, and OAuth2 credentials", async () => {
+    const transport = new FakeTransport([
+      jsonResponse({ ok: true }),
+      jsonResponse({ ok: true }),
+      jsonResponse({ ok: true }),
+    ]);
+
+    const executor = createUpstreamExecutor(
+      options(transport, {
+        credentialProvider: {
+          resolveCredential: async (ctx) => {
+            if (ctx.schemeName === "bearer_auth") {
+              return {
+                type: "http",
+                scheme: "bearer",
+                token: "bearer-token-123",
+              };
+            }
+            if (ctx.schemeName === "basic_auth") {
+              return {
+                type: "http",
+                scheme: "basic",
+                username: "alice",
+                password: "pwd",
+              };
+            }
+            if (ctx.schemeName === "oauth_auth") {
+              return {
+                type: "oauth2",
+                token: "oauth-tok-999",
+                tokenType: "Bearer",
+              };
+            }
+            return undefined;
+          },
+        },
+      }),
+    );
+
+    // 1. Bearer
+    const bearerOp = operation({
+      authentication: {
+        alternatives: [
+          {
+            schemes: [
+              {
+                name: "bearer_auth",
+                type: "http",
+                httpScheme: "bearer",
+                scopes: [],
+              },
+            ],
+          },
+        ],
+        allowsAnonymous: false,
+      },
+    });
+    await executor.createTool(bearerOp).execute({}, context);
+    expect(transport.requests[0]?.headers["authorization"]).toBe(
+      "Bearer bearer-token-123",
+    );
+
+    // 2. Basic
+    const basicOp = operation({
+      authentication: {
+        alternatives: [
+          {
+            schemes: [
+              {
+                name: "basic_auth",
+                type: "http",
+                httpScheme: "basic",
+                scopes: [],
+              },
+            ],
+          },
+        ],
+        allowsAnonymous: false,
+      },
+    });
+    await executor.createTool(basicOp).execute({}, context);
+    const expectedBasic = Buffer.from("alice:pwd").toString("base64");
+    expect(transport.requests[1]?.headers["authorization"]).toBe(
+      `Basic ${expectedBasic}`,
+    );
+
+    // 3. OAuth2
+    const oauthOp = operation({
+      authentication: {
+        alternatives: [
+          {
+            schemes: [
+              {
+                name: "oauth_auth",
+                type: "oauth2",
+                scopes: ["read"],
+              },
+            ],
+          },
+        ],
+        allowsAnonymous: false,
+      },
+    });
+    await executor.createTool(oauthOp).execute({}, context);
+    expect(transport.requests[2]?.headers["authorization"]).toBe(
+      "Bearer oauth-tok-999",
+    );
+  });
+
+  it("tries alternatives in order and falls back to second alternative when first fails", async () => {
+    const transport = new FakeTransport([jsonResponse({ ok: true })]);
+
+    const executor = createUpstreamExecutor(
+      options(transport, {
+        credentialProvider: {
+          resolveCredential: async (ctx) => {
+            // scheme1 fails to resolve
+            if (ctx.schemeName === "scheme1") return undefined;
+            // scheme2 resolves
+            if (ctx.schemeName === "scheme2") {
+              return { type: "http", scheme: "bearer", token: "tok-scheme2" };
+            }
+            return undefined;
+          },
+        },
+      }),
+    );
+
+    const multiAuthOp = operation({
+      authentication: {
+        alternatives: [
+          {
+            schemes: [
+              {
+                name: "scheme1",
+                type: "http",
+                httpScheme: "bearer",
+                scopes: [],
+              },
+            ],
+          },
+          {
+            schemes: [
+              {
+                name: "scheme2",
+                type: "http",
+                httpScheme: "bearer",
+                scopes: [],
+              },
+            ],
+          },
+        ],
+        allowsAnonymous: false,
+      },
+    });
+
+    await executor.createTool(multiAuthOp).execute({}, context);
+    expect(transport.requests[0]?.headers["authorization"]).toBe(
+      "Bearer tok-scheme2",
+    );
+  });
+
+  it("falls back to anonymous alternative when credentials are not resolved and allowsAnonymous is true", async () => {
+    const transport = new FakeTransport([jsonResponse({ ok: true })]);
+    const executor = createUpstreamExecutor(
+      options(transport, {
+        credentialProvider: {
+          resolveCredential: async () => undefined,
+        },
+      }),
+    );
+
+    const anonOp = operation({
+      authentication: {
+        alternatives: [
+          {
+            schemes: [
+              {
+                name: "opt_scheme",
+                type: "http",
+                httpScheme: "bearer",
+                scopes: [],
+              },
+            ],
+          },
+          { schemes: [] }, // anonymous alternative
+        ],
+        allowsAnonymous: true,
+      },
+    });
+
+    await executor.createTool(anonOp).execute({}, context);
+    expect(transport.requests[0]?.headers["authorization"]).toBeUndefined();
+  });
+
+  it("fails closed with AUTH_REQUIRED when credentials are missing and no anonymous alternative exists", async () => {
+    const transport = new FakeTransport([]);
+    const executor = createUpstreamExecutor(
+      options(transport, {
+        credentialProvider: {
+          resolveCredential: async () => undefined,
+        },
+      }),
+    );
+
+    const secureOp = operation({
+      authentication: {
+        alternatives: [
+          {
+            schemes: [
+              {
+                name: "mandatory_key",
+                type: "apiKey",
+                parameterName: "X-Key",
+                parameterLocation: "header",
+                scopes: [],
+              },
+            ],
+          },
+        ],
+        allowsAnonymous: false,
+      },
+    });
+
+    const tool = executor.createTool(secureOp);
+    await expect(tool.execute({}, context)).rejects.toMatchObject({
+      code: "AUTH_REQUIRED",
+      message: "Authentication required",
+    });
+    expect(transport.requests.length).toBe(0);
+  });
+
+  it("binds credential resolution to context.signal and executor timeout", async () => {
+    const transport = new FakeTransport([]);
+    const executor = createUpstreamExecutor(
+      options(transport, {
+        timeoutMs: 30,
+        credentialProvider: {
+          resolveCredential: async (ctx) => {
+            return new Promise((resolve, reject) => {
+              if (ctx.signal?.aborted) {
+                reject(ctx.signal.reason);
+                return;
+              }
+              const onAbort = () => reject(ctx.signal?.reason);
+              ctx.signal?.addEventListener("abort", onAbort, { once: true });
+            });
+          },
+        },
+      }),
+    );
+
+    const secureOp = operation({
+      authentication: {
+        alternatives: [
+          {
+            schemes: [
+              {
+                name: "slow_key",
+                type: "apiKey",
+                parameterName: "X-Key",
+                parameterLocation: "header",
+                scopes: [],
+              },
+            ],
+          },
+        ],
+        allowsAnonymous: false,
+      },
+    });
+
+    const tool = executor.createTool(secureOp);
+
+    // 1. Timeout during credential resolution
+    await expect(tool.execute({}, context)).rejects.toMatchObject({
+      code: "UPSTREAM_TIMEOUT",
+      message: "Upstream request timed out",
+    });
+
+    // 2. Cancellation during credential resolution
+    const abortCtrl = new AbortController();
+    const cancelPromise = tool.execute(
+      {},
+      { ...context, signal: abortCtrl.signal },
+    );
+    abortCtrl.abort(new Error("caller cancelled"));
+    await expect(cancelPromise).rejects.toMatchObject({
+      code: "CANCELLED",
+    });
+  });
+
+  it("rejects invalid or reserved credential names", async () => {
+    const transport = new FakeTransport([]);
+
+    // 1. Invalid characters in header name
+    const invalidHeaderExecutor = createUpstreamExecutor(
+      options(transport, {
+        credentialProvider: {
+          resolveCredential: async () => ({
+            type: "apiKey",
+            name: "bad header with spaces",
+            location: "header",
+            value: "secret",
+          }),
+        },
+      }),
+    );
+    const op = operation({
+      authentication: {
+        alternatives: [
+          {
+            schemes: [
+              {
+                name: "k",
+                type: "apiKey",
+                parameterName: "k",
+                parameterLocation: "header",
+                scopes: [],
+              },
+            ],
+          },
+        ],
+        allowsAnonymous: false,
+      },
+    });
+    await expect(
+      invalidHeaderExecutor.createTool(op).execute({}, context),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_FAILURE",
+      cause: expect.objectContaining({
+        message: expect.stringContaining("is invalid"),
+      }),
+    });
+
+    // 2. Reserved header name like Host
+    const reservedHeaderExecutor = createUpstreamExecutor(
+      options(transport, {
+        credentialProvider: {
+          resolveCredential: async () => ({
+            type: "apiKey",
+            name: "Host",
+            location: "header",
+            value: "evil.example.com",
+          }),
+        },
+      }),
+    );
+    await expect(
+      reservedHeaderExecutor.createTool(op).execute({}, context),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_FAILURE",
+      cause: expect.objectContaining({
+        message: expect.stringContaining("is reserved"),
+      }),
+    });
+
+    // 3. Reserved query name like __proto__
+    const reservedQueryExecutor = createUpstreamExecutor(
+      options(transport, {
+        credentialProvider: {
+          resolveCredential: async () => ({
+            type: "apiKey",
+            name: "__proto__",
+            location: "query",
+            value: "evil",
+          }),
+        },
+      }),
+    );
+    await expect(
+      reservedQueryExecutor.createTool(op).execute({}, context),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_FAILURE",
+      cause: expect.objectContaining({
+        message: expect.stringContaining("is reserved"),
+      }),
+    });
+  });
+
+  it("proves caller input cannot override credential headers or query parameters", async () => {
+    const transport = new FakeTransport([
+      jsonResponse({ ok: true }),
+      jsonResponse({ ok: true }),
+    ]);
+
+    const executor = createUpstreamExecutor(
+      options(transport, {
+        credentialProvider: {
+          resolveCredential: async (ctx) => {
+            if (ctx.schemeName === "header_auth") {
+              return {
+                type: "apiKey",
+                name: "X-API-KEY",
+                location: "header",
+                value: "system-secret-key",
+              };
+            }
+            if (ctx.schemeName === "query_auth") {
+              return {
+                type: "apiKey",
+                name: "api_key",
+                location: "query",
+                value: "system-secret-query",
+              };
+            }
+            return undefined;
+          },
+        },
+      }),
+    );
+
+    // 1. Caller declares and passes X-API-KEY in header parameter
+    const headerOp = operation({
+      parameters: [
+        { name: "X-API-KEY", in: "header", required: false },
+        { name: "other-header", in: "header", required: false },
+      ],
+      authentication: {
+        alternatives: [
+          {
+            schemes: [
+              {
+                name: "header_auth",
+                type: "apiKey",
+                parameterName: "X-API-KEY",
+                parameterLocation: "header",
+                scopes: [],
+              },
+            ],
+          },
+        ],
+        allowsAnonymous: false,
+      },
+    });
+
+    const headerTool = executor.createTool(headerOp);
+    await headerTool.execute(
+      {
+        "X-API-KEY": "caller-evil-key",
+        "other-header": "safe-value",
+      },
+      context,
+    );
+
+    const sentHeaders = transport.requests[0]?.headers ?? {};
+    // Caller's value must NOT be present
+    expect(sentHeaders["x-api-key"]).toBe("system-secret-key");
+    expect(sentHeaders["X-API-KEY"]).toBeUndefined();
+    expect(sentHeaders["other-header"]).toBe("safe-value");
+
+    // 2. Caller passes query parameter matching the credential query parameter
+    const queryOp = operation({
+      parameters: [{ name: "api_key", in: "query", required: false }],
+      authentication: {
+        alternatives: [
+          {
+            schemes: [
+              {
+                name: "query_auth",
+                type: "apiKey",
+                parameterName: "api_key",
+                parameterLocation: "query",
+                scopes: [],
+              },
+            ],
+          },
+        ],
+        allowsAnonymous: false,
+      },
+    });
+
+    const queryTool = executor.createTool(queryOp);
+    await queryTool.execute(
+      {
+        api_key: "caller-evil-query-val",
+      },
+      context,
+    );
+
+    const sentUrl = transport.requests[1]?.url;
+    // URL search params must contain only the system credential value
+    expect(sentUrl?.searchParams.getAll("api_key")).toEqual([
+      "system-secret-query",
+    ]);
+  });
+});

@@ -8,6 +8,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Documentation
 
+- Document authentication, upstream credentials, encrypted secret storage, and distributed rate limiting in `docs/authentication.md`, `docs/rate-limiting.md`, `API_REFERENCE.md`, `CONFIGURATION.md`, `ARCHITECTURE.md`, `SECURITY.md`, and ADR 0021.
 - Define product vision and package boundaries.
 - Specify generated-server and dynamic-gateway modes.
 - Define configuration and public interface contracts.
@@ -29,6 +30,13 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- Complete Milestone 5 (Authentication and rate limiting):
+  - Add `EncryptedSecretStore` with AES-256-GCM authenticated encryption, 96-bit random IVs, 128-bit authentication tags, AAD key-binding, key rings, and key rotation to `@chainmcp/auth`.
+  - Add pluggable upstream credential providers (`StaticCredentialProvider`, `EnvCredentialProvider`, `SecretStoreCredentialProvider`, `CompositeCredentialProvider`, and `OAuthClientCredentialsProvider`) to `@chainmcp/auth`.
+  - Implement OAuth 2.0 Client Credentials flow (RFC 6749) with token caching, expiration safety margins, automatic refresh, and manual invalidation.
+  - Wire `credentialProvider` into `@chainmcp/executor` with explicit OR/AND authentication policy evaluation, header/query/cookie injection, and fail-closed `AUTH_REQUIRED` enforcement.
+  - Add `@chainmcp/rate-limit` package providing `InMemoryRateLimiter` and `DistributedRateLimiter` (Redis-backed with atomic Lua scripts for rolling window quotas and concurrency permits) with exact `retryAfterSeconds` calculation across server processes.
+  - Extend `@chainmcp/core` with `retryAfterSeconds` on `RateLimitDecision` and `RuntimeError`, and `release?(context, toolName)` concurrency permit release hook.
 - Add a pnpm workspace with strict TypeScript, lint/format, test, typecheck, build, and CI configuration.
 - Add `@chainmcp/core` with registration, discovery, supported-subset input validation, authorization/rate-limit hooks, timeout/cancellation handling, metrics, and deterministic identity-partitioned cache-key serialization.
 - Add `@chainmcp/config` with strict Zod validation and defaults for the implemented configuration subset.

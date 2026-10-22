@@ -4,6 +4,10 @@ import {
   type ToolDefinition,
 } from "@chainmcp/core";
 import type { CompiledOperation } from "@chainmcp/compiler";
+import type {
+  UpstreamCredential,
+  UpstreamCredentialProvider,
+} from "@chainmcp/auth";
 
 import {
   DEFAULT_MAX_URL_LENGTH,
@@ -82,6 +86,7 @@ interface NormalizedExecutorOptions {
   policy: DestinationPolicy;
   resolver: HostResolver;
   transport: UpstreamTransport;
+  credentialProvider?: UpstreamCredentialProvider;
   maxResponseBytes: number;
   maxRequestBytes: number;
   maxRedirects: number;
@@ -155,12 +160,22 @@ async function executeOperation(
   }
   const stop = createStopSignal(context.signal, settings.timeoutMs);
   try {
+    const credentials = await abortable(
+      resolveUpstreamCredentials(
+        operation,
+        context,
+        settings.credentialProvider,
+        stop.signal,
+      ),
+      stop.signal,
+    );
     let current = buildInitialRequest(
       operation,
       input,
       settings.baseUrl,
       settings.maxRequestBytes,
       settings.policy.maxUrlLength,
+      credentials,
     );
     for (let redirects = 0; ; redirects += 1) {
       const destination = await abortable(
@@ -356,6 +371,17 @@ function normalizeOptions(
     );
   }
 
+  if (
+    options.credentialProvider !== undefined &&
+    (typeof options.credentialProvider !== "object" ||
+      options.credentialProvider === null ||
+      typeof options.credentialProvider.resolveCredential !== "function")
+  ) {
+    throw new TypeError(
+      "Executor option 'credentialProvider' must be an object with resolveCredential",
+    );
+  }
+
   return {
     baseUrl,
     policy: {
@@ -367,6 +393,9 @@ function normalizeOptions(
     },
     resolver: options.resolveHost ?? systemHostResolver,
     transport: options.transport ?? createNodeUpstreamTransport(),
+    ...(options.credentialProvider === undefined
+      ? {}
+      : { credentialProvider: options.credentialProvider }),
     maxResponseBytes,
     maxRequestBytes,
     maxRedirects,
@@ -429,12 +458,89 @@ function validateOperation(operation: CompiledOperation): void {
   }
 }
 
+async function resolveUpstreamCredentials(
+  operation: CompiledOperation,
+  context: ToolContext,
+  provider?: UpstreamCredentialProvider,
+  signal?: AbortSignal,
+): Promise<readonly UpstreamCredential[] | undefined> {
+  const policy = operation.authentication;
+  if (!policy || policy.alternatives.length === 0) {
+    return undefined;
+  }
+
+  for (const alternative of policy.alternatives) {
+    if (alternative.schemes.length === 0) {
+      return [];
+    }
+
+    if (!provider) {
+      continue;
+    }
+
+    let allSchemesResolved = true;
+    const resolvedSchemes: UpstreamCredential[] = [];
+
+    for (const scheme of alternative.schemes) {
+      let cred: UpstreamCredential | undefined;
+      try {
+        cred = await provider.resolveCredential({
+          tenantId: context.tenantId,
+          ...(context.principal?.id !== undefined
+            ? { principalId: context.principal.id }
+            : {}),
+          toolName: operation.name,
+          schemeName: scheme.name,
+          schemeType: scheme.type,
+          ...(scheme.parameterName !== undefined
+            ? { parameterName: scheme.parameterName }
+            : {}),
+          ...(scheme.parameterLocation !== undefined
+            ? { parameterLocation: scheme.parameterLocation }
+            : {}),
+          ...(scheme.httpScheme !== undefined
+            ? { httpScheme: scheme.httpScheme }
+            : {}),
+          ...(scheme.scopes !== undefined && scheme.scopes.length > 0
+            ? { requiredScopes: scheme.scopes }
+            : {}),
+          ...(signal !== undefined ? { signal } : {}),
+        });
+      } catch (error) {
+        if (signal?.aborted) {
+          throw error;
+        }
+        throw new RuntimeError("AUTH_REQUIRED", "Authentication required", {
+          cause: error,
+        });
+      }
+
+      if (!cred) {
+        allSchemesResolved = false;
+        break;
+      }
+      resolvedSchemes.push(cred);
+    }
+
+    if (allSchemesResolved) {
+      return resolvedSchemes;
+    }
+  }
+
+  if (policy.allowsAnonymous) {
+    return [];
+  }
+
+  throw new RuntimeError("AUTH_REQUIRED", "Authentication required");
+}
+
 function buildInitialRequest(
   operation: CompiledOperation,
   input: unknown,
   baseUrl: URL,
   maxRequestBytes: number,
   maxUrlLength: number,
+  credentials?: readonly UpstreamCredential[],
 ): BuiltRequest {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     throw new RequestBuildError("Input must be an object");
@@ -472,6 +578,42 @@ function buildInitialRequest(
       throw new RequestBuildError("Header parameter is reserved");
     }
     headers[parameter.name] = serializeHeader(valueOf(values, parameter.name));
+  }
+
+  if (credentials) {
+    for (const cred of credentials) {
+      if (cred.type === "apiKey") {
+        if (cred.location === "header") {
+          validateCredentialName(cred.name, "header");
+          deleteHeaderCaseInsensitive(headers, cred.name);
+          headers[cred.name.toLowerCase()] = assertHeaderValue(cred.value);
+        } else if (cred.location === "query") {
+          validateCredentialName(cred.name, "query");
+          url.searchParams.delete(cred.name);
+          appendQuery(url, cred.name, cred.value, maxUrlLength);
+        } else if (cred.location === "cookie") {
+          validateCredentialName(cred.name, "cookie");
+          injectCookie(headers, cred.name, cred.value);
+        }
+      } else if (cred.type === "http") {
+        deleteHeaderCaseInsensitive(headers, "authorization");
+        if (cred.scheme === "bearer") {
+          headers["authorization"] = assertHeaderValue(`Bearer ${cred.token}`);
+        } else if (cred.scheme === "basic") {
+          const auth = Buffer.from(
+            `${cred.username}:${cred.password}`,
+            "utf8",
+          ).toString("base64");
+          headers["authorization"] = assertHeaderValue(`Basic ${auth}`);
+        }
+      } else if (cred.type === "oauth2") {
+        deleteHeaderCaseInsensitive(headers, "authorization");
+        const tokenType = cred.tokenType ?? "Bearer";
+        headers["authorization"] = assertHeaderValue(
+          `${tokenType} ${cred.token}`,
+        );
+      }
+    }
   }
 
   let body: Uint8Array | undefined;
@@ -664,6 +806,66 @@ function hasControlCharacter(value: string): boolean {
     if (code <= 0x1f || code === 0x7f) return true;
   }
   return false;
+}
+
+function validateCredentialName(
+  name: string,
+  location: "header" | "query" | "cookie",
+): void {
+  if (typeof name !== "string" || !HEADER_NAME.test(name)) {
+    throw new RequestBuildError(
+      `Credential ${location} name '${name}' is invalid`,
+    );
+  }
+  const lower = name.toLowerCase();
+  if (location === "header" && RESERVED_REQUEST_HEADERS.has(lower)) {
+    throw new RequestBuildError(`Credential header name '${name}' is reserved`);
+  }
+  if (
+    lower === "__proto__" ||
+    lower === "prototype" ||
+    lower === "constructor"
+  ) {
+    throw new RequestBuildError(
+      `Credential ${location} name '${name}' is reserved`,
+    );
+  }
+}
+
+function deleteHeaderCaseInsensitive(
+  headers: Record<string, string>,
+  name: string,
+): void {
+  const lower = name.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === lower) {
+      delete headers[key];
+    }
+  }
+}
+
+function injectCookie(
+  headers: Record<string, string>,
+  name: string,
+  value: string,
+): void {
+  assertHeaderValue(value);
+  const cookiePair = `${name}=${value}`;
+  const prev = headers["cookie"];
+  if (!prev) {
+    headers["cookie"] = cookiePair;
+    return;
+  }
+  const parts = prev
+    .split(";")
+    .map((p) => p.trim())
+    .filter((p) => {
+      const eqIdx = p.indexOf("=");
+      const existingName = eqIdx === -1 ? p : p.slice(0, eqIdx);
+      return existingName.toLowerCase() !== name.toLowerCase();
+    });
+  parts.push(cookiePair);
+  headers["cookie"] = parts.join("; ");
 }
 
 function valueOf(
