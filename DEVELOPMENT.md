@@ -79,6 +79,21 @@ Test OpenAPI 3.0 and 3.1 documents, invalid schemas, missing operation IDs, auth
 
 Test real MCP client interactions, upstream HTTP requests, cache adapters, and generated-server builds.
 
+### Optional Redis integration tests
+
+The rate limiter's Lua scripts are covered by unit tests against a JavaScript
+fake. To prove the scripts against a real server, point the suite at Redis:
+
+```bash
+docker run --rm -p 6379:6379 redis:7-alpine
+CHAINMCP_TEST_REDIS_URL=redis://127.0.0.1:6379 \
+  pnpm --filter @chainmcp/rate-limit test
+```
+
+The suite skips itself when `CHAINMCP_TEST_REDIS_URL` is unset, so `pnpm test`
+and `pnpm check` stay hermetic. CI runs the same command in a dedicated job with
+a Redis service container.
+
 ### Security tests
 
 Cover SSRF, redirects, DNS rebinding considerations, cross-tenant cache isolation, credential redaction, authorization bypass, oversized responses, and malicious JSON.
