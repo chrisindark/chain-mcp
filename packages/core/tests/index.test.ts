@@ -9,6 +9,7 @@ import {
   RuntimeError,
   type ToolContext,
   type ToolDefinition,
+  type ToolSource,
 } from "../src/index.js";
 
 const context: ToolContext = {
@@ -1671,6 +1672,92 @@ describe("tenant binding and tenancy modes (ADR 0008)", () => {
       await expect(
         runtime.callTool("lookup_item", { id: "1" }, ctx),
       ).resolves.toBe("successful result");
+    });
+  });
+
+  describe("ToolSource and registerSource", () => {
+    it("registers tools returned from a synchronous ToolSource", async () => {
+      const runtime = new InMemoryToolRuntime();
+      const testTool: ToolDefinition = {
+        name: "sync_tool",
+        description: "Synchronous source tool",
+        inputSchema: { type: "object", additionalProperties: false },
+        operation: {},
+        execute: async () => ({ status: "ok" }),
+      };
+      const source: ToolSource = {
+        getTools: () => [testTool],
+      };
+
+      await runtime.registerSource(source);
+      const tools = runtime.listTools();
+      expect(tools).toHaveLength(1);
+      expect(tools[0]?.name).toBe("sync_tool");
+
+      const result = await runtime.callTool("sync_tool", {}, context);
+      expect(result).toEqual({ status: "ok" });
+    });
+
+    it("registers tools returned from an asynchronous ToolSource", async () => {
+      const runtime = new InMemoryToolRuntime();
+      const testTool: ToolDefinition = {
+        name: "async_tool",
+        description: "Asynchronous source tool",
+        inputSchema: { type: "object", additionalProperties: false },
+        operation: {},
+        execute: async () => ({ data: 42 }),
+      };
+      const source: ToolSource = {
+        getTools: async () => [testTool],
+      };
+
+      await runtime.registerSource(source);
+      const tools = runtime.listTools();
+      expect(tools).toHaveLength(1);
+      expect(tools[0]?.name).toBe("async_tool");
+
+      const result = await runtime.callTool("async_tool", {}, context);
+      expect(result).toEqual({ data: 42 });
+    });
+
+    it("rejects an invalid ToolSource missing getTools", async () => {
+      const runtime = new InMemoryToolRuntime();
+      // @ts-expect-error -- testing invalid source object
+      await expect(runtime.registerSource({})).rejects.toThrowError(
+        expect.objectContaining({
+          code: "CONFIG_INVALID",
+          message: "Tool source must provide a getTools() function",
+        }),
+      );
+    });
+
+    it("rejects a ToolSource returning a non-array", async () => {
+      const runtime = new InMemoryToolRuntime();
+      const invalidSource = {
+        getTools: () => ({ name: "not_an_array" }),
+      };
+      // @ts-expect-error -- testing runtime non-array return
+      await expect(runtime.registerSource(invalidSource)).rejects.toThrowError(
+        expect.objectContaining({
+          code: "CONFIG_INVALID",
+          message: "Tool source getTools() must return an array of tools",
+        }),
+      );
+    });
+
+    it("propagates registration validation errors from tools in the source", async () => {
+      const runtime = new InMemoryToolRuntime();
+      const invalidTool: ToolDefinition = {
+        name: "invalid name with spaces",
+        description: "Invalid",
+        inputSchema: { type: "object" },
+        operation: {},
+        execute: async () => {},
+      };
+      const source: ToolSource = {
+        getTools: () => [invalidTool],
+      };
+      await expect(runtime.registerSource(source)).rejects.toThrow(TypeError);
     });
   });
 });

@@ -54,6 +54,107 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   const cwd = options.cwd ?? process.cwd();
   const projectDir = resolve(cwd, options.output ?? ".");
 
+  // Handle blank code-first project scaffolding
+  if (options.blank) {
+    const rawTitle = options.name ?? basename(projectDir) ?? "chainmcp-server";
+    const projectName = sanitizeProjectName(rawTitle);
+
+    const configPath = join(projectDir, "chainmcp.config.yaml");
+    if (!options.force && (await fileExists(configPath))) {
+      return {
+        ok: false,
+        projectName,
+        projectDir,
+        specPath: "",
+        configPath,
+        toolCount: 1,
+        createdFiles: [],
+        error: `Directory already contains ${configPath}. Use --force to overwrite.`,
+      };
+    }
+
+    await mkdir(projectDir, { recursive: true });
+    await mkdir(join(projectDir, "src"), { recursive: true });
+
+    const createdFiles: string[] = [];
+
+    // Write configuration without contract
+    const configYaml = renderConfigYaml({
+      name: projectName,
+      allowedHosts: [],
+      blank: true,
+    });
+    await writeFile(configPath, configYaml, "utf8");
+    createdFiles.push("chainmcp.config.yaml");
+
+    // Write package.json
+    const packageJson = renderPackageJson({ name: projectName });
+    await writeFile(join(projectDir, "package.json"), packageJson, "utf8");
+    createdFiles.push("package.json");
+
+    // Write TypeScript configs
+    await writeFile(
+      join(projectDir, "tsconfig.json"),
+      renderTsconfigJson(),
+      "utf8",
+    );
+    createdFiles.push("tsconfig.json");
+    await writeFile(
+      join(projectDir, "tsconfig.build.json"),
+      renderTsconfigBuildJson(),
+      "utf8",
+    );
+    createdFiles.push("tsconfig.build.json");
+
+    // Write source files
+    await writeFile(
+      join(projectDir, "src", "server.ts"),
+      renderServerTs(),
+      "utf8",
+    );
+    createdFiles.push("src/server.ts");
+    await writeFile(
+      join(projectDir, "src", "tools.ts"),
+      renderToolsTs({ blank: true }),
+      "utf8",
+    );
+    createdFiles.push("src/tools.ts");
+
+    // Write Docker and git templates
+    await writeFile(join(projectDir, "Dockerfile"), renderDockerfile(), "utf8");
+    createdFiles.push("Dockerfile");
+    await writeFile(
+      join(projectDir, ".dockerignore"),
+      renderDockerignore(),
+      "utf8",
+    );
+    createdFiles.push(".dockerignore");
+    await writeFile(join(projectDir, ".gitignore"), renderGitignore(), "utf8");
+    createdFiles.push(".gitignore");
+
+    // Write README.md
+    await writeFile(
+      join(projectDir, "README.md"),
+      renderReadme({
+        name: projectName,
+        toolCount: 1,
+        blank: true,
+      }),
+      "utf8",
+    );
+    createdFiles.push("README.md");
+
+    return {
+      ok: true,
+      projectName,
+      projectDir,
+      specPath: "",
+      configPath,
+      toolCount: 1,
+      createdFiles,
+    };
+  }
+
   // 1. Locate spec file
   let candidateSpecPath = options.spec ? resolve(cwd, options.spec) : undefined;
   if (!candidateSpecPath) {

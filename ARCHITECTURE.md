@@ -41,13 +41,13 @@ The target architecture consists of tool sources, a shared runtime, MCP adapters
 
 ## 3. Monorepo package boundaries
 
-Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, `@chainmcp/server`, `@chainmcp/analytics`, `@chainmcp/json-navigation`, and `@chainmcp/cli`. Remaining rows describe planned boundaries; no empty packages are created for them.
+Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, `@chainmcp/server`, `@chainmcp/analytics`, `@chainmcp/json-navigation`, `@chainmcp/cli`, and `@chainmcp/authoring`. Remaining rows describe planned boundaries; no empty packages are created for them.
 
 | Package                     | Responsibility                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `@chainmcp/core`            | Runtime interfaces, registry, execution pipeline, errors                                               |
 | `@chainmcp/compiler`        | OpenAPI parsing, validation, tool generation                                                           |
-| `@chainmcp/authoring`       | Code-first tool definitions, schema lowering, and scaffold support (planned, Milestone 8)              |
+| `@chainmcp/authoring`       | Code-first tool definitions, schema lowering, and scaffold support                                     |
 | `@chainmcp/server`          | Official MCP SDK tool adapter and local stdio transport                                                |
 | `@chainmcp/cache-redis`     | Optional shared Redis cache adapter; cache interfaces remain in core                                   |
 | `@chainmcp/auth`            | Identity, authorization, and credential abstractions, including the default operation-scope authorizer |
@@ -98,17 +98,19 @@ closed when exceeded. Unsupported composition is rejected rather than ignored.
 
 ## 4.1 Tool sources and code-first authoring
 
-`ToolDefinition` is the runtime boundary; the OpenAPI compiler is one producer,
-not part of the runtime. Milestone 8 adds a `ToolSource` interface and a manual
-source:
+`ToolDefinition` is the runtime boundary; tool sources produce `ToolDefinition`s
+via the `ToolSource` interface (`getTools()`), which `InMemoryToolRuntime.registerSource()`
+registers into the shared runtime pipeline:
 
-- **OpenAPI source.** The compiler and executor produce tools with deterministic
-  manifests and a pinned contract revision.
-- **Manual source.** Application code registers tools through an authoring
-  facade (working name `defineTool()`). Input schemas are lowered to the same
-  audited JSON Schema subset, and every invocation goes through the same
-  authorization, validation, cache, rate-limit, timeout, and output-policy
-  pipeline.
+- **OpenAPI source (`OpenApiToolSource`).** Provided by `@chainmcp/executor`.
+  Wraps compiled operations and turns them into tools with deterministic manifests
+  and a pinned contract revision.
+- **Manual source (`ManualToolSource`).** Provided by `@chainmcp/authoring`.
+  Application code defines tools through the `defineTool()` authoring facade
+  using Zod schemas or raw JSON Schema. Input schemas are lowered and audited at
+  definition time, and every invocation passes through the exact same authorization,
+  validation, cache, rate-limit, timeout, cancellation, and output-policy pipeline
+  as compiled tools.
 - **Declarative source (post-1.0).** A versioned descriptor executed by the
   bounded HTTP executor, with no user-supplied code evaluation.
 

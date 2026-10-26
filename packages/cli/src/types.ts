@@ -1,6 +1,7 @@
 import type { Readable, Writable } from "node:stream";
 import type { CompileDiagnostic, CompileManifest } from "@chainmcp/compiler";
 import type { ChainMcpConfig } from "@chainmcp/config";
+import type { ToolDefinition } from "@chainmcp/core";
 
 export const CLI_VERSION = "0.1.0";
 
@@ -30,6 +31,7 @@ export interface InitOptions {
   output?: string | undefined;
   name?: string | undefined;
   baseUrl?: string | undefined;
+  blank?: boolean | undefined;
   force?: boolean | undefined;
   cwd?: string | undefined;
 }
@@ -104,6 +106,28 @@ export interface ServeResult {
   toolCount: number;
   close(): Promise<void>;
   closed: Promise<void>;
+}
+
+export interface DevOptions {
+  config?: string | undefined;
+  spec?: string | undefined;
+  baseUrl?: string | undefined;
+  cwd?: string | undefined;
+  tools?: readonly ToolDefinition[] | undefined;
+  tenantId?: string | undefined;
+  stdin?: Readable | undefined;
+  stdout?: Writable | undefined;
+  signal?: AbortSignal | undefined;
+}
+
+export interface DevResult {
+  ok: boolean;
+  serverName: string;
+  toolCount: number;
+  toolNames: readonly string[];
+  close(): Promise<void>;
+  closed: Promise<void>;
+  error?: string | undefined;
 }
 
 export interface ExportOptions {

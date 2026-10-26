@@ -14,6 +14,7 @@ export function renderPackageJson(options: PackageJsonOptions): string {
   const defaultDependencies: Record<string, string> = {
     "@chainmcp/analytics": versionSpec,
     "@chainmcp/auth": versionSpec,
+    "@chainmcp/authoring": versionSpec,
     "@chainmcp/compiler": versionSpec,
     "@chainmcp/config": versionSpec,
     "@chainmcp/core": versionSpec,
@@ -22,6 +23,7 @@ export function renderPackageJson(options: PackageJsonOptions): string {
     "@chainmcp/rate-limit": versionSpec,
     "@chainmcp/server": versionSpec,
     yaml: "^2.9.1",
+    zod: "^4.1.12",
   };
 
   const finalDependencies = {
@@ -97,16 +99,22 @@ export interface ConfigYamlOptions {
   name: string;
   allowedHosts: readonly string[];
   specRelativePath?: string | undefined;
+  blank?: boolean | undefined;
 }
 
 export function renderConfigYaml(options: ConfigYamlOptions): string {
+  const isBlank = options.blank === true;
   const config = {
     version: 1,
     name: options.name,
-    contract: {
-      source: options.specRelativePath ?? "./spec/openapi.yaml",
-      strict: true,
-    },
+    ...(isBlank
+      ? {}
+      : {
+          contract: {
+            source: options.specRelativePath ?? "./spec/openapi.yaml",
+            strict: true,
+          },
+        }),
     server: {
       transport: "stdio",
       requestTimeoutMs: 15000,
@@ -164,6 +172,7 @@ import {
   serveStdio,
   type Transport,
 } from "@chainmcp/server";
+import { tools } from "./tools.js";
 
 export interface RunServerOptions {
   configPath?: string;
@@ -188,45 +197,53 @@ export async function runServer(options?: RunServerOptions) {
   const rawConfig = parseYaml(rawConfigText);
   const config = parseConfig(rawConfig);
 
-  const contractPath =
-    options?.contractPath ??
-    join(projectRoot, config.contract?.source ?? "./spec/openapi.yaml");
-  const contractSource = await readFile(contractPath, "utf8");
-  const compiled = compileOpenApi(contractSource, {
-    strict: config.contract?.strict ?? true,
-  });
-
-  if (!compiled.ok) {
-    for (const diagnostic of compiled.diagnostics) {
-      console.error(
-        \`[\${diagnostic.severity.toUpperCase()}] \${diagnostic.code}: \${diagnostic.message}\${diagnostic.location ? \` at \${diagnostic.location}\` : ""}\`,
-      );
-    }
-    process.exit(1);
-  }
-
-  const primaryHost =
-    config.security.allowedUpstreamHosts[0] ?? "api.example.com";
-  const baseUrl = options?.baseUrl ?? \`https://\${primaryHost}\`;
-
-  const executorOverrides: Parameters<typeof buildExecutorOptions>[1] = {
-    baseUrl,
-    contractRevision: compiled.contractRevision,
-    ...(options?.transport !== undefined ? { transport: options.transport } : {}),
-    ...(options?.resolveHost !== undefined
-      ? { resolveHost: options.resolveHost }
-      : {}),
-  };
-
-  const executorOptions = buildExecutorOptions(config, executorOverrides);
-  const executor = createUpstreamExecutor(executorOptions);
-
   const runtimeOptions = buildRuntimeOptions(config);
   const runtime = new InMemoryToolRuntime(runtimeOptions);
 
-  // Register compiled API operations
-  for (const tool of executor.createTools(compiled.tools)) {
-    runtime.register(tool);
+  // Compile and register contract operations if contract is configured
+  const effectiveContractPath =
+    options?.contractPath ??
+    (config.contract?.source ? join(projectRoot, config.contract.source) : undefined);
+
+  if (effectiveContractPath) {
+    const contractSource = await readFile(effectiveContractPath, "utf8");
+    const compiled = compileOpenApi(contractSource, {
+      strict: config.contract?.strict ?? true,
+    });
+
+    if (!compiled.ok) {
+      for (const diagnostic of compiled.diagnostics) {
+        console.error(
+          \`[\${diagnostic.severity.toUpperCase()}] \${diagnostic.code}: \${diagnostic.message}\${diagnostic.location ? \` at \${diagnostic.location}\` : ""}\`,
+        );
+      }
+      process.exit(1);
+    }
+
+    const primaryHost =
+      config.security.allowedUpstreamHosts[0] ?? "api.example.com";
+    const baseUrl = options?.baseUrl ?? \`https://\${primaryHost}\`;
+
+    const executorOverrides: Parameters<typeof buildExecutorOptions>[1] = {
+      baseUrl,
+      contractRevision: compiled.contractRevision,
+      ...(options?.transport !== undefined ? { transport: options.transport } : {}),
+      ...(options?.resolveHost !== undefined
+        ? { resolveHost: options.resolveHost }
+        : {}),
+    };
+
+    const executorOptions = buildExecutorOptions(config, executorOverrides);
+    const executor = createUpstreamExecutor(executorOptions);
+
+    for (const tool of executor.createTools(compiled.tools)) {
+      runtime.register(tool);
+    }
+  }
+
+  // Register code-defined tools
+  for (const customTool of tools) {
+    runtime.register(customTool);
   }
 
   // Register JSON navigation tools if enabled
@@ -282,11 +299,40 @@ if (
 `;
 }
 
-export function renderToolsTs(): string {
-  return `/**
- * Generated tool definitions and metadata for ChainMcp.
+export function renderToolsTs(options?: { blank?: boolean }): string {
+  if (options?.blank) {
+    return `import { defineTool } from "@chainmcp/authoring";
+import { z } from "zod";
+
+/**
+ * Example code-first tool definition using @chainmcp/authoring and Zod.
+ * This tool passes through the exact same authorization, validation, caching,
+ * rate limiting, cancellation, and output policies as compiled OpenAPI tools.
  */
-export const GENERATED_AT = "2026-01-01T00:00:00.000Z";
+export const greetTool = defineTool({
+  name: "greet",
+  description: "Greets a person by name",
+  schema: z.object({
+    name: z.string().min(1).describe("Name of the person to greet"),
+    greeting: z.string().default("Hello").describe("Greeting prefix to prepend"),
+  }),
+  execute: async ({ name, greeting }) => {
+    return {
+      message: \`\${greeting}, \${name}!\`,
+    };
+  },
+});
+
+export const tools = [greetTool];
+`;
+  }
+  return `import type { ToolDefinition } from "@chainmcp/core";
+
+/**
+ * Custom application tools for ChainMcp.
+ * Export custom tools in the \`tools\` array to be served alongside compiled operations.
+ */
+export const tools: readonly ToolDefinition[] = [];
 `;
 }
 
@@ -335,18 +381,29 @@ dist/
 export interface ReadmeOptions {
   name: string;
   toolCount: number;
-  contractRevision: string;
+  contractRevision?: string | undefined;
+  blank?: boolean | undefined;
 }
 
 export function renderReadme(options: ReadmeOptions): string {
+  const isBlank = options.blank === true;
   return `# ${options.name}
 
-Portable Model Context Protocol (MCP) server generated by [ChainMcp](https://github.com/chrisindark/chain-mcp).
+${
+  isBlank
+    ? "Code-first Model Context Protocol (MCP) server authored with [ChainMcp](https://github.com/chrisindark/chain-mcp)."
+    : "Portable Model Context Protocol (MCP) server generated by [ChainMcp](https://github.com/chrisindark/chain-mcp)."
+}
 
 ## Overview
 
-- **Contract Revision:** \`${options.contractRevision}\`
-- **Exposed Tools:** ${options.toolCount} compiled API operations
+${
+  isBlank
+    ? `- **Authoring Model:** Code-first (\`@chainmcp/authoring\` + Zod)
+- **Exposed Tools:** ${options.toolCount} code-defined tools in \`src/tools.ts\``
+    : `- **Contract Revision:** \`${options.contractRevision ?? "unknown"}\`
+- **Exposed Tools:** ${options.toolCount} compiled API operations`
+}
 - **Transport:** Standard I/O (\`stdio\`)
 - **Shared Runtime:** Powered by \`@chainmcp/core\`, \`@chainmcp/executor\`, and \`@chainmcp/server\`
 

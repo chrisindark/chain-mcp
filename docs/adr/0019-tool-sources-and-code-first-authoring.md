@@ -1,7 +1,7 @@
 # ADR 0019: Tool sources and code-first authoring
 
-- Status: proposed
-- Date: 2026-10-21
+- Status: accepted
+- Date: 2026-10-21 (accepted 2026-10-26)
 
 ## Context
 

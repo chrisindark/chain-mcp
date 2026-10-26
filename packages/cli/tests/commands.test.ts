@@ -5,6 +5,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildCommand } from "../src/commands/build.js";
+import { devCommand } from "../src/commands/dev.js";
 import { exportCommand } from "../src/commands/export.js";
 import { initCommand } from "../src/commands/init.js";
 import { serveCommand } from "../src/commands/serve.js";
@@ -109,6 +110,49 @@ describe("CLI Commands", () => {
       });
       expect(result.ok).toBe(false);
       expect(result.error).toContain("was not found");
+    });
+
+    it("scaffolds a blank code-first project with --blank and no contract", async () => {
+      const targetDir = join(tempDir, "blank-server");
+      const result = await initCommand({
+        blank: true,
+        output: targetDir,
+        name: "my-code-first-server",
+        cwd: tempDir,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.projectName).toBe("my-code-first-server");
+      expect(result.toolCount).toBe(1);
+      expect(result.specPath).toBe("");
+      expect(result.createdFiles).toContain("chainmcp.config.yaml");
+      expect(result.createdFiles).toContain("package.json");
+      expect(result.createdFiles).toContain("src/tools.ts");
+      expect(result.createdFiles).toContain("src/server.ts");
+      expect(result.createdFiles).not.toContain("spec/openapi.yaml");
+
+      // Verify chainmcp.config.yaml has no contract section
+      const configText = await readFile(
+        join(targetDir, "chainmcp.config.yaml"),
+        "utf8",
+      );
+      expect(configText).toContain("name: my-code-first-server");
+      expect(configText).not.toContain("contract:");
+
+      // Verify src/tools.ts contains defineTool and greet tool
+      const toolsText = await readFile(
+        join(targetDir, "src", "tools.ts"),
+        "utf8",
+      );
+      expect(toolsText).toContain(
+        'import { defineTool } from "@chainmcp/authoring";',
+      );
+      expect(toolsText).toContain("greetTool");
+
+      // Verify package.json contains authoring and zod
+      const pkgText = await readFile(join(targetDir, "package.json"), "utf8");
+      expect(pkgText).toContain("@chainmcp/authoring");
+      expect(pkgText).toContain("zod");
     });
   });
 
@@ -347,6 +391,36 @@ security:
       // Close server
       await serverHandle.close();
       await serverHandle.closed;
+    });
+  });
+
+  describe("devCommand", () => {
+    it("starts dev server and registers custom programmatic tools and JSON navigation", async () => {
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+
+      const customTool = {
+        name: "test_dev_tool",
+        description: "Test dev tool",
+        inputSchema: { type: "object", additionalProperties: false },
+        operation: {},
+        execute: async () => ({ status: "dev_ok" }),
+      };
+
+      const devHandle = await devCommand({
+        cwd: tempDir,
+        tools: [customTool],
+        stdin,
+        stdout,
+      });
+
+      expect(devHandle.ok).toBe(true);
+      expect(devHandle.toolNames).toContain("test_dev_tool");
+      // 1 custom tool + 4 JSON navigation tools = 5 tools
+      expect(devHandle.toolCount).toBe(5);
+
+      await devHandle.close();
+      await devHandle.closed;
     });
   });
 });

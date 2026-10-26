@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 
 import { buildCommand } from "./commands/build.js";
+import { devCommand } from "./commands/dev.js";
 import { exportCommand } from "./commands/export.js";
 import { initCommand } from "./commands/init.js";
 import { serveCommand } from "./commands/serve.js";
@@ -14,10 +15,11 @@ Usage:
   chainmcp <command> [options]
 
 Commands:
-  init      Initialize a new ChainMcp project from an OpenAPI contract
+  init      Initialize a new ChainMcp project (OpenAPI contract or blank code-first)
   validate  Validate configuration and OpenAPI contract
   build     Compile contract and emit generation manifest
   serve     Serve the MCP server over stdio
+  dev       Run local developer authoring loop (stdio)
   export    Export a self-contained, portable generated server project
 
 Options:
@@ -27,6 +29,7 @@ Options:
 Command options:
   init:
     --spec <path>        Path to OpenAPI specification (YAML/JSON)
+    --blank              Scaffold a blank code-first project without contract
     --output <dir>       Target project directory (default: .)
     --name <name>        Project name
     --base-url <url>     Upstream base URL
@@ -46,6 +49,12 @@ Command options:
   serve:
     --config <path>      Path to chainmcp.config.yaml
     --spec <path>        Path to OpenAPI contract
+    --base-url <url>     Override upstream base URL
+    --tenant <id>        Tenant identifier for context (default: default)
+
+  dev:
+    --config <path>      Path to chainmcp.config.yaml
+    --spec <path>        Path to OpenAPI contract (if contract-driven)
     --base-url <url>     Override upstream base URL
     --tenant <id>        Tenant identifier for context (default: default)
 
@@ -82,6 +91,7 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       "out-dir": { type: "string" },
       transport: { type: "string" },
       tenant: { type: "string" },
+      blank: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
       strict: { type: "boolean", default: true },
       check: { type: "boolean", default: false },
@@ -116,6 +126,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
         ...(asString(values["base-url"]) !== undefined
           ? { baseUrl: asString(values["base-url"]) }
           : {}),
+        ...(asBoolean(values.blank) !== undefined
+          ? { blank: asBoolean(values.blank) }
+          : {}),
         ...(asBoolean(values.force) !== undefined
           ? { force: asBoolean(values.force) }
           : {}),
@@ -129,7 +142,15 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       log(
         `Initialized ChainMcp project '${result.projectName}' in ${result.projectDir}`,
       );
-      log(`Contract: ${result.specPath} (${result.toolCount} tools compiled)`);
+      if (result.specPath) {
+        log(
+          `Contract: ${result.specPath} (${result.toolCount} tools compiled)`,
+        );
+      } else {
+        log(
+          `Blank code-first project initialized with example tool in src/tools.ts (${result.toolCount} tool defined)`,
+        );
+      }
       log(`Config: ${result.configPath}`);
       return 0;
     }
@@ -234,6 +255,40 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       } catch (err) {
         errLog(
           `Server error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return 1;
+      }
+    }
+
+    case "dev": {
+      try {
+        const result = await devCommand({
+          ...(asString(values.config) !== undefined
+            ? { config: asString(values.config) }
+            : {}),
+          ...(asString(values.spec) !== undefined
+            ? { spec: asString(values.spec) }
+            : {}),
+          ...(asString(values["base-url"]) !== undefined
+            ? { baseUrl: asString(values["base-url"]) }
+            : {}),
+          ...(asString(values.tenant) !== undefined
+            ? { tenantId: asString(values.tenant) }
+            : {}),
+          ...(io?.stdin !== undefined ? { stdin: io.stdin } : {}),
+          ...(io?.stdoutStream !== undefined
+            ? { stdout: io.stdoutStream }
+            : {}),
+        });
+
+        log(
+          `Serving development MCP server '${result.serverName}' over stdio (${result.toolCount} tools registered)...`,
+        );
+        await result.closed;
+        return 0;
+      } catch (err) {
+        errLog(
+          `Dev server error: ${err instanceof Error ? err.message : String(err)}`,
         );
         return 1;
       }

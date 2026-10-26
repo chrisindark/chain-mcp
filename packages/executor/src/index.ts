@@ -16,6 +16,11 @@ export {
   createNodeUpstreamTransport,
 } from "./transport.js";
 export { normalizeAllowedHost, normalizeHostname } from "./destination.js";
+export {
+  OpenApiToolSource,
+  createOpenApiToolSource,
+  type OpenApiToolSourceOptions,
+} from "./source.js";
 export type {
   HostResolver,
   ResolvedDestination,

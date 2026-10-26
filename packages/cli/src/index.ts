@@ -3,6 +3,8 @@ export type {
   BuildOptions,
   BuildResult,
   CliIo,
+  DevOptions,
+  DevResult,
   ExportOptions,
   ExportResult,
   InitOptions,
@@ -18,6 +20,7 @@ export { runCli } from "./cli.js";
 export { initCommand } from "./commands/init.js";
 export { validateCommand } from "./commands/validate.js";
 export { buildCommand } from "./commands/build.js";
+export { devCommand } from "./commands/dev.js";
 export { serveCommand } from "./commands/serve.js";
 export { exportCommand } from "./commands/export.js";
 

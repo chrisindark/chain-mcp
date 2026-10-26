@@ -73,7 +73,15 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   cache?: ToolCachePolicy;
   output?: ToolOutputPolicy;
   ownerTenantId?: string;
+  timeoutMs?: number;
   execute(input: TInput, context: ToolContext): Promise<TOutput>;
+}
+
+export interface ToolSource {
+  /**
+   * Produces the set of tools supplied by this source.
+   */
+  getTools(): Promise<readonly ToolDefinition[]> | readonly ToolDefinition[];
 }
 ```
 
@@ -161,6 +169,7 @@ export interface ToolRuntime {
   readonly tenantMode: "single-tenant" | "multi-tenant";
 
   register(tool: ToolDefinition): void;
+  registerSource(source: ToolSource): Promise<void>;
 
   listTools(context?: ToolContext): ReadonlyArray<{
     name: string;
@@ -895,6 +904,26 @@ for (const tool of executor.createTools(result.tools)) runtime.register(tool);
 - Request-body serialization uses `JSON.stringify` before checking the byte cap, so a very large in-memory body can allocate before rejection. The runtime's input schema may also allow large strings or arrays.
 - `maxResponseBytes`, `maxRequestBytes`, `maxRedirects`, and `timeoutMs` are executor options, not `@chainmcp/config` fields yet.
 
+### `OpenApiToolSource`
+
+```ts
+export interface OpenApiToolSourceOptions {
+  executor: UpstreamExecutor;
+  operations: readonly CompiledOperation[];
+}
+
+export class OpenApiToolSource implements ToolSource {
+  constructor(options: OpenApiToolSourceOptions);
+  getTools(): readonly ToolDefinition[];
+}
+
+export function createOpenApiToolSource(
+  options: OpenApiToolSourceOptions,
+): OpenApiToolSource;
+```
+
+Adapts compiled OpenAPI operations and an `UpstreamExecutor` into a portable `ToolSource` instance ready to be registered via `ToolRuntime.registerSource(source)`.
+
 ## `@chainmcp/cache-redis`
 
 Optional Redis-backed `CacheStore` for shared caches:
@@ -1356,6 +1385,79 @@ Public-facing errors use stable codes such as:
 
 Never expose stack traces or credential values to MCP clients.
 
+## `@chainmcp/authoring`
+
+The `@chainmcp/authoring` package provides code-first tool authoring capabilities, schema lowering, and manual tool sources. Tools defined in application code pass through the exact same registration audit, authorization, validation, rate limiting, caching, cancellation, output policy, and error masking pipeline as compiled tools.
+
+### `defineTool`
+
+```ts
+export function defineTool<TInput = unknown, TOutput = unknown>(
+  options: DefineToolOptions<TInput, TOutput>,
+): ToolDefinition<TInput, TOutput>;
+```
+
+Defines an MCP tool with definition-time schema lowering and audit. Accepts either a Zod schema (`schema`) or raw JSON Schema (`inputSchema`), and rejects unsupported constructs (unions, recursive lazy schemas, functions) immediately at definition time.
+
+```ts
+export interface DefineToolOptions<TInput = unknown, TOutput = unknown> {
+  name: string;
+  description: string;
+  schema?: z.ZodType<TInput>;
+  inputSchema?: JsonSchema;
+  operation?: OperationPolicy;
+  cache?: ToolCachePolicy;
+  output?: ToolOutputPolicy;
+  contractRevision?: string;
+  version?: string;
+  ownerTenantId?: string;
+  timeoutMs?: number;
+  execute(input: TInput, context: ToolContext): Promise<TOutput>;
+}
+```
+
+### `ManualToolSource`
+
+```ts
+export class ManualToolSource implements ToolSource {
+  constructor(tools?: readonly ToolDefinition[]);
+  addTool(tool: ToolDefinition): this;
+  defineTool<TInput = unknown, TOutput = unknown>(
+    options: DefineToolOptions<TInput, TOutput>,
+  ): ToolDefinition<TInput, TOutput>;
+  getTools(): readonly ToolDefinition[];
+}
+
+export function createManualToolSource(
+  tools?: readonly ToolDefinition[],
+): ManualToolSource;
+```
+
+Collects hand-written tool definitions and implements `ToolSource` so they can be registered via `runtime.registerSource(source)`.
+
+### `zodToJsonSchema`
+
+```ts
+export function zodToJsonSchema(schema: z.ZodTypeAny): JsonSchema;
+```
+
+Lowers a Zod schema to the audited JSON Schema subset supported by ChainMcp. Asserts that the root is an object schema, strips metadata keywords (`$schema`, `$id`), and verifies compatibility using `auditInputSchema`.
+
+### `AuthoringError`
+
+```ts
+export type AuthoringErrorCode =
+  | "SCHEMA_NOT_OBJECT"
+  | "SCHEMA_AUDIT_FAILED"
+  | "SCHEMA_LOWERING_FAILED"
+  | "INVALID_TOOL_DEFINITION";
+
+export class AuthoringError extends Error {
+  public readonly code: AuthoringErrorCode;
+  public readonly diagnostics?: readonly SchemaDiagnostic[];
+}
+```
+
 ## `@chainmcp/server`
 
 `createMcpServer(runtime, options)` adapts the shared `ToolRuntime` to the
@@ -1434,10 +1536,11 @@ The `@chainmcp/cli` package implements developer commands and generated server s
 Exported as the `chainmcp` executable (`dist/bin.js`).
 
 ```bash
-chainmcp init --spec <path> [--output <dir>] [--name <name>] [--base-url <url>] [--force]
+chainmcp init [--spec <path>] [--blank] [--output <dir>] [--name <name>] [--base-url <url>] [--force]
 chainmcp validate [--config <path>] [--spec <path>] [--strict]
 chainmcp build [--config <path>] [--spec <path>] [--out-dir <dir>] [--check]
 chainmcp serve [--config <path>] [--spec <path>] [--base-url <url>] [--tenant <id>]
+chainmcp dev [--config <path>] [--spec <path>] [--base-url <url>] [--tenant <id>]
 chainmcp export [--config <path>] [--spec <path>] [--output <dir>] [--force] [--check]
 ```
 
@@ -1452,6 +1555,7 @@ export function validateCommand(
 ): Promise<ValidateResult>;
 export function buildCommand(options: BuildOptions): Promise<BuildResult>;
 export function serveCommand(options: ServeOptions): Promise<ServeResult>;
+export function devCommand(options: DevOptions): Promise<DevResult>;
 export function exportCommand(options: ExportOptions): Promise<ExportResult>;
 
 export function buildProjectManifest(

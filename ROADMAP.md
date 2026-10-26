@@ -261,15 +261,35 @@ OpenAPI compilation is the default tool source, not the only one. This
 milestone makes a blank, code-first project a supported deployment without
 forking the runtime or bypassing policy.
 
-- [ ] Define a `ToolSource` boundary that produces `ToolDefinition`s, with OpenAPI compilation as one implementation.
-- [ ] Add a manual tool source whose tools pass through the same validation, authorization, caching, rate-limit, cancellation, and output-policy pipeline as compiled tools.
-- [ ] Add an authoring facade (working name `defineTool()`) that accepts a supported `JsonSchema` and an optional Zod adapter, lowering to the audited schema subset and rejecting unsupported schemas at definition time.
-- [ ] Add `chainmcp init --blank` (or equivalent) that scaffolds a project with one hand-written example tool and no contract.
-- [ ] Add `chainmcp dev` for a local authoring loop, using stdio first and HTTP once the transport lands.
-- [ ] Document the code-first path in `docs/getting-started.md`, `API_REFERENCE.md`, and `CONFIGURATION.md`, and add a runnable example.
-- [ ] Test policy parity between manual and compiled tools, including error mapping, cancellation, and response caps.
+- [x] Define a `ToolSource` boundary that produces `ToolDefinition`s, with OpenAPI compilation as one implementation.
+- [x] Add a manual tool source whose tools pass through the same validation, authorization, caching, rate-limit, cancellation, and output-policy pipeline as compiled tools.
+- [x] Add an authoring facade (working name `defineTool()`) that accepts a supported `JsonSchema` and an optional Zod adapter, lowering to the audited schema subset and rejecting unsupported schemas at definition time.
+- [x] Add `chainmcp init --blank` (or equivalent) that scaffolds a project with one hand-written example tool and no contract.
+- [x] Add `chainmcp dev` for a local authoring loop, using stdio first and HTTP once the transport lands.
+- [x] Document the code-first path in `docs/getting-started.md`, `API_REFERENCE.md`, and `CONFIGURATION.md`, and add a runnable example.
+- [x] Test policy parity between manual and compiled tools, including error mapping, cancellation, and response caps.
 
 **Exit criteria:** a developer can scaffold a project without an OpenAPI document, define a tool in code, and call it from an MCP client with the same authorization, validation, and output guarantees as a compiled tool. Tool handlers are trusted application code shipped by the deploying developer; the server never evaluates user-supplied source.
+
+**Status (2026-10-26):** all Milestone 8 items are implemented and covered by
+tests. `@chainmcp/core` defines the portable `ToolSource` boundary and
+implements `registerSource(source: ToolSource): Promise<void>` on `InMemoryToolRuntime`.
+`@chainmcp/executor` implements `OpenApiToolSource` wrapping compiled OpenAPI
+operations and `UpstreamExecutor`.
+`@chainmcp/authoring` provides the `defineTool()` authoring facade, `zodToJsonSchema()`
+lowering, and `ManualToolSource`. Zod and raw JSON Schemas are lowered and audited at
+definition time via `auditInputSchema`, rejecting unsupported constructs (unions of
+complex types, recursive `$ref`, functions) before server startup.
+Policy parity tests (`parity.test.ts`) demonstrate 100% equivalence between manual and
+compiled tools across input validation, authorization scopes, rate limiting,
+cooperative cancellation/timeouts, output projection, cache partitioning/hits,
+and safe error concealing without leaking internal messages or credentials.
+`@chainmcp/cli` implements `chainmcp init --blank` for contract-free scaffolding
+and `chainmcp dev` for a local authoring loop over stdio.
+A runnable code-first example is provided in `examples/code-first` with automated
+integration tests over the official MCP SDK client.
+Documentation is updated in `docs/getting-started.md`, `API_REFERENCE.md`,
+`CONFIGURATION.md`, and `ARCHITECTURE.md`, ADR 0019 is accepted, and ADR 0025 is recorded.
 
 **Non-goals:** a visual tool editor, arbitrary code upload, and a hosted control plane. The declarative builder is tracked post-1.0.
 

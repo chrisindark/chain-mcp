@@ -50,6 +50,25 @@ importers:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@22.20.5)(jiti@2.7.0)(yaml@2.9.1)
 
+  examples/code-first:
+    dependencies:
+      "@chainmcp/authoring":
+        specifier: workspace:*
+        version: link:../../packages/authoring
+      "@chainmcp/core":
+        specifier: workspace:*
+        version: link:../../packages/core
+      "@chainmcp/server":
+        specifier: workspace:*
+        version: link:../../packages/server
+      zod:
+        specifier: ^4.1.12
+        version: 4.6.7
+    devDependencies:
+      "@modelcontextprotocol/client":
+        specifier: 2.3.1
+        version: 2.3.1
+
   examples/petstore:
     dependencies:
       "@chainmcp/compiler":
@@ -79,6 +98,15 @@ importers:
       "@chainmcp/core":
         specifier: workspace:*
         version: link:../core
+
+  packages/authoring:
+    dependencies:
+      "@chainmcp/core":
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.1.12
+        version: 4.6.7
 
   packages/cache-redis:
     dependencies:

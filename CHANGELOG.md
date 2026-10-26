@@ -8,6 +8,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Documentation
 
+- Document tool sources and code-first authoring, `@chainmcp/authoring`, `defineTool()`, schema lowering and audit, `chainmcp init --blank`, `chainmcp dev`, and policy parity in `docs/getting-started.md`, `API_REFERENCE.md`, `CONFIGURATION.md`, `ARCHITECTURE.md`, `ROADMAP.md`, ADR 0019 (accepted), and ADR 0025.
 - Document developer CLI commands, generation manifests, reproducibility requirements, and containerization in `docs/generated-servers.md`, `docs/deployment.md`, `API_REFERENCE.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and ADR 0024.
 - Document JSON navigation, structured logging, OpenTelemetry integration, and analytics aggregation in `docs/json-navigation.md`, `docs/analytics.md`, `API_REFERENCE.md`, `CONFIGURATION.md`, `ROADMAP.md`, and ADR 0023.
 - Document configuration wiring for network security, upstream credentials, and rate limiting in `CONFIGURATION.md`, `API_REFERENCE.md`, `ROADMAP.md`, and ADR 0022.
@@ -33,6 +34,14 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- Complete Milestone 8 (Tool sources and code-first authoring):
+  - Add `ToolSource` interface in `@chainmcp/core` and `registerSource(source: ToolSource): Promise<void>` on `InMemoryToolRuntime`.
+  - Add `OpenApiToolSource` in `@chainmcp/executor` wrapping compiled operations and `UpstreamExecutor`.
+  - Add `@chainmcp/authoring` package with `defineTool()` authoring facade, `ManualToolSource`, and `zodToJsonSchema()` adapter lowering Zod and raw JSON Schemas to the audited subset with definition-time validation.
+  - Add policy parity tests (`packages/authoring/tests/parity.test.ts`) asserting 100% equivalence between manual and compiled tools across input validation, authorization scopes, rate limiting, cooperative cancellation/timeout, output projection, result caching, and safe error masking.
+  - Add `chainmcp init --blank` in `@chainmcp/cli` to scaffold contract-free, code-first MCP server projects with example tool, configuration, and build templates.
+  - Add `chainmcp dev` in `@chainmcp/cli` for a local developer authoring loop over stdio.
+  - Add runnable code-first example in `examples/code-first` with automated integration tests over the official MCP SDK client.
 - Complete Milestone 7 (Developer CLI and Generated Servers):
   - Add `@chainmcp/cli` package implementing developer CLI commands (`init`, `validate`, `build`, `serve`, `export`) using Node.js built-in `util.parseArgs` and strictly asynchronous I/O conforming to `chainmcp/no-blocking-io`.
   - Add deterministic generation manifest (`chainmcp.manifest.json`) and verification helper (`verifyProjectManifest`) asserting compiler, generator, contract, and toolset hash equality.

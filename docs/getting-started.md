@@ -114,9 +114,81 @@ runtime or executor yet.
 
 ## Next steps
 
-- Read `API_REFERENCE.md` for the compiler, executor, runtime, and server
+- Read `API_REFERENCE.md` for the compiler, executor, runtime, server, and authoring
   interfaces.
 - Read `docs/openapi-support.md` for the supported OpenAPI and JSON Schema
   subset.
 - Read `SECURITY.md` and ADR 0018 before pointing the executor at a real
   upstream.
+
+---
+
+## Code-First Authoring Workflow
+
+OpenAPI contracts are the default tool source, but not the only one. ChainMcp provides first-class code-first tool authoring through `@chainmcp/authoring`.
+
+### Scaffolding a Blank Project
+
+To create a new project without an OpenAPI document:
+
+```bash
+chainmcp init --blank --name my-server --output ./my-server
+cd my-server
+```
+
+This scaffolds:
+
+- `chainmcp.config.yaml`: Server configuration with no `contract` block required.
+- `src/tools.ts`: An example tool authored with `defineTool()` and Zod.
+- `src/server.ts`: Stdio server loading your custom tools.
+- `package.json`, `tsconfig.json`, `Dockerfile`.
+
+### Defining Tools in Code
+
+Use `defineTool()` to author tools with typed Zod schemas:
+
+```ts
+import { defineTool } from "@chainmcp/authoring";
+import { z } from "zod";
+
+export const greetTool = defineTool({
+  name: "greet",
+  description: "Greets a person by name",
+  schema: z.object({
+    name: z.string().min(1).describe("Name of the person to greet"),
+    greeting: z.string().default("Hello").describe("Greeting prefix"),
+  }),
+  execute: async ({ name, greeting }) => {
+    return {
+      message: `${greeting}, ${name}!`,
+    };
+  },
+});
+
+export const tools = [greetTool];
+```
+
+Manual tools pass through the **exact same** execution pipeline as OpenAPI compiled tools:
+
+- Input arguments are validated against the audited JSON Schema subset.
+- Required authorization scopes (`operation.requiredScopes`) are enforced.
+- Rate limits and concurrency quotas are applied.
+- Response caps and declarative field projections are honored.
+- Unhandled errors are masked safely without leaking secrets or stack traces.
+
+### Local Authoring Loop (`chainmcp dev`)
+
+Start the local server over stdio for testing with the MCP Inspector or Claude Desktop:
+
+```bash
+chainmcp dev
+```
+
+Or run the runnable code-first example:
+
+```bash
+npx --yes @modelcontextprotocol/inspector@2.11.0 --cli \
+  node examples/code-first/dist/server.js \
+  --method tools/list \
+  --format json
+```

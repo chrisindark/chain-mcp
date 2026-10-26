@@ -120,4 +120,18 @@ describe("CLI entry point (runCli)", () => {
       true,
     );
   });
+
+  it("runs init --blank via CLI", async () => {
+    const blankDir = join(tempDir, "blank-cli-proj");
+    const initCode = await runCli(
+      ["init", "--blank", "--name", "my-blank-app", "--output", blankDir],
+      io,
+    );
+    expect(initCode).toBe(0);
+    expect(
+      outLogs.some((l) =>
+        l.includes("Blank code-first project initialized with example tool"),
+      ),
+    ).toBe(true);
+  });
 });
