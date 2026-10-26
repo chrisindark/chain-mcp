@@ -343,20 +343,23 @@ strict TypeScript definitions and ESM entrypoints.
 The supported-version matrix and lifecycle policy are published in
 `docs/supported-versions.md`, documenting Node.js (>=20.11, 20 and 22 LTS),
 operating systems, OpenAPI (3.0.x and 3.1.x), Model Context Protocol TypeScript
-SDK (v2), Redis (7+), and configuration (`version: 1`).
+SDK (v2), Redis (7+), and configuration (`version: 1`). CI workflow tests all
+packages and inspector conformance across Node 20.x and 22.x LTS.
 Security and dependency audit (`pnpm audit --audit-level=high`) verified zero
 high or critical vulnerabilities; `docs/risk-register.md` is updated to reflect
 all Phase 1–3 security and reliability risks as done.
 Comprehensive load, resilience, and fault-injection test suites in
-`@chainmcp/core` and `@chainmcp/executor` verify graceful degradation under
-cache outages, rate limiter check/release errors, observability sink failures,
-upstream network drops, socket aborts, HTTP 5xx errors, DNS resolution failures,
-redirect loops, and in-flight cooperative cancellations (`AbortSignal`).
+`@chainmcp/core` and `@chainmcp/executor` verify 1,000 concurrent requests across
+50 tenants without cross-talk or corruption, 500 mixed chaos requests under
+intermittent network drops, socket aborts, and 503 errors, safe fail-open
+cache degradation under load, rate limiter backpressure and semaphore release,
+and cooperative cancellation (`AbortSignal`).
 Migration and rollback procedures for standalone generated servers and the
 dynamic gateway are documented in `docs/migration-and-rollback.md` and
 troubleshooting guides in `docs/troubleshooting.md`.
 Software Bill of Materials (SBOM) generator script (`scripts/generate-sbom.mjs`)
-produces CycloneDX 1.5 JSON metadata (`dist/sbom.cdx.json`).
+produces CycloneDX 1.5 JSON metadata (`dist/sbom.cdx.json`) capturing all 13
+workspace packages and 315 transitive dependency components from `pnpm-lock.yaml`.
 Automated release workflow (`.github/workflows/release.yml`) configures signed
 releases with npm provenance (`--provenance`) and Changesets publishing.
 All 1.0 exit criteria and release checklist items in `RELEASES.md` are met.

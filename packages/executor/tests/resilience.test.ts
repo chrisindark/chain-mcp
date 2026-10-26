@@ -338,5 +338,62 @@ describe("Executor Upstream Transport Resilience and Fault Injection", () => {
       expect(error).toBeInstanceOf(RuntimeError);
       expect((error as RuntimeError).code).toBe("CANCELLED");
     });
+
+    it("handles 200 concurrent upstream requests under intermittent network drops and 503s", async () => {
+      let callIndex = 0;
+      const transport: UpstreamTransport = {
+        request: async () => {
+          const idx = ++callIndex;
+          if (idx % 4 === 0) {
+            throw new Error("socket hang up");
+          }
+          if (idx % 4 === 1) {
+            return {
+              status: 503,
+              statusText: "Service Unavailable",
+              headers: { "content-type": "application/json" },
+              body: Buffer.from('{"error":"overloaded"}'),
+            };
+          }
+          return {
+            status: 200,
+            statusText: "OK",
+            headers: { "content-type": "application/json" },
+            body: Buffer.from(`{"id":${idx},"ok":true}`),
+          };
+        },
+      };
+
+      const tool = createUpstreamExecutor(defaultOptions(transport)).createTool(
+        testOp(),
+      );
+
+      const tasks = Array.from({ length: 200 }, (_, i) => {
+        const reqContext: ToolContext = {
+          requestId: `load-exec-req-${i}`,
+          tenantId: `tenant-${i % 10}`,
+          principal: { id: `user-${i % 5}`, scopes: [] },
+        };
+        return tool
+          .execute({}, reqContext)
+          .then((res) => ({ success: true, res }))
+          .catch((err) => ({
+            success: false,
+            code: err instanceof RuntimeError ? err.code : "UNKNOWN",
+          }));
+      });
+
+      const results = await Promise.all(tasks);
+      const successful = results.filter((r) => r.success);
+      const failed = results.filter(
+        (r): r is { success: false; code: string } => !r.success,
+      );
+
+      expect(successful.length).toBe(100);
+      expect(failed.length).toBe(100);
+      for (const f of failed) {
+        expect(["UPSTREAM_FAILURE", "UPSTREAM_HTTP_ERROR"]).toContain(f.code);
+      }
+    });
   });
 });
