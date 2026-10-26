@@ -8,6 +8,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Documentation
 
+- Document Milestone 10 stable release gates, supported version matrix, operational troubleshooting, migration and rollback procedures, SBOM generation, and release provenance in `docs/supported-versions.md`, `docs/migration-and-rollback.md`, `docs/troubleshooting.md`, `RELEASES.md`, `ROADMAP.md`, `docs/risk-register.md`, and ADR 0027.
 - Document dynamic gateway architecture, versioned contract registry, atomic reloads, tenant policy binding, per-contract authentication and network policies, and rollback in `docs/dynamic-gateway.md`, `API_REFERENCE.md`, `ARCHITECTURE.md`, `ROADMAP.md`, ADR 0008 (accepted), and ADR 0026.
 - Document tool sources and code-first authoring, `@chainmcp/authoring`, `defineTool()`, schema lowering and audit, `chainmcp init --blank`, `chainmcp dev`, and policy parity in `docs/getting-started.md`, `API_REFERENCE.md`, `CONFIGURATION.md`, `ARCHITECTURE.md`, `ROADMAP.md`, ADR 0019 (accepted), and ADR 0025.
 - Document developer CLI commands, generation manifests, reproducibility requirements, and containerization in `docs/generated-servers.md`, `docs/deployment.md`, `API_REFERENCE.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and ADR 0024.
@@ -35,6 +36,14 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- Complete Milestone 10 (Stable release):
+  - Add comprehensive load, resilience, and fault-injection test suites in `@chainmcp/core` and `@chainmcp/executor` covering cache/limiter degradation, observability sink isolation, network drops, socket aborts, 5xx errors, DNS resolution failures, and in-flight cooperative cancellations (`AbortSignal`).
+  - Publish supported-version matrix and compatibility policy in `docs/supported-versions.md`.
+  - Document operational troubleshooting in `docs/troubleshooting.md` and deterministic migration and rollback workflows in `docs/migration-and-rollback.md`.
+  - Add CycloneDX 1.5 JSON SBOM generation script (`scripts/generate-sbom.mjs`) with `pnpm sbom` and `pnpm sbom:check`.
+  - Configure automated release workflow in `.github/workflows/release.yml` with cryptographic npm provenance (`--provenance`) and Changesets publishing.
+  - Satisfy all Version 1.0 exit criteria and release checklist items in `RELEASES.md`.
+  - Record ADR 0027: Stable 1.0 Release and Production Readiness.
 - Complete Milestone 9 (Dynamic gateway):
   - Add `@chainmcp/gateway` package providing `DynamicGateway`, `ContractRegistry`, `createGatewayServer`, and `connectGatewayServer`.
   - Add immutable versioned contract revisions with deterministic digest IDs, source hashing, tool definitions, destination policies, auth configurations, and resource limits.

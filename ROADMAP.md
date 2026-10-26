@@ -330,13 +330,37 @@ ADR 0008 is accepted, and ADR 0026 is recorded.
 
 ## Milestone 10 — Stable release
 
-- [ ] Complete public API review.
-- [ ] Publish supported-version matrix.
-- [ ] Complete security and dependency review.
-- [ ] Add load, resilience, and fault-injection tests.
-- [ ] Document migration and rollback procedures.
-- [ ] Configure signed releases and software bill of materials.
-- [ ] Meet all 1.0 release gates in `RELEASES.md`.
+- [x] Complete public API review.
+- [x] Publish supported-version matrix.
+- [x] Complete security and dependency review.
+- [x] Add load, resilience, and fault-injection tests.
+- [x] Document migration and rollback procedures.
+- [x] Configure signed releases and software bill of materials.
+- [x] Meet all 1.0 release gates in `RELEASES.md`.
+
+Public APIs across all 13 workspace packages are reviewed and stabilized with
+strict TypeScript definitions and ESM entrypoints.
+The supported-version matrix and lifecycle policy are published in
+`docs/supported-versions.md`, documenting Node.js (>=20.11, 20 and 22 LTS),
+operating systems, OpenAPI (3.0.x and 3.1.x), Model Context Protocol TypeScript
+SDK (v2), Redis (7+), and configuration (`version: 1`).
+Security and dependency audit (`pnpm audit --audit-level=high`) verified zero
+high or critical vulnerabilities; `docs/risk-register.md` is updated to reflect
+all Phase 1–3 security and reliability risks as done.
+Comprehensive load, resilience, and fault-injection test suites in
+`@chainmcp/core` and `@chainmcp/executor` verify graceful degradation under
+cache outages, rate limiter check/release errors, observability sink failures,
+upstream network drops, socket aborts, HTTP 5xx errors, DNS resolution failures,
+redirect loops, and in-flight cooperative cancellations (`AbortSignal`).
+Migration and rollback procedures for standalone generated servers and the
+dynamic gateway are documented in `docs/migration-and-rollback.md` and
+troubleshooting guides in `docs/troubleshooting.md`.
+Software Bill of Materials (SBOM) generator script (`scripts/generate-sbom.mjs`)
+produces CycloneDX 1.5 JSON metadata (`dist/sbom.cdx.json`).
+Automated release workflow (`.github/workflows/release.yml`) configures signed
+releases with npm provenance (`--provenance`) and Changesets publishing.
+All 1.0 exit criteria and release checklist items in `RELEASES.md` are met.
+ADR 0027 is recorded.
 
 ## Post-1.0 — Declarative tool builder and admin UI
 

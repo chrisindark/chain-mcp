@@ -51,6 +51,9 @@ These are initial architectural choices and may change through documented archit
 
 - `ROADMAP.md`: milestones and acceptance criteria
 - `docs/getting-started.md`: runnable end-to-end example and Inspector commands
+- `docs/supported-versions.md`: supported version matrix and lifecycle policy
+- `docs/migration-and-rollback.md`: upgrade and rollback procedures
+- `docs/troubleshooting.md`: error codes, diagnosis, and operational troubleshooting
 - `ARCHITECTURE.md`: system design and component boundaries
 - `CONFIGURATION.md`: configuration contract
 - `DEVELOPMENT.md`: development and testing workflows
