@@ -36,15 +36,22 @@ security:
 
 cache:
   enabled: true
-  provider: memory
-  defaultTtlSeconds: 30
-  maxEntryBytes: 250000
-  cacheOnlyExplicitlySafeReads: true
+  provider: memory # memory | redis
+  ttlSeconds: 300
+  maxEntries: 10000
+  redis:
+    url: redis://127.0.0.1:6379 # or CHAINMCP_REDIS_URL
+    keyPrefix: "chainmcp:cache:"
+    commandTimeoutMs: 1000
 
 tokenMetrics:
   enabled: true
-  mode: estimate
-  tokenizer: null
+  tokenizer: approximate # approximate | none
+  modelId: cl100k_base
+  charactersPerToken: 4
+
+projection:
+  enabled: true
 
 rateLimit:
   enabled: true

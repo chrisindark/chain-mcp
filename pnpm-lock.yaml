@@ -168,6 +168,9 @@ importers:
       "@chainmcp/auth":
         specifier: workspace:*
         version: link:../auth
+      "@chainmcp/cache-redis":
+        specifier: workspace:*
+        version: link:../cache-redis
       "@chainmcp/core":
         specifier: workspace:*
         version: link:../core

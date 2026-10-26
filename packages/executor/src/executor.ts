@@ -1,5 +1,6 @@
 import {
   RuntimeError,
+  type ToolCachePolicy,
   type ToolContext,
   type ToolDefinition,
 } from "@chainmcp/core";
@@ -97,6 +98,7 @@ interface NormalizedExecutorOptions {
   maxRequestBytes: number;
   maxRedirects: number;
   timeoutMs: number;
+  defaultReadCacheTtlSeconds?: number;
   contractRevision?: string;
   ownerTenantId?: string;
 }
@@ -125,6 +127,18 @@ export function createUpstreamExecutor(
 
   function createTool(operation: CompiledOperation): ToolDefinition {
     validateOperation(operation);
+    const isReadOnly =
+      operation.readOnly ||
+      operation.method === "get" ||
+      operation.method === "head";
+    const cache: ToolCachePolicy | undefined =
+      (operation as { cache?: ToolCachePolicy }).cache ??
+      (isReadOnly &&
+      settings.defaultReadCacheTtlSeconds !== undefined &&
+      settings.defaultReadCacheTtlSeconds > 0
+        ? { ttlSeconds: settings.defaultReadCacheTtlSeconds }
+        : undefined);
+
     const tool: ToolDefinition = {
       name: operation.name,
       description: operation.description,
@@ -132,9 +146,10 @@ export function createUpstreamExecutor(
       operation: operation.operation,
       execute: (input: unknown, context: ToolContext) =>
         executeOperation(operation, input, context, settings),
-      ...(settings.contractRevision === undefined
-        ? {}
-        : { contractRevision: settings.contractRevision }),
+      ...(cache !== undefined ? { cache } : {}),
+      ...(settings.contractRevision !== undefined || cache !== undefined
+        ? { contractRevision: settings.contractRevision ?? "contract-rev-1" }
+        : {}),
       ...(settings.ownerTenantId === undefined
         ? {}
         : { ownerTenantId: settings.ownerTenantId }),
@@ -407,6 +422,10 @@ function normalizeOptions(
     maxRequestBytes,
     maxRedirects,
     timeoutMs,
+    ...(options.defaultReadCacheTtlSeconds !== undefined &&
+    options.defaultReadCacheTtlSeconds > 0
+      ? { defaultReadCacheTtlSeconds: options.defaultReadCacheTtlSeconds }
+      : {}),
     ...(options.contractRevision === undefined
       ? {}
       : { contractRevision: options.contractRevision }),

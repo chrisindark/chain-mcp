@@ -78,6 +78,8 @@ export interface UpstreamExecutorOptions {
   maxRedirects?: number;
   /** Total time budget per call in milliseconds. Default 15s; maximum 120s. */
   timeoutMs?: number;
+  /** Opt-in default time-to-live in seconds for read-only (GET/HEAD) operations. */
+  defaultReadCacheTtlSeconds?: number;
   /** Marks generated tools with the compiled contract revision. */
   contractRevision?: string;
   /** Optional tenant binding for multi-tenant deployments. */

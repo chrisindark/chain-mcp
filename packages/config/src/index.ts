@@ -1,12 +1,23 @@
 import { z } from "zod";
-import type {
-  Authorizer,
-  Logger,
-  LogLevel,
-  MetricsSink,
-  RateLimiter,
-  RuntimeOptions,
+import {
+  InMemoryCacheStore,
+  createFieldProjector,
+  type Authorizer,
+  type CacheStore,
+  type Logger,
+  type LogLevel,
+  type MetricsSink,
+  type RateLimiter,
+  type ResultProjector,
+  type RuntimeCacheOptions,
+  type RuntimeOptions,
+  type Tokenizer,
 } from "@chainmcp/core";
+import {
+  RedisCacheStore,
+  createSimpleRedisCacheClient,
+  type RedisCacheClient,
+} from "@chainmcp/cache-redis";
 import {
   CompositeCredentialProvider,
   EncryptedSecretStore,
@@ -300,6 +311,47 @@ export const AnalyticsConfigSchema = z
 
 export type AnalyticsConfig = z.infer<typeof AnalyticsConfigSchema>;
 
+export const CacheConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    provider: z.enum(["memory", "redis"]).default("memory"),
+    ttlSeconds: z.number().int().positive().default(300),
+    maxEntries: z.number().int().positive().default(10_000),
+    redis: z
+      .object({
+        url: z.string().optional(),
+        keyPrefix: z.string().default("chainmcp:cache:"),
+        commandTimeoutMs: z.number().int().positive().default(1_000),
+      })
+      .strict()
+      .prefault({}),
+  })
+  .strict()
+  .prefault({});
+
+export type CacheConfig = z.infer<typeof CacheConfigSchema>;
+
+export const TokenMetricsConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    tokenizer: z.enum(["approximate", "none"]).default("approximate"),
+    modelId: z.string().default("cl100k_base"),
+    charactersPerToken: z.number().positive().default(4),
+  })
+  .strict()
+  .prefault({});
+
+export type TokenMetricsConfig = z.infer<typeof TokenMetricsConfigSchema>;
+
+export const ProjectionConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+  })
+  .strict()
+  .prefault({});
+
+export type ProjectionConfig = z.infer<typeof ProjectionConfigSchema>;
+
 export const ChainMcpConfigSchema = z
   .object({
     version: z.literal(1),
@@ -339,6 +391,9 @@ export const ChainMcpConfigSchema = z
       .strict()
       .prefault({}),
     rateLimit: RateLimitConfigSchema,
+    cache: CacheConfigSchema,
+    tokenMetrics: TokenMetricsConfigSchema,
+    projection: ProjectionConfigSchema,
     auth: AuthConfigSchema,
     logging: LoggingConfigSchema,
     jsonNavigation: JsonNavigationConfigSchema,
@@ -427,6 +482,65 @@ export function createRateLimiterFromConfig(
     maxTrackedWindows: config.maxTrackedWindows,
     ...(options?.now !== undefined ? { now: options.now } : {}),
   });
+}
+
+export interface CacheStoreFactoryOptions {
+  redisClient?: RedisCacheClient | undefined;
+  redisUrl?: string | undefined;
+}
+
+export function createCacheStoreFromConfig(
+  config: CacheConfig,
+  options?: CacheStoreFactoryOptions,
+): CacheStore | undefined {
+  if (!config.enabled) {
+    return undefined;
+  }
+  if (config.provider === "memory") {
+    const memoryOptions: { maxEntries?: number; maxTtlSeconds?: number } = {
+      maxEntries: config.maxEntries,
+    };
+    if (config.ttlSeconds !== undefined) {
+      memoryOptions.maxTtlSeconds = Math.max(config.ttlSeconds, 3_600);
+    }
+    return new InMemoryCacheStore(memoryOptions);
+  }
+  if (config.provider === "redis") {
+    let client = options?.redisClient;
+    if (!client) {
+      const url =
+        options?.redisUrl ?? config.redis.url ?? process.env.CHAINMCP_REDIS_URL;
+      if (!url) {
+        throw new TypeError(
+          "Redis cache store requires a Redis client (options.redisClient) or CHAINMCP_REDIS_URL",
+        );
+      }
+      client = createSimpleRedisCacheClient(url);
+    }
+    return new RedisCacheStore({
+      client,
+      keyPrefix: config.redis.keyPrefix,
+      commandTimeoutMs: config.redis.commandTimeoutMs,
+    });
+  }
+  return undefined;
+}
+
+export function createTokenizerFromConfig(
+  config: TokenMetricsConfig,
+): Tokenizer | undefined {
+  if (!config.enabled || config.tokenizer === "none") {
+    return undefined;
+  }
+  const ratio = config.charactersPerToken || 4;
+  return {
+    id: config.modelId,
+    measurement: "estimate",
+    count(text: string): number {
+      if (!text) return 0;
+      return Math.ceil(text.length / ratio);
+    },
+  };
 }
 
 function normalizeStaticCredential(
@@ -601,6 +715,11 @@ export function buildExecutorOptions(
     ...(overrides.contractRevision !== undefined
       ? { contractRevision: overrides.contractRevision }
       : {}),
+    ...(overrides.defaultReadCacheTtlSeconds !== undefined
+      ? { defaultReadCacheTtlSeconds: overrides.defaultReadCacheTtlSeconds }
+      : config.cache.enabled && config.cache.ttlSeconds > 0
+        ? { defaultReadCacheTtlSeconds: config.cache.ttlSeconds }
+        : {}),
     ...(overrides.ownerTenantId !== undefined
       ? { ownerTenantId: overrides.ownerTenantId }
       : {}),
@@ -683,6 +802,7 @@ export function buildRuntimeOptions(
   overrides?: Partial<RuntimeOptions>,
   factoryOptions?: {
     rateLimiterOptions?: RateLimiterFactoryOptions;
+    cacheStoreOptions?: CacheStoreFactoryOptions;
     env?: Record<string, string | undefined>;
     diagnosticSink?: LogSink;
     auditSink?: LogSink;
@@ -728,6 +848,34 @@ export function buildRuntimeOptions(
     }
   }
 
+  let cache: RuntimeCacheOptions | undefined = overrides?.cache;
+  if (cache === undefined && config.cache.enabled) {
+    const store = createCacheStoreFromConfig(
+      config.cache,
+      factoryOptions?.cacheStoreOptions,
+    );
+    if (store) {
+      cache = {
+        store,
+        authorizationPartition(context) {
+          return context.principal.scopes.length > 0
+            ? [...context.principal.scopes].sort().join(",")
+            : "public";
+        },
+      };
+    }
+  }
+
+  const tokenizer: Tokenizer | undefined =
+    overrides?.tokenizer ??
+    (config.tokenMetrics.enabled
+      ? createTokenizerFromConfig(config.tokenMetrics)
+      : undefined);
+
+  const projector: ResultProjector | undefined =
+    overrides?.projector ??
+    (config.projection.enabled ? createFieldProjector() : undefined);
+
   return {
     ...(authorizer !== undefined ? { authorizer } : {}),
     ...(rateLimiter !== undefined ? { rateLimiter } : {}),
@@ -745,12 +893,8 @@ export function buildRuntimeOptions(
     ...(overrides?.monotonicNow !== undefined
       ? { monotonicNow: overrides.monotonicNow }
       : {}),
-    ...(overrides?.cache !== undefined ? { cache: overrides.cache } : {}),
-    ...(overrides?.tokenizer !== undefined
-      ? { tokenizer: overrides.tokenizer }
-      : {}),
-    ...(overrides?.projector !== undefined
-      ? { projector: overrides.projector }
-      : {}),
+    ...(cache !== undefined ? { cache } : {}),
+    ...(tokenizer !== undefined ? { tokenizer } : {}),
+    ...(projector !== undefined ? { projector } : {}),
   };
 }

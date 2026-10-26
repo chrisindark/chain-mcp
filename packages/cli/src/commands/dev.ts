@@ -154,6 +154,7 @@ export async function devCommand(options: DevOptions): Promise<DevResult> {
   const serverOptions = {
     name: config.name,
     version: "0.1.0",
+    maxResponseBytes: config.server.maxResponseBytes,
     createContext: () => ({
       requestId: randomUUID(),
       tenantId: options.tenantId ?? "default",
