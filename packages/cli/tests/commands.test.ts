@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildCommand } from "../src/commands/build.js";
 import { devCommand } from "../src/commands/dev.js";
+import { diffCommand } from "../src/commands/diff.js";
 import { exportCommand } from "../src/commands/export.js";
 import { gatewayServeCommand } from "../src/commands/gateway-serve.js";
 import { initCommand } from "../src/commands/init.js";
@@ -508,6 +510,135 @@ contracts:
 
       await gwHandle.close();
       await gwHandle.closed;
+    });
+  });
+
+  describe("diffCommand and URL specifications", () => {
+    let mockServer: ReturnType<typeof createServer>;
+    let mockUrl: string;
+
+    beforeEach(async () => {
+      mockServer = createServer((req, res) => {
+        if (req.url === "/openapi.yaml") {
+          res.writeHead(200, { "Content-Type": "application/yaml" });
+          res.end(SAMPLE_SPEC);
+        } else if (req.url === "/modified.yaml") {
+          const modified = SAMPLE_SPEC.replace(
+            "operationId: listPets",
+            "operationId: listAllPets",
+          );
+          res.writeHead(200, { "Content-Type": "application/yaml" });
+          res.end(modified);
+        } else {
+          res.writeHead(404);
+          res.end("Not Found");
+        }
+      });
+
+      await new Promise<void>((resolve) => {
+        mockServer.listen(0, "127.0.0.1", () => resolve());
+      });
+
+      const addr = mockServer.address() as { port: number };
+      mockUrl = `http://127.0.0.1:${addr.port}`;
+    });
+
+    afterEach(async () => {
+      await new Promise<void>((resolve) => mockServer.close(() => resolve()));
+    });
+
+    it("fetches OpenAPI specification from URL in initCommand", async () => {
+      const targetDir = join(tempDir, "url-init-project");
+      const result = await initCommand({
+        spec: `${mockUrl}/openapi.yaml`,
+        output: targetDir,
+        cwd: tempDir,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.toolCount).toBe(1);
+      const copiedSpec = await readFile(
+        join(targetDir, "spec", "openapi.yaml"),
+        "utf8",
+      );
+      expect(copiedSpec).toContain("listPets");
+    });
+
+    it("fetches OpenAPI specification from URL in validateCommand", async () => {
+      const result = await validateCommand({
+        spec: `${mockUrl}/openapi.yaml`,
+        cwd: tempDir,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.toolCount).toBe(1);
+      expect(result.toolNames).toContain("listPets");
+    });
+
+    it("diffs contract with no baseline", async () => {
+      const result = await diffCommand({
+        spec: specPath,
+        cwd: tempDir,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.hasChanges).toBe(false);
+      expect(result.hasBreakingChanges).toBe(false);
+      expect(result.addedTools).toContain("listPets");
+    });
+
+    it("diffs identical specs with against option", async () => {
+      const result = await diffCommand({
+        spec: specPath,
+        against: specPath,
+        cwd: tempDir,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.hasChanges).toBe(false);
+      expect(result.hasBreakingChanges).toBe(false);
+      expect(result.unchangedTools).toContain("listPets");
+      expect(result.addedTools).toHaveLength(0);
+      expect(result.removedTools).toHaveLength(0);
+    });
+
+    it("detects tool changes and breaking deletions against baseline manifest", async () => {
+      const baselineManifest = {
+        manifestVersion: 1,
+        openapiVersion: "3.1.0",
+        toolsetHash: "dummy-hash",
+        toolCount: 2,
+        tools: [
+          { name: "listPets", hash: "hash-old" },
+          { name: "deletePet", hash: "hash-delete" },
+        ],
+      };
+      const baselinePath = join(tempDir, "baseline-manifest.json");
+      await writeFile(baselinePath, JSON.stringify(baselineManifest), "utf8");
+
+      const result = await diffCommand({
+        spec: specPath,
+        against: "baseline-manifest.json",
+        cwd: tempDir,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.hasChanges).toBe(true);
+      expect(result.hasBreakingChanges).toBe(true);
+      expect(result.removedTools).toContain("deletePet");
+    });
+
+    it("diffs against a remote spec URL", async () => {
+      const result = await diffCommand({
+        spec: specPath,
+        against: `${mockUrl}/modified.yaml`,
+        cwd: tempDir,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.hasChanges).toBe(true);
+      expect(result.addedTools).toContain("listPets");
+      expect(result.removedTools).toContain("listAllPets");
     });
   });
 });

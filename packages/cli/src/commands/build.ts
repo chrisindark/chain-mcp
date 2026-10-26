@@ -48,7 +48,30 @@ export async function buildCommand(
   }
 
   // 2. Read spec and compile
-  const specContent = await readFile(validation.specPath, "utf8");
+  let specContent = validation.specContent;
+  if (!specContent && validation.specPath) {
+    if (
+      validation.specPath.startsWith("http://") ||
+      validation.specPath.startsWith("https://")
+    ) {
+      const res = await fetch(validation.specPath);
+      specContent = await res.text();
+    } else {
+      specContent = await readFile(validation.specPath, "utf8");
+    }
+  }
+
+  if (!specContent) {
+    return {
+      ok: false,
+      outDir,
+      manifestPath: "",
+      manifest: {} as ProjectManifest,
+      toolCount: 0,
+      error: "Build failed: Contract content could not be retrieved.",
+    };
+  }
+
   const compiled = compileOpenApi(specContent, {
     strict: options.strict ?? validation.config?.contract?.strict ?? true,
   });

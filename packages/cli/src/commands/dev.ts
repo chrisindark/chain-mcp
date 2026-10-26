@@ -79,14 +79,28 @@ export async function devCommand(options: DevOptions): Promise<DevResult> {
 
   // 3. Compile and register OpenAPI operations if contract is configured or provided
   const configDir = configPath ? dirname(configPath) : cwd;
-  const specPath = options.spec
-    ? resolve(cwd, options.spec)
-    : config.contract?.source
-      ? resolve(configDir, config.contract.source)
-      : undefined;
+  const rawSpec = options.spec ?? config.contract?.source;
+  let specContent: string | undefined;
 
-  if (specPath && (await fileExists(specPath))) {
-    const specContent = await readFile(specPath, "utf8");
+  if (rawSpec) {
+    if (rawSpec.startsWith("http://") || rawSpec.startsWith("https://")) {
+      try {
+        const res = await fetch(rawSpec);
+        if (res.ok) {
+          specContent = await res.text();
+        }
+      } catch {
+        // Ignored; handled below if undefined
+      }
+    } else {
+      const localSpecPath = resolve(configDir, rawSpec);
+      if (await fileExists(localSpecPath)) {
+        specContent = await readFile(localSpecPath, "utf8");
+      }
+    }
+  }
+
+  if (specContent) {
     const compiled = compileOpenApi(specContent, {
       strict: config.contract?.strict ?? false,
     });
@@ -110,6 +124,8 @@ export async function devCommand(options: DevOptions): Promise<DevResult> {
     resolve(cwd, "dist/tools.js"),
     resolve(cwd, "src/tools.js"),
     resolve(cwd, "tools.js"),
+    resolve(cwd, "src/tools.ts"),
+    resolve(cwd, "tools.ts"),
   ];
 
   for (const modulePath of candidateToolModules) {
@@ -133,7 +149,18 @@ export async function devCommand(options: DevOptions): Promise<DevResult> {
         }
         break;
       } catch (err) {
-        console.warn(`Warning: Could not load tools from ${modulePath}:`, err);
+        if (modulePath.endsWith(".ts")) {
+          console.warn(
+            `Warning: Found TypeScript tools at ${modulePath}, but failed to load it directly. ` +
+              `Run with tsx ('npx tsx @chainmcp/cli dev') or compile first ('chainmcp build' or 'tsc'). ` +
+              `Underlying error: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        } else {
+          console.warn(
+            `Warning: Could not load tools from ${modulePath}:`,
+            err,
+          );
+        }
       }
     }
   }

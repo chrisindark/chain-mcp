@@ -283,7 +283,7 @@ You do not need to write complex code to use ChainMcp. Here is the 3-step path t
 Open your terminal in any directory and run:
 
 ```bash
-npx chainmcp init --spec https://petstore.swagger.io/v2/swagger.json
+npx @chainmcp/cli init --spec https://petstore.swagger.io/v2/swagger.json
 ```
 
 This inspects your API, creates an audited tool definition, and creates a clean `chainmcp.config.yaml`.

@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 
 import { buildCommand } from "./commands/build.js";
 import { devCommand } from "./commands/dev.js";
+import { diffCommand } from "./commands/diff.js";
 import { exportCommand } from "./commands/export.js";
 import { gatewayServeCommand } from "./commands/gateway-serve.js";
 import { initCommand } from "./commands/init.js";
@@ -19,6 +20,7 @@ Commands:
   init      Initialize a new ChainMcp project (OpenAPI contract or blank code-first)
   validate  Validate configuration and OpenAPI contract
   build     Compile contract and emit generation manifest
+  diff      Compare contract against baseline or previous manifest
   serve     Serve the MCP server over stdio
   gateway   Manage dynamic multi-contract MCP gateway (gateway serve)
   dev       Run local developer authoring loop (stdio)
@@ -47,6 +49,11 @@ Command options:
     --spec <path>        Path to OpenAPI contract
     --out-dir <dir>      Output directory for build artifacts (default: ./dist)
     --check              Verify reproducibility against existing manifest
+
+  diff:
+    --config <path>      Path to chainmcp.config.yaml
+    --spec <path>        Path to OpenAPI contract
+    --against <target>   Baseline OpenAPI contract or manifest.json to compare against
 
   serve:
     --config <path>      Path to chainmcp.config.yaml
@@ -97,6 +104,7 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       version: { type: "boolean", short: "v", default: false },
       help: { type: "boolean", short: "h", default: false },
       spec: { type: "string" },
+      against: { type: "string" },
       config: { type: "string" },
       output: { type: "string" },
       name: { type: "string" },
@@ -238,6 +246,60 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       log(`Tools: ${result.toolCount}`);
       if (result.verifiedReproducible) {
         log(`Reproducibility: verified (matches existing manifest)`);
+      }
+      return 0;
+    }
+
+    case "diff": {
+      const result = await diffCommand({
+        ...(asString(values.config) !== undefined
+          ? { config: asString(values.config) }
+          : {}),
+        ...(asString(values.spec) !== undefined
+          ? { spec: asString(values.spec) }
+          : {}),
+        ...(asString(values.against) !== undefined
+          ? { against: asString(values.against) }
+          : {}),
+      });
+
+      if (!result.ok) {
+        errLog(`Diff error: ${result.error ?? "Failed to diff contracts"}`);
+        return 1;
+      }
+
+      if (!result.hasChanges) {
+        log(
+          `No schema changes detected. Toolset is identical (hash: ${result.toolsetHash}).`,
+        );
+        return 0;
+      }
+
+      log(`Contract diff detected:`);
+      log(`Contract revision: ${result.contractRevision}`);
+      log(`Toolset hash: ${result.toolsetHash}`);
+      if (result.addedTools.length > 0) {
+        log(`  Added tools (${result.addedTools.length}):`);
+        for (const t of result.addedTools) {
+          log(`    + ${t}`);
+        }
+      }
+      if (result.removedTools.length > 0) {
+        log(`  Removed tools (BREAKING) (${result.removedTools.length}):`);
+        for (const t of result.removedTools) {
+          log(`    - ${t}`);
+        }
+      }
+      if (result.changedTools.length > 0) {
+        log(`  Modified tools (${result.changedTools.length}):`);
+        for (const t of result.changedTools) {
+          log(`    ~ ${t}`);
+        }
+      }
+      if (result.hasBreakingChanges) {
+        errLog(
+          `Warning: Breaking changes detected (${result.removedTools.length} tools removed).`,
+        );
       }
       return 0;
     }

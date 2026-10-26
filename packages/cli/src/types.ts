@@ -59,6 +59,7 @@ export interface ValidateResult {
   config?: ChainMcpConfig | undefined;
   configPath?: string | undefined;
   specPath?: string | undefined;
+  specContent?: string | undefined;
   contractRevision?: string | undefined;
   sourceHash?: string | undefined;
   toolsetHash?: string | undefined;
@@ -85,6 +86,27 @@ export interface BuildResult {
   manifest: ProjectManifest;
   toolCount: number;
   verifiedReproducible?: boolean | undefined;
+  error?: string | undefined;
+}
+
+export interface DiffOptions {
+  config?: string | undefined;
+  spec?: string | undefined;
+  against?: string | undefined;
+  cwd?: string | undefined;
+}
+
+export interface DiffResult {
+  ok: boolean;
+  contractRevision: string;
+  sourceHash: string;
+  toolsetHash: string;
+  hasChanges: boolean;
+  hasBreakingChanges: boolean;
+  addedTools: readonly string[];
+  removedTools: readonly string[];
+  changedTools: readonly string[];
+  unchangedTools: readonly string[];
   error?: string | undefined;
 }
 

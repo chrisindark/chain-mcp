@@ -14,7 +14,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "chainmcp": "./dist/bin.js"
+    "chainmcp": "./dist/bin.js",
+    "@chainmcp/cli": "./dist/bin.js"
   },
   "exports": {
     ".": {

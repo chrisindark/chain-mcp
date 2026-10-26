@@ -145,4 +145,15 @@ describe("CLI entry point (runCli)", () => {
       errLogs.some((l) => l.includes("Gateway config file not found")),
     ).toBe(true);
   });
+
+  it("runs diff command via CLI", async () => {
+    const diffCode = await runCli(
+      ["diff", "--spec", specPath, "--against", specPath],
+      io,
+    );
+    expect(diffCode).toBe(0);
+    expect(outLogs.some((l) => l.includes("No schema changes detected"))).toBe(
+      true,
+    );
+  });
 });
