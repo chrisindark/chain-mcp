@@ -226,14 +226,34 @@ options via `buildRuntimeOptions`.
 
 ## Milestone 7 — Generated servers
 
-- [ ] Implement `init`, `validate`, `build`, `serve`, and `export`.
-- [ ] Generate a portable project with a pinned contract revision.
-- [ ] Share runtime and policy implementations.
-- [ ] Add generation manifests and reproducibility checks.
-- [ ] Add Docker templates and deployment documentation.
-- [ ] Test generated projects from clean installations.
+- [x] Implement `init`, `validate`, `build`, `serve`, and `export`.
+- [x] Generate a portable project with a pinned contract revision.
+- [x] Share runtime and policy implementations.
+- [x] Add generation manifests and reproducibility checks.
+- [x] Add Docker templates and deployment documentation.
+- [x] Test generated projects from clean installations.
 
 **Exit criteria:** an exported server builds and runs independently.
+
+**Status (2026-10-26):** all Milestone 7 items are implemented and covered by
+tests. `@chainmcp/cli` implements the developer CLI with `init`, `validate`,
+`build`, `serve`, and `export` commands via Node.js native `util.parseArgs` with
+strict asynchronous I/O (`chainmcp/no-blocking-io`). `chainmcp export` generates
+portable standalone projects containing pinned contract snapshots in
+`spec/openapi.yaml`, configuration in `chainmcp.config.yaml`, TypeScript configs,
+multi-stage `Dockerfile` templates, `.dockerignore`, `.gitignore`, `README.md`,
+and an immutable generation manifest (`chainmcp.manifest.json`) recording
+`manifestVersion`, `generatorVersion`, `compilerVersion`, `contractRevision`,
+`sourceHash`, `toolsetHash`, and individual tool hashes.
+Generated servers share the `@chainmcp/*` runtime, executor, server, auth,
+analytics, and JSON navigation implementations without duplicating policy logic
+(preserving ADR 0002). Reproducibility checks (`verifyProjectManifest`,
+`--check` on `build` and `export`) assert exact byte-for-byte and hash identity.
+Deployment documentation is established in `docs/deployment.md`.
+End-to-end integration tests (`end-to-end.test.ts`) demonstrate that an exported
+server compiles with `tsc` and runs independently, discovering and executing both
+OpenAPI-compiled tools and JSON navigation tools over the official MCP SDK
+client.
 
 ## Milestone 8 — Tool sources and code-first authoring
 
@@ -241,28 +261,72 @@ OpenAPI compilation is the default tool source, not the only one. This
 milestone makes a blank, code-first project a supported deployment without
 forking the runtime or bypassing policy.
 
-- [ ] Define a `ToolSource` boundary that produces `ToolDefinition`s, with OpenAPI compilation as one implementation.
-- [ ] Add a manual tool source whose tools pass through the same validation, authorization, caching, rate-limit, cancellation, and output-policy pipeline as compiled tools.
-- [ ] Add an authoring facade (working name `defineTool()`) that accepts a supported `JsonSchema` and an optional Zod adapter, lowering to the audited schema subset and rejecting unsupported schemas at definition time.
-- [ ] Add `chainmcp init --blank` (or equivalent) that scaffolds a project with one hand-written example tool and no contract.
-- [ ] Add `chainmcp dev` for a local authoring loop, using stdio first and HTTP once the transport lands.
-- [ ] Document the code-first path in `docs/getting-started.md`, `API_REFERENCE.md`, and `CONFIGURATION.md`, and add a runnable example.
-- [ ] Test policy parity between manual and compiled tools, including error mapping, cancellation, and response caps.
+- [x] Define a `ToolSource` boundary that produces `ToolDefinition`s, with OpenAPI compilation as one implementation.
+- [x] Add a manual tool source whose tools pass through the same validation, authorization, caching, rate-limit, cancellation, and output-policy pipeline as compiled tools.
+- [x] Add an authoring facade (working name `defineTool()`) that accepts a supported `JsonSchema` and an optional Zod adapter, lowering to the audited schema subset and rejecting unsupported schemas at definition time.
+- [x] Add `chainmcp init --blank` (or equivalent) that scaffolds a project with one hand-written example tool and no contract.
+- [x] Add `chainmcp dev` for a local authoring loop, using stdio first and HTTP once the transport lands.
+- [x] Document the code-first path in `docs/getting-started.md`, `API_REFERENCE.md`, and `CONFIGURATION.md`, and add a runnable example.
+- [x] Test policy parity between manual and compiled tools, including error mapping, cancellation, and response caps.
 
 **Exit criteria:** a developer can scaffold a project without an OpenAPI document, define a tool in code, and call it from an MCP client with the same authorization, validation, and output guarantees as a compiled tool. Tool handlers are trusted application code shipped by the deploying developer; the server never evaluates user-supplied source.
+
+**Status (2026-10-26):** all Milestone 8 items are implemented and covered by
+tests. `@chainmcp/core` defines the portable `ToolSource` boundary and
+implements `registerSource(source: ToolSource): Promise<void>` on `InMemoryToolRuntime`.
+`@chainmcp/executor` implements `OpenApiToolSource` wrapping compiled OpenAPI
+operations and `UpstreamExecutor`.
+`@chainmcp/authoring` provides the `defineTool()` authoring facade, `zodToJsonSchema()`
+lowering, and `ManualToolSource`. Zod and raw JSON Schemas are lowered and audited at
+definition time via `auditInputSchema`, rejecting unsupported constructs (unions of
+complex types, recursive `$ref`, functions) before server startup.
+Policy parity tests (`parity.test.ts`) demonstrate 100% equivalence between manual and
+compiled tools across input validation, authorization scopes, rate limiting,
+cooperative cancellation/timeouts, output projection, cache partitioning/hits,
+and safe error concealing without leaking internal messages or credentials.
+`@chainmcp/cli` implements `chainmcp init --blank` for contract-free scaffolding
+and `chainmcp dev` for a local authoring loop over stdio.
+A runnable code-first example is provided in `examples/code-first` with automated
+integration tests over the official MCP SDK client.
+Documentation is updated in `docs/getting-started.md`, `API_REFERENCE.md`,
+`CONFIGURATION.md`, and `ARCHITECTURE.md`, ADR 0019 is accepted, and ADR 0025 is recorded.
 
 **Non-goals:** a visual tool editor, arbitrary code upload, and a hosted control plane. The declarative builder is tracked post-1.0.
 
 ## Milestone 9 — Dynamic gateway
 
-- [ ] Add versioned contract registry.
-- [ ] Bind each contract revision to tenant policy.
-- [ ] Load and reload revisions atomically.
-- [ ] Enforce per-contract authentication and network policies.
-- [ ] Support rollback and revision disabling.
-- [ ] Test tenant isolation and concurrent reloads.
+- [x] Add versioned contract registry.
+- [x] Bind each contract revision to tenant policy.
+- [x] Load and reload revisions atomically.
+- [x] Enforce per-contract authentication and network policies.
+- [x] Support rollback and revision disabling.
+- [x] Test tenant isolation and concurrent reloads.
 
 **Exit criteria:** multiple contracts can be served safely without cross-tenant access.
+
+**Status (2026-10-26):** all Milestone 9 items are implemented and covered by
+tests. `@chainmcp/gateway` implements `ContractRegistry` and `DynamicGateway`
+with versioned immutable contract revisions (`revisionId`, `sourceHash`,
+`tools`, `destinationPolicy`, `authConfig`, and `limits`).
+Candidate revisions are compiled and validated in isolation with
+`@chainmcp/compiler` and `@chainmcp/executor`, auditing all input schemas and
+destination allowlists before activation. Tool name collisions within a revision
+and across active contracts for the same tenant are rejected at candidate
+validation and activation; distinct tenants may safely publish identical tool
+names without collision or cross-talk.
+Atomic state swap (`this.activeRuntime = nextRuntime`) serialized by an
+asynchronous mutex ensures in-flight requests complete cleanly while new
+requests immediately observe updated revisions.
+Rollback reactivates prior revisions atomically and disabling removes tools
+from discovery and execution, emitting structured, redacted audit events
+(`contract_published`, `contract_activated`, `contract_disabled`,
+`contract_rolled_back`).
+Per-contract network destination policies and upstream credentials are strictly
+isolated per contract revision.
+Multi-tenant isolation tests demonstrate that callers without context fail with
+`AUTH_REQUIRED`, and cross-tenant requests fail closed as `TOOL_NOT_FOUND`
+without leaking other tenants' inventory.
+ADR 0008 is accepted, and ADR 0026 is recorded.
 
 ## Milestone 10 — Stable release
 

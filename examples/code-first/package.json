@@ -1,0 +1,22 @@
+{
+  "name": "@chainmcp/example-code-first",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@chainmcp/authoring": "workspace:*",
+    "@chainmcp/core": "workspace:*",
+    "@chainmcp/server": "workspace:*",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.3.1"
+  }
+}

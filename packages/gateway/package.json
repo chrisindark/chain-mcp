@@ -1,0 +1,41 @@
+{
+  "name": "@chainmcp/gateway",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chrisindark/chain-mcp.git",
+    "directory": "packages/gateway"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@chainmcp/auth": "workspace:*",
+    "@chainmcp/compiler": "workspace:*",
+    "@chainmcp/core": "workspace:*",
+    "@chainmcp/executor": "workspace:*",
+    "@chainmcp/server": "workspace:*",
+    "@modelcontextprotocol/server": "2.3.1"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.3.1"
+  }
+}

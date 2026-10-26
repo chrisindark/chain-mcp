@@ -41,13 +41,13 @@ The target architecture consists of tool sources, a shared runtime, MCP adapters
 
 ## 3. Monorepo package boundaries
 
-Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, and `@chainmcp/server`. Remaining rows describe planned boundaries; no empty packages are created for them.
+Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, `@chainmcp/server`, `@chainmcp/analytics`, `@chainmcp/json-navigation`, `@chainmcp/cli`, `@chainmcp/authoring`, and `@chainmcp/gateway`. Remaining rows describe planned boundaries; no empty packages are created for them.
 
 | Package                     | Responsibility                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `@chainmcp/core`            | Runtime interfaces, registry, execution pipeline, errors                                               |
 | `@chainmcp/compiler`        | OpenAPI parsing, validation, tool generation                                                           |
-| `@chainmcp/authoring`       | Code-first tool definitions, schema lowering, and scaffold support (planned, Milestone 8)              |
+| `@chainmcp/authoring`       | Code-first tool definitions, schema lowering, and scaffold support                                     |
 | `@chainmcp/server`          | Official MCP SDK tool adapter and local stdio transport                                                |
 | `@chainmcp/cache-redis`     | Optional shared Redis cache adapter; cache interfaces remain in core                                   |
 | `@chainmcp/auth`            | Identity, authorization, and credential abstractions, including the default operation-scope authorizer |
@@ -57,7 +57,7 @@ Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config
 | `@chainmcp/json-navigation` | Bounded JSON exploration                                                                               |
 | `@chainmcp/config`          | Configuration schema and loading                                                                       |
 | `@chainmcp/cli`             | Developer commands                                                                                     |
-| `apps/gateway`              | Dynamic multi-contract gateway                                                                         |
+| `@chainmcp/gateway`         | Dynamic multi-contract gateway                                                                         |
 
 Use workspace dependencies. Core packages must not directly depend on concrete Redis, PostgreSQL, or cloud SDKs unless the package specifically implements that adapter.
 
@@ -98,17 +98,19 @@ closed when exceeded. Unsupported composition is rejected rather than ignored.
 
 ## 4.1 Tool sources and code-first authoring
 
-`ToolDefinition` is the runtime boundary; the OpenAPI compiler is one producer,
-not part of the runtime. Milestone 8 adds a `ToolSource` interface and a manual
-source:
+`ToolDefinition` is the runtime boundary; tool sources produce `ToolDefinition`s
+via the `ToolSource` interface (`getTools()`), which `InMemoryToolRuntime.registerSource()`
+registers into the shared runtime pipeline:
 
-- **OpenAPI source.** The compiler and executor produce tools with deterministic
-  manifests and a pinned contract revision.
-- **Manual source.** Application code registers tools through an authoring
-  facade (working name `defineTool()`). Input schemas are lowered to the same
-  audited JSON Schema subset, and every invocation goes through the same
-  authorization, validation, cache, rate-limit, timeout, and output-policy
-  pipeline.
+- **OpenAPI source (`OpenApiToolSource`).** Provided by `@chainmcp/executor`.
+  Wraps compiled operations and turns them into tools with deterministic manifests
+  and a pinned contract revision.
+- **Manual source (`ManualToolSource`).** Provided by `@chainmcp/authoring`.
+  Application code defines tools through the `defineTool()` authoring facade
+  using Zod schemas or raw JSON Schema. Input schemas are lowered and audited at
+  definition time, and every invocation passes through the exact same authorization,
+  validation, cache, rate-limit, timeout, cancellation, and output-policy pipeline
+  as compiled tools.
 - **Declarative source (post-1.0).** A versioned descriptor executed by the
   bounded HTTP executor, with no user-supplied code evaluation.
 
@@ -224,31 +226,34 @@ documents the Inspector CLI commands, and `pnpm conformance:inspector` asserts
 
 ## 6. Generated server mode
 
-The compiler produces a project containing:
+The developer CLI (`@chainmcp/cli`) produces a standalone, portable project via `chainmcp export` containing:
 
-- A contract snapshot or reference with an integrity hash.
-- Generated tool definitions.
-- Runtime configuration and examples.
-- Dependencies pinned through a lockfile.
-- A generation manifest containing compiler and contract versions.
+- A pinned contract snapshot in `spec/openapi.yaml` with an integrity hash (`sourceHash`).
+- Generated tool definitions and server entry point (`src/server.ts`).
+- Project configuration (`chainmcp.config.yaml`) with explicit upstream host allowlists.
+- Dependencies pinned through `package.json` referencing published shared packages.
+- A generation manifest (`chainmcp.manifest.json`) containing generator, compiler, and contract revisions, source hashes, and a toolset hash.
+- Multi-stage `Dockerfile` and ignore files for containerization.
 - No embedded production credentials.
 
-Generated servers use the shared runtime package. Generated source must be deterministic for the same contract and compiler version.
+Generated servers use the shared runtime package (`@chainmcp/core`), outbound executor (`@chainmcp/executor`), and server adapter (`@chainmcp/server`). Generated source and manifests are deterministic and byte-identical for the same contract and compiler/generator versions. Reproducibility checks (`verifyProjectManifest` and `chainmcp build --check` / `chainmcp export --check`) assert contract and toolset integrity.
 
 ## 7. Dynamic gateway mode
 
-The gateway serves multiple registered API contracts through a shared process.
+The gateway (`@chainmcp/gateway`) serves multiple registered API contracts through a shared process with strict tenant isolation, immutable versioned revisions, atomic candidate activation, and per-contract authentication and network policies.
 
-Each contract revision has:
+Each contract revision (`ContractRevision`) contains:
 
-- An immutable identifier.
-- A tenant or explicit owner.
-- A validated tool registry.
-- An upstream destination policy.
-- An authorization policy.
-- Cache and rate-limit settings.
+- An immutable digest-based revision identifier (`revisionId`).
+- An owner tenant (`tenantId`) and contract name (`contractName`).
+- A validated tool registry (`tools`) stamped with the revision and tenant ID.
+- An upstream destination policy (`baseUrl`, `allowedHosts`, `allowInsecureHttp`).
+- An authorization and credential policy (`authConfig` with `requiredScopes` and `credentialProvider`).
+- Resource limits (`limits` with timeouts and byte caps).
 
-Load new revisions into an isolated candidate registry. Validate completely, then atomically activate. Support rollback and disabling without mutating active registries in place.
+New revisions compile and validate in an isolated candidate state (`ContractRegistry.createRevision`), rejecting schema violations, unsupported schemas, invalid destinations, and intra-tenant tool name collisions before activation.
+
+Atomic activation swaps the shared runtime instance (`this.activeRuntime = nextRuntime`), ensuring in-flight requests on previous revisions complete cleanly while new calls immediately observe the updated toolset. Rollback restores a prior revision and disabling removes a contract's tools from discovery and execution, emitting structured, redacted audit events (`contract_published`, `contract_activated`, `contract_disabled`, `contract_rolled_back`). Discovery (`listTools`) and invocation (`callTool`) are strictly scoped to the caller's tenant context: missing context fails closed with `AUTH_REQUIRED`, and cross-tenant requests fail closed with `TOOL_NOT_FOUND` (ADR 0008, ADR 0026).
 
 ## 8. Core interfaces
 

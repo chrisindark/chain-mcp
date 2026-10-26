@@ -11,12 +11,17 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const WORKSPACE_PACKAGES = [
+  "packages/analytics/package.json",
   "packages/auth/package.json",
+  "packages/authoring/package.json",
   "packages/cache-redis/package.json",
+  "packages/cli/package.json",
   "packages/compiler/package.json",
   "packages/core/package.json",
   "packages/config/package.json",
   "packages/executor/package.json",
+  "packages/gateway/package.json",
+  "packages/json-navigation/package.json",
   "packages/rate-limit/package.json",
   "packages/server/package.json",
 ];

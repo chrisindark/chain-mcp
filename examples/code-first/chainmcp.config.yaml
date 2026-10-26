@@ -1,0 +1,20 @@
+version: 1
+name: example-code-first
+server:
+  transport: stdio
+  requestTimeoutMs: 15000
+  maxResponseBytes: 1000000
+security:
+  requireInboundAuth: false
+  allowedUpstreamHosts: []
+rateLimit:
+  enabled: false
+auth:
+  inbound:
+    requireInboundAuth: false
+logging:
+  level: info
+jsonNavigation:
+  enabled: true
+analytics:
+  enabled: true

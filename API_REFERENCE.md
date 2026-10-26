@@ -73,7 +73,15 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   cache?: ToolCachePolicy;
   output?: ToolOutputPolicy;
   ownerTenantId?: string;
+  timeoutMs?: number;
   execute(input: TInput, context: ToolContext): Promise<TOutput>;
+}
+
+export interface ToolSource {
+  /**
+   * Produces the set of tools supplied by this source.
+   */
+  getTools(): Promise<readonly ToolDefinition[]> | readonly ToolDefinition[];
 }
 ```
 
@@ -161,6 +169,7 @@ export interface ToolRuntime {
   readonly tenantMode: "single-tenant" | "multi-tenant";
 
   register(tool: ToolDefinition): void;
+  registerSource(source: ToolSource): Promise<void>;
 
   listTools(context?: ToolContext): ReadonlyArray<{
     name: string;
@@ -895,6 +904,26 @@ for (const tool of executor.createTools(result.tools)) runtime.register(tool);
 - Request-body serialization uses `JSON.stringify` before checking the byte cap, so a very large in-memory body can allocate before rejection. The runtime's input schema may also allow large strings or arrays.
 - `maxResponseBytes`, `maxRequestBytes`, `maxRedirects`, and `timeoutMs` are executor options, not `@chainmcp/config` fields yet.
 
+### `OpenApiToolSource`
+
+```ts
+export interface OpenApiToolSourceOptions {
+  executor: UpstreamExecutor;
+  operations: readonly CompiledOperation[];
+}
+
+export class OpenApiToolSource implements ToolSource {
+  constructor(options: OpenApiToolSourceOptions);
+  getTools(): readonly ToolDefinition[];
+}
+
+export function createOpenApiToolSource(
+  options: OpenApiToolSourceOptions,
+): OpenApiToolSource;
+```
+
+Adapts compiled OpenAPI operations and an `UpstreamExecutor` into a portable `ToolSource` instance ready to be registered via `ToolRuntime.registerSource(source)`.
+
 ## `@chainmcp/cache-redis`
 
 Optional Redis-backed `CacheStore` for shared caches:
@@ -1356,6 +1385,79 @@ Public-facing errors use stable codes such as:
 
 Never expose stack traces or credential values to MCP clients.
 
+## `@chainmcp/authoring`
+
+The `@chainmcp/authoring` package provides code-first tool authoring capabilities, schema lowering, and manual tool sources. Tools defined in application code pass through the exact same registration audit, authorization, validation, rate limiting, caching, cancellation, output policy, and error masking pipeline as compiled tools.
+
+### `defineTool`
+
+```ts
+export function defineTool<TInput = unknown, TOutput = unknown>(
+  options: DefineToolOptions<TInput, TOutput>,
+): ToolDefinition<TInput, TOutput>;
+```
+
+Defines an MCP tool with definition-time schema lowering and audit. Accepts either a Zod schema (`schema`) or raw JSON Schema (`inputSchema`), and rejects unsupported constructs (unions, recursive lazy schemas, functions) immediately at definition time.
+
+```ts
+export interface DefineToolOptions<TInput = unknown, TOutput = unknown> {
+  name: string;
+  description: string;
+  schema?: z.ZodType<TInput>;
+  inputSchema?: JsonSchema;
+  operation?: OperationPolicy;
+  cache?: ToolCachePolicy;
+  output?: ToolOutputPolicy;
+  contractRevision?: string;
+  version?: string;
+  ownerTenantId?: string;
+  timeoutMs?: number;
+  execute(input: TInput, context: ToolContext): Promise<TOutput>;
+}
+```
+
+### `ManualToolSource`
+
+```ts
+export class ManualToolSource implements ToolSource {
+  constructor(tools?: readonly ToolDefinition[]);
+  addTool(tool: ToolDefinition): this;
+  defineTool<TInput = unknown, TOutput = unknown>(
+    options: DefineToolOptions<TInput, TOutput>,
+  ): ToolDefinition<TInput, TOutput>;
+  getTools(): readonly ToolDefinition[];
+}
+
+export function createManualToolSource(
+  tools?: readonly ToolDefinition[],
+): ManualToolSource;
+```
+
+Collects hand-written tool definitions and implements `ToolSource` so they can be registered via `runtime.registerSource(source)`.
+
+### `zodToJsonSchema`
+
+```ts
+export function zodToJsonSchema(schema: z.ZodTypeAny): JsonSchema;
+```
+
+Lowers a Zod schema to the audited JSON Schema subset supported by ChainMcp. Asserts that the root is an object schema, strips metadata keywords (`$schema`, `$id`), and verifies compatibility using `auditInputSchema`.
+
+### `AuthoringError`
+
+```ts
+export type AuthoringErrorCode =
+  | "SCHEMA_NOT_OBJECT"
+  | "SCHEMA_AUDIT_FAILED"
+  | "SCHEMA_LOWERING_FAILED"
+  | "INVALID_TOOL_DEFINITION";
+
+export class AuthoringError extends Error {
+  public readonly code: AuthoringErrorCode;
+  public readonly diagnostics?: readonly SchemaDiagnostic[];
+}
+```
+
 ## `@chainmcp/server`
 
 `createMcpServer(runtime, options)` adapts the shared `ToolRuntime` to the
@@ -1424,6 +1526,240 @@ removed at closure; SIGINT and SIGTERM set conventional exit codes 130 and 143.
 For embedded use and tests, stdin and stdout streams can be injected and
 process signal handling can be disabled. The server package does not yet
 implement remote transports or HTTP authentication.
+
+## `@chainmcp/cli`
+
+The `@chainmcp/cli` package implements developer commands and generated server scaffolding and export capabilities.
+
+### CLI Binary
+
+Exported as the `chainmcp` executable (`dist/bin.js`).
+
+```bash
+chainmcp init [--spec <path>] [--blank] [--output <dir>] [--name <name>] [--base-url <url>] [--force]
+chainmcp validate [--config <path>] [--spec <path>] [--strict]
+chainmcp build [--config <path>] [--spec <path>] [--out-dir <dir>] [--check]
+chainmcp serve [--config <path>] [--spec <path>] [--base-url <url>] [--tenant <id>]
+chainmcp dev [--config <path>] [--spec <path>] [--base-url <url>] [--tenant <id>]
+chainmcp export [--config <path>] [--spec <path>] [--output <dir>] [--force] [--check]
+```
+
+### Programmatic API
+
+```ts
+export function runCli(args: string[], io?: CliIo): Promise<number>;
+
+export function initCommand(options: InitOptions): Promise<InitResult>;
+export function validateCommand(
+  options: ValidateOptions,
+): Promise<ValidateResult>;
+export function buildCommand(options: BuildOptions): Promise<BuildResult>;
+export function serveCommand(options: ServeOptions): Promise<ServeResult>;
+export function devCommand(options: DevOptions): Promise<DevResult>;
+export function exportCommand(options: ExportOptions): Promise<ExportResult>;
+
+export function buildProjectManifest(
+  projectName: string,
+  compiled: CompileResult,
+  options?: { generatedAt?: string },
+): ProjectManifest;
+
+export function verifyProjectManifest(
+  existing: ProjectManifest,
+  recompiled: ProjectManifest,
+): ManifestVerificationResult;
+```
+
+### Manifest Schema (`chainmcp.manifest.json`)
+
+```ts
+export interface ProjectManifest {
+  manifestVersion: 1;
+  generatorVersion: string;
+  compilerVersion: string;
+  openapiVersion: string;
+  projectName: string;
+  contractRevision: string;
+  sourceHash: string;
+  toolsetHash: string;
+  toolCount: number;
+  tools: readonly {
+    name: string;
+    hash: string;
+  }[];
+  generatedAt: string;
+}
+```
+
+## `@chainmcp/gateway`
+
+The `@chainmcp/gateway` package implements the multi-tenant dynamic gateway, versioned contract registry, atomic revision activation, and rollback capabilities.
+
+### Interfaces and Types
+
+```ts
+export type ContractRevisionStatus =
+  "candidate" | "active" | "disabled" | "superseded" | "rolled_back";
+
+export interface ContractDestinationPolicy {
+  readonly baseUrl: string;
+  readonly allowedHosts: readonly string[];
+  readonly allowInsecureHttp?: boolean | undefined;
+}
+
+export interface ContractAuthConfig {
+  readonly requiredScopes?: readonly string[] | undefined;
+  readonly credentialProvider?: UpstreamCredentialProvider | undefined;
+}
+
+export interface ContractLimits {
+  readonly timeoutMs?: number | undefined;
+  readonly maxResponseBytes?: number | undefined;
+  readonly maxRequestBytes?: number | undefined;
+  readonly maxRedirects?: number | undefined;
+}
+
+export interface ContractRevision {
+  readonly revisionId: string;
+  readonly contractName: string;
+  readonly tenantId: string;
+  readonly sourceHash: string;
+  readonly createdAt: number;
+  readonly status: ContractRevisionStatus;
+  readonly tools: readonly ToolDefinition[];
+  readonly destinationPolicy: ContractDestinationPolicy;
+  readonly authConfig?: ContractAuthConfig | undefined;
+  readonly limits?: ContractLimits | undefined;
+  readonly metadata?: Readonly<Record<string, unknown>> | undefined;
+}
+
+export interface PublishContractOptions {
+  readonly tenantId: string;
+  readonly contractName: string;
+  readonly source?: string | undefined;
+  readonly tools?: readonly ToolDefinition[] | undefined;
+  readonly destinationPolicy: ContractDestinationPolicy;
+  readonly authConfig?: ContractAuthConfig | undefined;
+  readonly limits?: ContractLimits | undefined;
+  readonly metadata?: Readonly<Record<string, unknown>> | undefined;
+  readonly autoActivate?: boolean | undefined;
+}
+
+export type GatewayAuditEventType =
+  | "contract_published"
+  | "contract_activated"
+  | "contract_disabled"
+  | "contract_rolled_back";
+
+export interface GatewayAuditEvent {
+  readonly type: GatewayAuditEventType;
+  readonly timestamp: number;
+  readonly tenantId: string;
+  readonly contractName: string;
+  readonly revisionId: string;
+  readonly previousRevisionId?: string | undefined;
+  readonly toolCount: number;
+  readonly details?: Readonly<Record<string, unknown>> | undefined;
+}
+
+export type GatewayAuditSink = (
+  event: GatewayAuditEvent,
+) => void | Promise<void>;
+
+export interface DynamicGatewayOptions {
+  readonly authorizer?: Authorizer | undefined;
+  readonly rateLimiter?: RateLimiter | undefined;
+  readonly cache?: RuntimeCacheOptions | undefined;
+  readonly tokenizer?: Tokenizer | undefined;
+  readonly projector?: ResultProjector | undefined;
+  readonly metrics?: MetricsSink | undefined;
+  readonly logger?: Logger | undefined;
+  readonly auditSink?: GatewayAuditSink | undefined;
+  readonly resolveHost?: HostResolver | undefined;
+  readonly transport?: UpstreamTransport | undefined;
+  readonly defaultTimeoutMs?: number | undefined;
+  readonly now?: (() => number) | undefined;
+  readonly monotonicNow?: (() => number) | undefined;
+}
+```
+
+### Classes and Functions
+
+```ts
+export class ContractRegistry {
+  createRevision(options: CreateRevisionOptions): ContractRevision;
+  activateRevision(
+    tenantId: string,
+    contractName: string,
+    revisionId: string,
+  ): ActivationResult;
+  disableRevision(
+    tenantId: string,
+    contractName: string,
+    revisionId?: string,
+  ): ContractRevision;
+  rollbackRevision(
+    tenantId: string,
+    contractName: string,
+    targetRevisionId: string,
+  ): RollbackResult;
+  getActiveRevision(
+    tenantId: string,
+    contractName: string,
+  ): ContractRevision | undefined;
+  getRevision(revisionId: string): ContractRevision | undefined;
+  listRevisions(
+    tenantId: string,
+    contractName?: string,
+  ): readonly ContractRevision[];
+  listActiveRevisions(tenantId?: string): readonly ContractRevision[];
+}
+
+export class DynamicGateway implements ToolRuntime {
+  readonly tenantMode: "multi-tenant";
+  constructor(options?: DynamicGatewayOptions);
+  getRegistry(): ContractRegistry;
+  publishContract(options: PublishContractOptions): Promise<ContractRevision>;
+  activateRevision(
+    tenantId: string,
+    contractName: string,
+    revisionId: string,
+  ): Promise<ContractRevision>;
+  disableContract(
+    tenantId: string,
+    contractName: string,
+  ): Promise<ContractRevision>;
+  rollbackContract(
+    tenantId: string,
+    contractName: string,
+    targetRevisionId: string,
+  ): Promise<ContractRevision>;
+  listTools(context?: ToolContext): ReadonlyArray<ToolSummary>;
+  callTool(
+    name: string,
+    input: unknown,
+    context: ToolContext | ToolContextFactory,
+  ): Promise<unknown>;
+  invalidateCachedResult?(
+    name: string,
+    input: unknown,
+    context: ToolContext,
+  ): Promise<void>;
+  register(tool: ToolDefinition): void;
+  registerSource(source: ToolSource): Promise<void>;
+}
+
+export function createGatewayServer(
+  gateway: DynamicGateway,
+  options: GatewayServerOptions,
+): McpServer;
+
+export function connectGatewayServer(
+  gateway: DynamicGateway,
+  transport: Transport,
+  options: GatewayServerOptions,
+): Promise<ConnectedMcpServer>;
+```
 
 ## Compatibility
 

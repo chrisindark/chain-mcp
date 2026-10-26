@@ -2,41 +2,93 @@
 
 ## Purpose
 
-Serve multiple API contracts through one MCP-capable service.
+Serve multiple API contracts through one shared MCP service with strict tenant isolation, immutable versioned revisions, atomic candidate activation, and per-contract authentication and network policies.
+
+The implementation is provided by `@chainmcp/gateway`.
 
 ## Registry model
 
-Each contract revision contains:
+Each `ContractRevision` contains:
 
-- Immutable revision ID and source hash.
-- Validated compiled tools.
-- Tenant ownership or access policy.
-- Upstream destination allowlist.
-- Authentication and authorization configuration.
-- Cache and rate-limit policy.
+- **`revisionId`:** Immutable, deterministic digest-based identifier (e.g. `rev_<hash>`).
+- **`contractName`:** Contract name (1-64 alphanumeric characters, underscores, or hyphens).
+- **`tenantId`:** Tenant that owns and is authorized to access the revision.
+- **`sourceHash`:** SHA-256 integrity hash of the raw contract source or tool definitions.
+- **`createdAt`:** Creation timestamp.
+- **`status`:** `"candidate"` | `"active"` | `"disabled"` | `"superseded"` | `"rolled_back"`.
+- **`tools`:** Validated tool definitions stamped with `contractRevision` and `ownerTenantId`.
+- **`destinationPolicy`:** Per-contract `baseUrl` and strict `allowedHosts` allowlist.
+- **`authConfig`:** Optional contract-level `requiredScopes` and upstream `credentialProvider`.
+- **`limits`:** Optional request/response byte caps, redirect limits, and execution timeouts.
+- **`metadata`:** Optional arbitrary deployment metadata.
 
-## Publication workflow
+## Publication and reload workflow
 
-1. Accept a contract through a trusted management interface.
-2. Validate and compile in an isolated operation.
-3. Run security policy checks.
-4. Create an immutable candidate revision.
-5. Atomically activate the revision.
-6. Retain rollback information.
-7. Emit a redacted audit event.
+1. **Candidate Compilation & Validation:**
+   - Supply OpenAPI 3.0/3.1 YAML/JSON text or an array of code tool definitions.
+   - OpenAPI specs are compiled in isolation with `@chainmcp/compiler` using strict mode.
+   - Outbound tools are constructed via `@chainmcp/executor` bound specifically to the contract's `baseUrl`, `allowedHosts`, and `credentialProvider`.
+   - Tool input schemas are audited against `auditInputSchema` to ensure linear-time validation bounds.
+   - Tool name collisions are verified: duplicate tool names within the revision or against other active contracts for the same tenant are rejected before activation.
+   - A candidate `ContractRevision` is stored in the `ContractRegistry`.
+2. **Audit Event Emission:**
+   - A redacted `contract_published` audit event is emitted to the configured `GatewayAuditSink`.
+3. **Atomic Activation:**
+   - When activated (default `autoActivate: true`), the revision status becomes `"active"`.
+   - Any prior active revision for that contract becomes `"superseded"`.
+   - The gateway constructs a new `InMemoryToolRuntime` snapshot with all currently active tools across all tenants, and atomically updates `this.activeRuntime = nextRuntime`.
+   - An asynchronous mutex prevents race conditions during concurrent reloads.
+   - In-flight requests on the prior runtime snapshot continue executing undisturbed; new requests immediately see the newly active revision.
+   - A `contract_activated` audit event is emitted.
 
-## Isolation
+## Disabling and rollback
 
-A caller must never enumerate or invoke tools belonging to an unauthorized tenant. Authentication, cache keys, upstream credentials, quotas, and metrics must retain their tenant boundaries.
+- **Disabling:** `gateway.disableContract(tenantId, contractName)` marks the active revision `"disabled"`. Its tools immediately become invisible to `listTools` and uncallable (`TOOL_NOT_FOUND`). A `contract_disabled` audit event is emitted.
+- **Rollback:** `gateway.rollbackContract(tenantId, contractName, targetRevisionId)` reactivates a prior revision in the contract's history and marks the current active revision as `"rolled_back"`. A `contract_rolled_back` audit event is emitted.
 
-## Availability
+## Tenant and network isolation
 
-- Contract compilation must not block unrelated requests indefinitely.
-- Reloads must be atomic.
-- Failed publications must not replace a working revision.
-- Disable and rollback operations must be auditable.
-- Per-tenant limits must prevent resource exhaustion.
+1. **Discovery Isolation:** `gateway.listTools(context)` strictly scopes results to `context.tenantId`. Calls without a caller context fail closed with `AUTH_REQUIRED`.
+2. **Invocation Isolation:** `gateway.callTool(name, input, context)` resolves against `context.tenantId`. Attempting to call another tenant's tool fails closed with `TOOL_NOT_FOUND`, making cross-tenant inventory completely indistinguishable from nonexistent tools (ADR 0008).
+3. **Name Independence:** Two different tenants can safely register tools with identical names (e.g. `listUsers`) without collision or cross-talk.
+4. **Network Destination Isolation:** Outbound HTTP tools use an executor bound to the specific contract revision's `allowedHosts`. Requests cannot connect to another tenant's or contract's upstream hosts.
+5. **Credential Isolation:** Outbound requests use the revision's configured `credentialProvider`, preventing credential leakage across contracts.
+6. **Cache Isolation:** Cache keys incorporate `tenantId` and `contractRevision`, guaranteeing cached results for one tenant or revision cannot be retrieved by another.
+
+## Programmatic usage
+
+```ts
+import { DynamicGateway, createGatewayServer } from "@chainmcp/gateway";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+
+const gateway = new DynamicGateway();
+
+// Publish and activate a contract
+await gateway.publishContract({
+  tenantId: "tenant-acme",
+  contractName: "billing-api",
+  source: openApiYamlSource,
+  destinationPolicy: {
+    baseUrl: "https://api.billing.acme.com",
+    allowedHosts: ["api.billing.acme.com"],
+  },
+  authConfig: {
+    requiredScopes: ["billing:read"],
+  },
+});
+
+// Create MCP server
+const server = createGatewayServer(gateway, {
+  name: "acme-gateway",
+  version: "0.1.0",
+  createContext: async (req) => ({
+    requestId: String(req.id),
+    tenantId: resolveTenantFromAuth(req.authInfo),
+    principal: resolvePrincipalFromAuth(req.authInfo),
+  }),
+});
+```
 
 ## Scope boundary
 
-The gateway is a deployment mode for the open-source runtime, not a requirement for using generated servers. Do not add a mandatory hosted SaaS dependency.
+The dynamic gateway is a deployment mode for the open-source runtime, not a requirement for using generated servers. Both modes share the identical core runtime execution pipeline (ADR 0002).

@@ -118,6 +118,13 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   execute(input: TInput, context: ToolContext): Promise<TOutput>;
 }
 
+export interface ToolSource {
+  /**
+   * Produces the set of tools supplied by this source.
+   */
+  getTools(): Promise<readonly ToolDefinition[]> | readonly ToolDefinition[];
+}
+
 export type RuntimeEvent = {
   name: "tool_invocation";
   timestamp: number;
@@ -267,6 +274,7 @@ export interface ToolRuntime {
    */
   readonly tenantMode: TenantMode;
   register(tool: ToolDefinition): void;
+  registerSource?(source: ToolSource): Promise<void>;
   /**
    * Lists tools. In single-tenant mode the listing is unfiltered, matching
    * Milestone 2 behavior. In multi-tenant mode the listing is scoped to the
@@ -527,6 +535,25 @@ export class InMemoryToolRuntime implements ToolRuntime {
     }
     if (this.tenantMode === "single-tenant") {
       this.names.set(tool.name, tool);
+    }
+  }
+
+  async registerSource(source: ToolSource): Promise<void> {
+    if (typeof source?.getTools !== "function") {
+      throw new RuntimeError(
+        "CONFIG_INVALID",
+        "Tool source must provide a getTools() function",
+      );
+    }
+    const tools = await source.getTools();
+    if (!Array.isArray(tools)) {
+      throw new RuntimeError(
+        "CONFIG_INVALID",
+        "Tool source getTools() must return an array of tools",
+      );
+    }
+    for (const tool of tools) {
+      this.register(tool);
     }
   }
 
