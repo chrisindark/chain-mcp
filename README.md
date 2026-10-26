@@ -137,10 +137,25 @@ Run `pnpm install` followed by `pnpm check` from the repository root to run form
 chainmcp init --spec ./openapi.yaml  # Scaffolds project from API spec
 chainmcp validate                    # Audits schemas, regexes, and URLs
 chainmcp build                       # Compiles tools and manifests
-chainmcp serve                       # Starts the local MCP server
+chainmcp serve                       # Starts the local MCP server (stdio by default)
+chainmcp serve --transport http --port 3333 # Serves Streamable HTTP / SSE endpoint
 chainmcp export --output ./dist-srv  # Exports portable standalone server
 chainmcp diff                        # Detects schema drift and breaking changes
 ```
+
+## Transports and Inbound Authentication
+
+ChainMcp supports both standard MCP transport protocols:
+
+- **Stdio (`--transport stdio`):** Standard input/output for local desktop clients such as Claude Desktop and Cursor.
+- **Streamable HTTP (`--transport http`):** Modern HTTP/SSE server endpoint for containerized and remote deployments. Includes health probes (`/health`), CORS support, and graceful signal teardown.
+
+When running over HTTP, configure inbound caller authentication via `chainmcp.config.yaml`:
+
+- **Bearer Tokens:** Static or dynamic token verifiers mapping tokens to tenant ID, principal ID, and scopes.
+- **API Keys:** Header-based API key verifiers (e.g. `X-API-Key`).
+- **JSON Web Tokens (JWT):** Signed HS256/RS256/ES256 token verification with standard claims (`exp`, `nbf`, `iss`, `aud`) validated via standard crypto without external runtime dependencies.
+- Inbound identity is automatically propagated to runtime `ToolContext` and MCP `AuthInfo` for per-call authorization and rate limiting.
 
 ## Security
 

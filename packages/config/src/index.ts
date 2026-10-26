@@ -107,10 +107,38 @@ export const RateLimitConfigSchema = z
 
 export type RateLimitConfig = z.infer<typeof RateLimitConfigSchema>;
 
+export const InboundPrincipalConfigSchema = z
+  .object({
+    tenantId: z.string().min(1),
+    principalId: z.string().min(1),
+    scopes: z.array(z.string()).optional(),
+  })
+  .strict();
+
+export type InboundPrincipalConfig = z.infer<
+  typeof InboundPrincipalConfigSchema
+>;
+
+export const InboundJwtConfigSchema = z
+  .object({
+    secret: z.string().optional(),
+    publicKey: z.string().optional(),
+    issuer: z.string().optional(),
+    audience: z.string().optional(),
+    clockToleranceSeconds: z.number().int().nonnegative().default(30),
+  })
+  .strict();
+
+export type InboundJwtConfig = z.infer<typeof InboundJwtConfigSchema>;
+
 export const InboundAuthConfigSchema = z
   .object({
     requireInboundAuth: z.boolean().default(false),
     authorizer: z.enum(["scope", "none"]).default("scope"),
+    tokens: z.record(z.string(), InboundPrincipalConfigSchema).optional(),
+    apiKeys: z.record(z.string(), InboundPrincipalConfigSchema).optional(),
+    apiKeyHeader: z.string().optional(),
+    jwt: InboundJwtConfigSchema.optional(),
   })
   .strict()
   .prefault({});
@@ -279,9 +307,10 @@ export const ChainMcpConfigSchema = z
     contract: ContractConfigSchema.optional(),
     server: z
       .object({
-        transport: z.literal("stdio").default("stdio"),
+        transport: z.enum(["stdio", "http"]).default("stdio"),
         host: z.string().default("127.0.0.1"),
         port: z.number().int().min(1).max(65535).default(3333),
+        path: z.string().default("/mcp"),
         requestTimeoutMs: z
           .number()
           .int()

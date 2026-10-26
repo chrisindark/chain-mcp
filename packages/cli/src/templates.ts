@@ -169,7 +169,10 @@ import {
 import { createJsonNavigationTools } from "@chainmcp/json-navigation";
 import {
   connectMcpServer,
+  createInboundVerifier,
+  serveHttp,
   serveStdio,
+  type McpRequestContext,
   type Transport,
 } from "@chainmcp/server";
 import { tools } from "./tools.js";
@@ -258,11 +261,18 @@ export async function runServer(options?: RunServerOptions) {
   const serverOptions = {
     name: config.name,
     version: "0.1.0",
-    createContext: () => ({
-      requestId: randomUUID(),
-      tenantId: "default",
-      principal: { id: "mcp-caller", scopes: [] },
-    }),
+    maxResponseBytes: config.server.maxResponseBytes,
+    createContext: (request: McpRequestContext) => {
+      const auth = request.authInfo;
+      return {
+        requestId: randomUUID(),
+        tenantId: (auth?.extra?.tenantId as string) ?? "default",
+        principal: {
+          id: auth?.clientId ?? "mcp-caller",
+          scopes: auth?.scopes ?? [],
+        },
+      };
+    },
   };
 
   if (options?.serverTransport !== undefined) {
@@ -270,6 +280,22 @@ export async function runServer(options?: RunServerOptions) {
       runtime,
       options.serverTransport,
       serverOptions,
+    );
+  }
+
+  if (config.server.transport === "http") {
+    const verifier = createInboundVerifier(config.auth.inbound);
+    return await serveHttp(
+      runtime,
+      serverOptions,
+      {
+        port: config.server.port,
+        host: config.server.host,
+        path: config.server.path,
+        verifier,
+        requireAuth: config.auth.inbound.requireInboundAuth,
+        ...(options?.signal !== undefined ? { signal: options.signal } : {}),
+      },
     );
   }
 
@@ -356,6 +382,8 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/spec ./spec
 COPY chainmcp.config.yaml ./
 COPY chainmcp.manifest.json ./
+
+EXPOSE 3333
 
 USER node
 ENTRYPOINT ["node", "dist/server.js"]

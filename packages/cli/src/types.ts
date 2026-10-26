@@ -91,7 +91,10 @@ export interface BuildResult {
 export interface ServeOptions {
   config?: string | undefined;
   spec?: string | undefined;
-  transport?: "stdio" | undefined;
+  transport?: "stdio" | "http" | undefined;
+  port?: number | undefined;
+  host?: string | undefined;
+  path?: string | undefined;
   baseUrl?: string | undefined;
   tenantId?: string | undefined;
   cwd?: string | undefined;
@@ -104,6 +107,7 @@ export interface ServeResult {
   ok: boolean;
   serverName: string;
   toolCount: number;
+  url?: URL | undefined;
   close(): Promise<void>;
   closed: Promise<void>;
 }

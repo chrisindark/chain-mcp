@@ -12,7 +12,7 @@ import {
 import { InMemoryToolRuntime } from "@chainmcp/core";
 import { createUpstreamExecutor } from "@chainmcp/executor";
 import { createJsonNavigationTools } from "@chainmcp/json-navigation";
-import { serveStdio } from "@chainmcp/server";
+import { createInboundVerifier, serveHttp, serveStdio } from "@chainmcp/server";
 
 import type { ServeOptions, ServeResult } from "../types.js";
 import { validateCommand } from "./validate.js";
@@ -91,17 +91,74 @@ export async function serveCommand(
   const totalToolCount =
     compiled.tools.length + (config.jsonNavigation.enabled ? 4 : 0);
 
+  const transport = options.transport ?? config.server.transport ?? "stdio";
+
+  if (transport === "http") {
+    const port = options.port ?? config.server.port ?? 3333;
+    const host = options.host ?? config.server.host ?? "127.0.0.1";
+    const path = options.path ?? config.server.path ?? "/mcp";
+    const verifier = createInboundVerifier(config.auth.inbound);
+
+    const serverHandle = await serveHttp(
+      runtime,
+      {
+        name: config.name,
+        version: "0.1.0",
+        maxResponseBytes: config.server.maxResponseBytes,
+        createContext: (request) => {
+          const auth = request.authInfo;
+          return {
+            requestId: randomUUID(),
+            tenantId:
+              (auth?.extra?.tenantId as string) ??
+              options.tenantId ??
+              "default",
+            principal: {
+              id: auth?.clientId ?? "mcp-caller",
+              scopes: auth?.scopes ?? [],
+            },
+          };
+        },
+      },
+      {
+        port,
+        host,
+        path,
+        verifier,
+        requireAuth: config.auth.inbound.requireInboundAuth,
+        ...(options.signal !== undefined ? { signal: options.signal } : {}),
+      },
+    );
+
+    return {
+      ok: true,
+      serverName: config.name,
+      toolCount: totalToolCount,
+      url: serverHandle.url,
+      close: serverHandle.close,
+      closed: serverHandle.closed,
+    };
+  }
+
   // 4. Serve over stdio
   const serverHandle = await serveStdio(
     runtime,
     {
       name: config.name,
       version: "0.1.0",
-      createContext: () => ({
-        requestId: randomUUID(),
-        tenantId: options.tenantId ?? "default",
-        principal: { id: "mcp-caller", scopes: [] },
-      }),
+      maxResponseBytes: config.server.maxResponseBytes,
+      createContext: (request) => {
+        const auth = request.authInfo;
+        return {
+          requestId: randomUUID(),
+          tenantId:
+            (auth?.extra?.tenantId as string) ?? options.tenantId ?? "default",
+          principal: {
+            id: auth?.clientId ?? "mcp-caller",
+            scopes: auth?.scopes ?? [],
+          },
+        };
+      },
     },
     {
       ...(options.stdin !== undefined ? { stdin: options.stdin } : {}),

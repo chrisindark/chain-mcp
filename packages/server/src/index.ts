@@ -421,3 +421,6 @@ export async function serveStdio(
   void connected.closed.then(cleanup);
   return connected;
 }
+
+export * from "./verifier.js";
+export * from "./http.js";

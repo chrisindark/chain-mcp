@@ -49,6 +49,10 @@ Command options:
   serve:
     --config <path>      Path to chainmcp.config.yaml
     --spec <path>        Path to OpenAPI contract
+    --transport <type>   stdio | http (default: stdio, or config server.transport)
+    --port <number>      HTTP port when transport is http (default: 3333)
+    --host <string>      HTTP host when transport is http (default: 127.0.0.1)
+    --path <string>      HTTP base endpoint path (default: /mcp)
     --base-url <url>     Override upstream base URL
     --tenant <id>        Tenant identifier for context (default: default)
 
@@ -90,6 +94,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       "base-url": { type: "string" },
       "out-dir": { type: "string" },
       transport: { type: "string" },
+      port: { type: "string" },
+      host: { type: "string" },
+      path: { type: "string" },
       tenant: { type: "string" },
       blank: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
@@ -228,12 +235,28 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
 
     case "serve": {
       try {
+        const portStr = asString(values.port);
+        const parsedPort =
+          portStr !== undefined ? Number.parseInt(portStr, 10) : undefined;
+        const transport = asString(values.transport) as
+          "stdio" | "http" | undefined;
+
         const result = await serveCommand({
           ...(asString(values.config) !== undefined
             ? { config: asString(values.config) }
             : {}),
           ...(asString(values.spec) !== undefined
             ? { spec: asString(values.spec) }
+            : {}),
+          ...(transport !== undefined ? { transport } : {}),
+          ...(parsedPort !== undefined && !Number.isNaN(parsedPort)
+            ? { port: parsedPort }
+            : {}),
+          ...(asString(values.host) !== undefined
+            ? { host: asString(values.host) }
+            : {}),
+          ...(asString(values.path) !== undefined
+            ? { path: asString(values.path) }
             : {}),
           ...(asString(values["base-url"]) !== undefined
             ? { baseUrl: asString(values["base-url"]) }
@@ -247,9 +270,15 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
             : {}),
         });
 
-        log(
-          `Serving MCP server '${result.serverName}' over stdio (${result.toolCount} tools registered)...`,
-        );
+        if (result.url) {
+          log(
+            `Serving MCP server '${result.serverName}' over HTTP at ${result.url.toString()} (${result.toolCount} tools registered)...`,
+          );
+        } else {
+          log(
+            `Serving MCP server '${result.serverName}' over stdio (${result.toolCount} tools registered)...`,
+          );
+        }
         await result.closed;
         return 0;
       } catch (err) {
