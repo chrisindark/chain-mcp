@@ -8,6 +8,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Documentation
 
+- Document JSON navigation, structured logging, OpenTelemetry integration, and analytics aggregation in `docs/json-navigation.md`, `docs/analytics.md`, `API_REFERENCE.md`, `CONFIGURATION.md`, `ROADMAP.md`, and ADR 0023.
 - Document configuration wiring for network security, upstream credentials, and rate limiting in `CONFIGURATION.md`, `API_REFERENCE.md`, `ROADMAP.md`, and ADR 0022.
 - Document authentication, upstream credentials, encrypted secret storage, and distributed rate limiting in `docs/authentication.md`, `docs/rate-limiting.md`, `API_REFERENCE.md`, `CONFIGURATION.md`, `ARCHITECTURE.md`, `SECURITY.md`, and ADR 0021.
 - Define product vision and package boundaries.
@@ -31,6 +32,12 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- Complete Milestone 6 (JSON navigation, logging, and analytics):
+  - Add `@chainmcp/json-navigation` package providing bounded JSON path selection (`selectPath`), shape inspection (`inspectShape`), pagination (`paginate`), and declarative filtering (`filterData`) with strict enforcement of depth, node visit budgets, array limits, serialized result bytes, and execution deadlines, plus runnable MCP tool definitions (`json_inspect_shape`, `json_select_path`, `json_paginate`, `json_filter`).
+  - Add injectable `Logger`, `LogLevel`, `LogRecord`, and `LogCorrelationContext` interfaces to `@chainmcp/core`.
+  - Wire correlated lifecycle logging into `InMemoryToolRuntime`, isolating logger errors from tool results.
+  - Add `@chainmcp/analytics` package providing `createLogger`, multi-sink routing (`ConsoleSink`, `MemorySink`, `MultiSink`), case-insensitive secret scrubbing, token pattern redaction, default request/response body exclusion, dedicated security `auditSink`, OpenTelemetry metrics (`OpenTelemetryMetricsSink`) and tracing (`ToolTracer`) via `@opentelemetry/api`, and `RollingAnalyticsAggregator` for sliding-window performance and cache hit-ratio monitoring.
+  - Wire `logging`, `jsonNavigation`, and `analytics` schemas into `@chainmcp/config`, map `CHAINMCP_LOG_LEVEL`, and provide `buildRuntimeOptions` wiring.
 - Complete Milestone 5 (Authentication and rate limiting):
   - Add `EncryptedSecretStore` with AES-256-GCM authenticated encryption, 96-bit random IVs, 128-bit authentication tags, AAD key-binding, key rings, and key rotation to `@chainmcp/auth`.
   - Add pluggable upstream credential providers (`StaticCredentialProvider`, `EnvCredentialProvider`, `SecretStoreCredentialProvider`, `CompositeCredentialProvider`, and `OAuthClientCredentialsProvider`) to `@chainmcp/auth`.

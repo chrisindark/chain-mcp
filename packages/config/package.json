@@ -28,9 +28,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@chainmcp/analytics": "workspace:*",
     "@chainmcp/auth": "workspace:*",
     "@chainmcp/core": "workspace:*",
     "@chainmcp/executor": "workspace:*",
+    "@chainmcp/json-navigation": "workspace:*",
     "@chainmcp/rate-limit": "workspace:*",
     "zod": "^4.1.12"
   }

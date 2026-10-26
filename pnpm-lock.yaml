@@ -65,6 +65,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/server
 
+  packages/analytics:
+    dependencies:
+      "@chainmcp/core":
+        specifier: workspace:*
+        version: link:../core
+      "@opentelemetry/api":
+        specifier: ^1.9.0
+        version: 1.10.0
+
   packages/auth:
     dependencies:
       "@chainmcp/core":
@@ -88,6 +97,9 @@ importers:
 
   packages/config:
     dependencies:
+      "@chainmcp/analytics":
+        specifier: workspace:*
+        version: link:../analytics
       "@chainmcp/auth":
         specifier: workspace:*
         version: link:../auth
@@ -97,6 +109,9 @@ importers:
       "@chainmcp/executor":
         specifier: workspace:*
         version: link:../executor
+      "@chainmcp/json-navigation":
+        specifier: workspace:*
+        version: link:../json-navigation
       "@chainmcp/rate-limit":
         specifier: workspace:*
         version: link:../rate-limit
@@ -118,6 +133,12 @@ importers:
       "@chainmcp/compiler":
         specifier: workspace:*
         version: link:../compiler
+      "@chainmcp/core":
+        specifier: workspace:*
+        version: link:../core
+
+  packages/json-navigation:
+    dependencies:
       "@chainmcp/core":
         specifier: workspace:*
         version: link:../core
@@ -815,6 +836,13 @@ packages:
     cpu: [x64]
     os: [linux]
     libc: [glibc]
+
+  "@opentelemetry/api@1.10.0":
+    resolution:
+      {
+        integrity: sha512-lMkyes8iHrG+mk6WH7X70MdCLI2RS0FwNBY1PyQ8UemaijE2m5mv5A0Niy3HtbYTFrgkUEQjFMXmSAk2hQDuPQ==,
+      }
+    engines: { node: ">=8.0.0" }
 
   "@pnpm/deps.graph-sequencer@1100.0.1":
     resolution:
@@ -2932,6 +2960,8 @@ snapshots:
 
   "@napi-rs/lzma-linux-x64-gnu@1.5.1":
     optional: true
+
+  "@opentelemetry/api@1.10.0": {}
 
   "@pnpm/deps.graph-sequencer@1100.0.1": {}
 

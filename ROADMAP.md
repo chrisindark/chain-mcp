@@ -185,20 +185,44 @@ suite that runs the Lua scripts against a real Redis (CI job `redis-integration`
 
 ## Milestone 6 — JSON navigation, logging, and analytics
 
-- [ ] Add bounded JSON path selection.
-- [ ] Add filtering, pagination, and shape inspection.
-- [ ] Enforce depth, size, and execution limits.
-- [ ] Define an injectable logger interface with levels and structured records.
-- [ ] Add validated logging configuration, including level validation and environment-variable mapping.
-- [ ] Enforce secret and sensitive-field redaction at the logger boundary; exclude request and response bodies by default.
-- [ ] Correlate log records with request, tool call, and contract revision identifiers.
-- [ ] Define output sinks, retention, and separation between diagnostic and audit logs.
-- [ ] Test level filtering, redaction, correlation fields, and logger-failure isolation.
-- [ ] Emit structured usage and performance events.
-- [ ] Integrate OpenTelemetry.
-- [ ] Define retention and redaction defaults.
+- [x] Add bounded JSON path selection.
+- [x] Add filtering, pagination, and shape inspection.
+- [x] Enforce depth, size, and execution limits.
+- [x] Define an injectable logger interface with levels and structured records.
+- [x] Add validated logging configuration, including level validation and environment-variable mapping.
+- [x] Enforce secret and sensitive-field redaction at the logger boundary; exclude request and response bodies by default.
+- [x] Correlate log records with request, tool call, and contract revision identifiers.
+- [x] Define output sinks, retention, and separation between diagnostic and audit logs.
+- [x] Test level filtering, redaction, correlation fields, and logger-failure isolation.
+- [x] Emit structured usage and performance events.
+- [x] Integrate OpenTelemetry.
+- [x] Define retention and redaction defaults.
 
 **Exit criteria:** large and adversarial JSON documents remain bounded; analytics and logs exclude secrets and response bodies by default; and logs honor the configured level, emit structured and correlated records, and cannot change tool results when delivery fails.
+
+**Status (2026-10-26):** all Milestone 6 items are implemented and covered by
+tests. `@chainmcp/json-navigation` provides bounded path selection (`selectPath`),
+shape inspection (`inspectShape`), pagination (`paginate`), and declarative
+filtering (`filterData`) with strict enforcement of depth (default 16, max 64),
+node counts (default 50,000), array items (default 1,000), result byte limits
+(default 50,000 bytes), and execution time (default 5,000ms), and exports runnable
+MCP tool definitions (`json_inspect_shape`, `json_select_path`, `json_paginate`,
+`json_filter`). Circular references throw and prototype pollution keys
+(`__proto__`, `prototype`, `constructor`) are strictly rejected. Navigation
+operates strictly on authorized and projected data.
+`@chainmcp/core` defines portable `Logger`, `LogLevel`, `LogRecord`, and
+`LogCorrelationContext` interfaces, and `InMemoryToolRuntime` logs correlated
+invocation lifecycle records while completely isolating logger failures.
+`@chainmcp/analytics` implements `createLogger` with log-level filtering,
+case-insensitive secret scrubbing, token pattern redaction, and default body
+exclusion. It routes diagnostic logs and security audit logs to separate sinks
+(`ConsoleSink`, `MemorySink`, `MultiSink`), implements
+`OpenTelemetryMetricsSink` and `ToolTracer` over `@opentelemetry/api`, and
+provides `RollingAnalyticsAggregator` for sliding-window performance and cache
+hit-ratio accounting.
+`@chainmcp/config` adds validated `logging`, `jsonNavigation`, and `analytics`
+schemas, maps `CHAINMCP_LOG_LEVEL`, and wires loggers and metrics into runtime
+options via `buildRuntimeOptions`.
 
 ## Milestone 7 — Generated servers
 

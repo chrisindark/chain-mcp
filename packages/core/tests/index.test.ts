@@ -1531,4 +1531,146 @@ describe("tenant binding and tenancy modes (ADR 0008)", () => {
     expect(authorizer).toHaveBeenCalledOnce();
     expect(execute).toHaveBeenCalledOnce();
   });
+
+  describe("structured logger integration", () => {
+    it("emits correlated info log on successful tool execution", async () => {
+      const info = vi.fn();
+      const logger = {
+        debug: vi.fn(),
+        info,
+        warn: vi.fn(),
+        error: vi.fn(),
+        audit: vi.fn(),
+      };
+      const runtime = new InMemoryToolRuntime({ logger });
+      const myTool = {
+        ...tool(async () => ({ status: "ok" })),
+        contractRevision: "rev-123",
+      };
+      runtime.register(myTool);
+      const ctx = tenantContext("tenant-abc");
+      await runtime.callTool("lookup_item", { id: "1" }, ctx);
+
+      expect(info).toHaveBeenCalledOnce();
+      expect(info).toHaveBeenCalledWith(
+        "Tool 'lookup_item' completed successfully",
+        expect.objectContaining({
+          requestId: ctx.requestId,
+          tenantId: "tenant-abc",
+          principalId: ctx.principal.id,
+          toolName: "lookup_item",
+          contractRevision: "rev-123",
+          outcome: "success",
+        }),
+      );
+    });
+
+    it("emits warn and audit log on rate limit denial", async () => {
+      const warn = vi.fn();
+      const audit = vi.fn();
+      const logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn,
+        error: vi.fn(),
+        audit,
+      };
+      const rateLimiter = {
+        check: vi
+          .fn()
+          .mockResolvedValue({ allowed: false, retryAfterSeconds: 30 }),
+      };
+      const runtime = new InMemoryToolRuntime({ logger, rateLimiter });
+      runtime.register(tool());
+      const ctx = tenantContext("tenant-xyz");
+
+      await expect(
+        runtime.callTool("lookup_item", { id: "1" }, ctx),
+      ).rejects.toMatchObject({ code: "RATE_LIMITED" });
+
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn).toHaveBeenCalledWith(
+        "Tool 'lookup_item' was rate limited",
+        expect.objectContaining({
+          outcome: "rate_limited",
+          errorCode: "RATE_LIMITED",
+        }),
+      );
+      expect(audit).toHaveBeenCalledOnce();
+      expect(audit).toHaveBeenCalledWith(
+        "Rate limit exceeded for tool 'lookup_item'",
+        expect.objectContaining({
+          outcome: "rate_limited",
+        }),
+      );
+    });
+
+    it("emits error and audit log on auth denial", async () => {
+      const errorLog = vi.fn();
+      const audit = vi.fn();
+      const logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: errorLog,
+        audit,
+      };
+      const denyingAuthorizer = {
+        authorize: vi
+          .fn()
+          .mockRejectedValue(new RuntimeError("AUTH_FORBIDDEN", "Forbidden")),
+      };
+      const runtime = new InMemoryToolRuntime({
+        logger,
+        authorizer: denyingAuthorizer,
+      });
+      runtime.register(tool());
+      const ctx = tenantContext("tenant-xyz");
+
+      await expect(
+        runtime.callTool("lookup_item", { id: "1" }, ctx),
+      ).rejects.toMatchObject({ code: "AUTH_FORBIDDEN" });
+
+      expect(errorLog).toHaveBeenCalledOnce();
+      expect(errorLog).toHaveBeenCalledWith(
+        "Tool 'lookup_item' failed with error AUTH_FORBIDDEN",
+        expect.objectContaining({
+          errorCode: "AUTH_FORBIDDEN",
+          outcome: "error",
+        }),
+      );
+      expect(audit).toHaveBeenCalledOnce();
+      expect(audit).toHaveBeenCalledWith(
+        "Authorization denied for tool 'lookup_item'",
+        expect.objectContaining({
+          errorCode: "AUTH_FORBIDDEN",
+        }),
+      );
+    });
+
+    it("isolates logger failures so tool results and errors are not altered", async () => {
+      const throwingLogger = {
+        debug: vi.fn(),
+        info: vi.fn().mockImplementation(() => {
+          throw new Error("Logger sink exploded");
+        }),
+        warn: vi.fn().mockImplementation(() => {
+          throw new Error("Logger sink exploded");
+        }),
+        error: vi.fn().mockImplementation(() => {
+          throw new Error("Logger sink exploded");
+        }),
+        audit: vi.fn().mockImplementation(() => {
+          throw new Error("Audit sink exploded");
+        }),
+      };
+      const runtime = new InMemoryToolRuntime({ logger: throwingLogger });
+      runtime.register(tool(async () => "successful result"));
+      const ctx = tenantContext("t-1");
+
+      await expect(
+        runtime.callTool("lookup_item", { id: "1" }, ctx),
+      ).resolves.toBe("successful result");
+    });
+  });
 });

@@ -541,6 +541,56 @@ The earlier target shape included `outcome: "cache_hit"` and optional `durationM
 
 `MetricsSink.record` is invoked after the call settles. Synchronous throws and rejected promises are ignored so telemetry cannot change the tool result. Events must not contain secrets, raw authorization data, or unrestricted request and response bodies.
 
+## Logging interface
+
+`@chainmcp/core` provides injectable structured logging contracts:
+
+```ts
+export type LogLevel = "debug" | "info" | "warn" | "error" | "silent";
+
+export interface LogCorrelationContext {
+  requestId?: string | undefined;
+  tenantId?: string | undefined;
+  principalId?: string | undefined;
+  toolName?: string | undefined;
+  contractRevision?: string | undefined;
+  [key: string]: unknown;
+}
+
+export interface LogRecord {
+  level: "debug" | "info" | "warn" | "error";
+  message: string;
+  timestamp: number;
+  category?: "diagnostic" | "audit" | undefined;
+  context?: LogCorrelationContext | undefined;
+  error?:
+    | {
+        code?: string | undefined;
+        message: string;
+        stack?: string | undefined;
+      }
+    | undefined;
+  attributes?: Record<string, unknown> | undefined;
+}
+
+export interface Logger {
+  debug(message: string, context?: Record<string, unknown>): void;
+  info(message: string, context?: Record<string, unknown>): void;
+  warn(message: string, context?: Record<string, unknown>): void;
+  error(message: string, context?: Record<string, unknown>): void;
+  audit?(message: string, context?: Record<string, unknown>): void;
+  child?(context: Record<string, unknown>): Logger;
+}
+```
+
+The runtime injects `RuntimeOptions.logger` and emits correlated lifecycle events:
+
+- Successful completions emit `info` with `durationMs` and outcome.
+- Rate-limiting denials emit `warn` and call `audit` with `RATE_LIMITED`.
+- Authorization denials emit `error` and call `audit` with `AUTH_FORBIDDEN` / `AUTH_REQUIRED`.
+- Administrative cache invalidations call `audit`.
+- All logger calls are completely isolated: throwing loggers and rejected promises never alter the tool result or surface to clients.
+
 ## `@chainmcp/compiler`
 
 `@chainmcp/compiler` parses and validates OpenAPI 3.0 and 3.1 documents and emits deterministic operation metadata, including parameter bindings, request-body metadata, response schemas, and authentication policies. The compiler itself does not execute anything. `@chainmcp/executor` turns an emitted `CompiledOperation` into a runnable `ToolDefinition` with bounded upstream I/O and an explicit destination policy. Credential injection, response validation, and generated-server/CLI wiring remain unimplemented.
@@ -1125,6 +1175,99 @@ Quotas and concurrency can be partitioned globally, by tenant, by principal, or 
 
 In distributed deployments, atomic Redis Lua scripts ensure quota and concurrency limits are enforced across server processes without race conditions. Every matching scope is evaluated for each call and the scopes recorded before a denial are rolled back, so a rejected call never consumes another scope's budget; rollback failures are isolated and can only over-count. Concurrency slots are acquired before tool execution and released in a `finally` block upon completion, with a safety TTL (default 60 seconds) for crashed holders. The Lua scripts are proven against a real Redis by the opt-in integration suite described in `DEVELOPMENT.md`.
 
+## `@chainmcp/json-navigation`
+
+Safe, resource-bounded JSON exploration and schema inspection:
+
+```ts
+export function inspectShape(
+  data: unknown,
+  options?: InspectShapeOptions,
+): ShapeSummary;
+
+export function selectPath(
+  data: unknown,
+  path: string | CompiledPath,
+  options?: NavigationLimits,
+): unknown;
+
+export function parseJsonPath(path: string): CompiledPath;
+
+export function paginate<T = unknown>(
+  data: unknown,
+  options?: PaginationOptions,
+): PaginatedResult<T>;
+
+export function filterData<T = unknown>(
+  data: unknown,
+  filter: FilterExpression,
+  options?: NavigationLimits,
+): T[];
+
+export function createJsonNavigationTools(
+  limits?: NavigationLimits,
+): ToolDefinition[];
+```
+
+### Invariants and Limits
+
+- `NavigationBudget` enforces `maxDepth` (default 16, hard maximum 64), `maxVisitedNodes` (default 50,000), `maxArrayItems` (default 1,000), `maxResultBytes` (default 50,000 bytes), and `timeoutMs` (default 5,000ms).
+- Circular references in shapes throw `JsonNavigationError`.
+- Prototype pollution targets (`__proto__`, `prototype`, `constructor`) are strictly rejected across all selectors and filters.
+- Never evaluates dynamic code (`eval`, `new Function`); all selectors are linear-time AST-evaluated.
+- Navigation tools never bypass upstream authorization or projection policies.
+
+## `@chainmcp/analytics`
+
+Structured logging, multi-sink routing, secret redaction, and OpenTelemetry integration:
+
+```ts
+export function createLogger(options?: LoggerOptions): StructuredLogger;
+
+export class OpenTelemetryMetricsSink implements MetricsSink {
+  constructor(options?: OpenTelemetryMetricsSinkOptions);
+  record(event: RuntimeEvent): void;
+}
+
+export class ToolTracer {
+  constructor(options?: ToolTracerOptions);
+  startToolSpan(
+    toolName: string,
+    context: ToolContext,
+    contractRevision?: string,
+  ): Span;
+  endToolSpan(
+    span: Span,
+    details?: { error?: unknown; cacheOutcome?: string },
+  ): void;
+}
+
+export class RollingAnalyticsAggregator implements MetricsSink {
+  constructor(options?: AggregatorOptions);
+  record(event: RuntimeEvent): void;
+  getSummary(filter?: {
+    toolName?: string;
+    tenantId?: string;
+  }): AnalyticsSummary;
+  clear(): void;
+}
+
+export function redactValue(value: unknown, options?: RedactionOptions): unknown;
+export function redactString(input: string): string;
+
+export class MemorySink implements LogSink { ... }
+export class ConsoleSink implements LogSink { ... }
+export class MultiSink implements LogSink { ... }
+```
+
+### Telemetry & Redaction Rules
+
+- Key names matching tokens, passwords, keys, or credentials are case-insensitively scrubbed to `"[REDACTED]"`.
+- Bearer, Basic, and JWT patterns in strings are sanitized.
+- Request and response bodies are excluded by default (`"[EXCLUDED_BODY]"`).
+- Security events (authorization denials, rate limit breaches, invalidations) are routed to `auditSink`.
+- Logger and metrics delivery failures are fully isolated and never alter tool results.
+
 ## `@chainmcp/config`
 
 Configuration schema, validation, and wiring helpers for ChainMcp servers:
@@ -1147,6 +1290,9 @@ export function buildRuntimeOptions(
   overrides?: Partial<RuntimeOptions>,
   factoryOptions?: {
     rateLimiterOptions?: RateLimiterFactoryOptions;
+    env?: Record<string, string | undefined>;
+    diagnosticSink?: LogSink;
+    auditSink?: LogSink;
   },
 ): RuntimeOptions;
 
@@ -1163,6 +1309,15 @@ export function createUpstreamCredentialProviderFromConfig(
   config: UpstreamAuthConfig,
   options?: CredentialProviderFactoryOptions,
 ): UpstreamCredentialProvider | undefined;
+
+export function createLoggerFromConfig(
+  config: LoggingConfig,
+  options?: LoggerFromConfigOptions,
+): Logger;
+
+export function createNavigationLimitsFromConfig(
+  config: JsonNavigationConfig,
+): NavigationLimits;
 ```
 
 ### Configuration Sections
@@ -1171,12 +1326,15 @@ export function createUpstreamCredentialProviderFromConfig(
 - **`security`:** Configures `requireInboundAuth`, `allowedUpstreamHosts`, and `redactHeaders`. Each host in `allowedUpstreamHosts` is strictly validated against schemes, ports, paths, queries, credentials, and wildcards, and normalized to canonical lowercase.
 - **`rateLimit`:** Configures in-memory or Redis distributed rate limiting with shorthand (`requestsPerMinute`, `concurrency`) or explicit global, tenant, and tool quotas.
 - **`auth`:** Configures inbound authorization (`authorizer: "scope"`) and upstream credential providers (`static`, `env`, `secretStore`, `oauth`).
+- **`logging`:** Configures structured logger level, destination (`stdout`, `stderr`, `memory`), redaction keys, and body exclusion. Overridable via `CHAINMCP_LOG_LEVEL`.
+- **`jsonNavigation`:** Configures bounds for JSON exploration tools (`maxDepth`, `maxArrayItems`, `maxResultBytes`, `maxVisitedNodes`, `timeoutMs`).
+- **`analytics`:** Configures telemetry retention, arguments/body exclusion, and OpenTelemetry integration.
 - **`contract`:** Optional contract source and strict validation settings.
 
 ### Wiring Helpers
 
 - `buildExecutorOptions(config, overrides)` maps `security.allowedUpstreamHosts` to `allowedHosts`, `server.requestTimeoutMs` to `timeoutMs`, `server.maxResponseBytes` to `maxResponseBytes`, and `auth.upstream` to `credentialProvider`. Fails closed if `allowedUpstreamHosts` is empty.
-- `buildRuntimeOptions(config, overrides)` maps `security.requireInboundAuth` / `auth.inbound` to `authorizer`, `config.rateLimit` to `rateLimiter`, and `server.requestTimeoutMs` to `defaultTimeoutMs`.
+- `buildRuntimeOptions(config, overrides, factoryOptions)` maps `security.requireInboundAuth` / `auth.inbound` to `authorizer`, `config.rateLimit` to `rateLimiter`, `config.logging` to `logger`, `config.analytics` to `metrics`, and `server.requestTimeoutMs` to `defaultTimeoutMs`.
 
 ## Error codes
 

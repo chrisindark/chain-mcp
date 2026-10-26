@@ -3,9 +3,12 @@ import {
   buildExecutorOptions,
   buildRuntimeOptions,
   createAuthorizerFromConfig,
+  createLoggerFromConfig,
+  createNavigationLimitsFromConfig,
   createRateLimiterFromConfig,
   createUpstreamCredentialProviderFromConfig,
   parseConfig,
+  resolveLogLevel,
   safeParseConfig,
 } from "../src/index.js";
 import { OperationScopeAuthorizer } from "@chainmcp/auth";
@@ -15,6 +18,12 @@ import {
   type RedisRateLimitClient,
 } from "@chainmcp/rate-limit";
 import type { ToolContext } from "@chainmcp/core";
+import {
+  MemorySink,
+  OpenTelemetryMetricsSink,
+  RollingAnalyticsAggregator,
+  StructuredLogger,
+} from "@chainmcp/analytics";
 
 const toolContext = (tenantId = "tenant-1"): ToolContext => ({
   requestId: "req-1",
@@ -568,5 +577,125 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
     expect(runtimeOpts.defaultTimeoutMs).toBe(12_000);
     expect(runtimeOpts.authorizer).toBeInstanceOf(OperationScopeAuthorizer);
     expect(runtimeOpts.rateLimiter).toBeInstanceOf(InMemoryRateLimiter);
+  });
+
+  describe("logging configuration and factory", () => {
+    it("parses logging configuration defaults", () => {
+      const config = parseConfig({ version: 1, name: "test" });
+      expect(config.logging).toEqual({
+        level: "info",
+        destination: "stdout",
+        redactKeys: [],
+        includeRequestBodies: false,
+        includeResponseBodies: false,
+      });
+    });
+
+    it("resolves log levels with environment variable overrides", () => {
+      expect(resolveLogLevel(undefined, "info")).toBe("info");
+      expect(resolveLogLevel("debug", "warn")).toBe("debug");
+      expect(resolveLogLevel("ERROR", "info")).toBe("error");
+      expect(resolveLogLevel("invalid", "info")).toBe("info");
+    });
+
+    it("creates structured logger from config and respects memory sink", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test",
+        logging: {
+          level: "warn",
+          destination: "memory",
+          redactKeys: ["custom_secret"],
+        },
+      });
+
+      const sink = new MemorySink();
+      const logger = createLoggerFromConfig(config.logging, { sink });
+      expect(logger).toBeInstanceOf(StructuredLogger);
+
+      logger.info("should be filtered");
+      logger.warn("warning with secret", { custom_secret: "12345" });
+
+      expect(sink.getRecords()).toHaveLength(1);
+      expect(sink.getRecords()[0]?.context?.custom_secret).toBe("[REDACTED]");
+    });
+  });
+
+  describe("jsonNavigation configuration", () => {
+    it("parses jsonNavigation defaults", () => {
+      const config = parseConfig({ version: 1, name: "test" });
+      expect(config.jsonNavigation).toEqual({
+        enabled: true,
+        maxDepth: 16,
+        maxArrayItems: 1_000,
+        maxResultBytes: 50_000,
+        maxVisitedNodes: 50_000,
+        timeoutMs: 5_000,
+      });
+    });
+
+    it("maps config into NavigationLimits", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test",
+        jsonNavigation: {
+          maxDepth: 8,
+          maxArrayItems: 200,
+          maxResultBytes: 25_000,
+        },
+      });
+
+      const limits = createNavigationLimitsFromConfig(config.jsonNavigation);
+      expect(limits).toMatchObject({
+        maxDepth: 8,
+        maxArrayItems: 200,
+        maxResultBytes: 25_000,
+      });
+    });
+  });
+
+  describe("analytics and telemetry wiring", () => {
+    it("parses analytics defaults", () => {
+      const config = parseConfig({ version: 1, name: "test" });
+      expect(config.analytics).toEqual({
+        enabled: true,
+        includeArguments: false,
+        includeResponseBodies: false,
+        retentionDays: 14,
+        openTelemetry: {
+          enabled: false,
+          serviceName: "chainmcp",
+        },
+      });
+    });
+
+    it("wires rolling aggregator when openTelemetry is disabled", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test",
+        analytics: {
+          enabled: true,
+          openTelemetry: { enabled: false },
+        },
+      });
+
+      const runtimeOpts = buildRuntimeOptions(config);
+      expect(runtimeOpts.metrics).toBeInstanceOf(RollingAnalyticsAggregator);
+      expect(runtimeOpts.logger).toBeInstanceOf(StructuredLogger);
+    });
+
+    it("wires OpenTelemetryMetricsSink when openTelemetry is enabled", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test",
+        analytics: {
+          enabled: true,
+          openTelemetry: { enabled: true, serviceName: "test-service" },
+        },
+      });
+
+      const runtimeOpts = buildRuntimeOptions(config);
+      expect(runtimeOpts.metrics).toBeInstanceOf(OpenTelemetryMetricsSink);
+    });
   });
 });

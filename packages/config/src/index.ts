@@ -1,5 +1,12 @@
 import { z } from "zod";
-import type { Authorizer, RateLimiter, RuntimeOptions } from "@chainmcp/core";
+import type {
+  Authorizer,
+  Logger,
+  LogLevel,
+  MetricsSink,
+  RateLimiter,
+  RuntimeOptions,
+} from "@chainmcp/core";
 import {
   CompositeCredentialProvider,
   EncryptedSecretStore,
@@ -23,6 +30,15 @@ import {
   normalizeAllowedHost,
   type UpstreamExecutorOptions,
 } from "@chainmcp/executor";
+import {
+  createLogger,
+  ConsoleSink,
+  MemorySink,
+  OpenTelemetryMetricsSink,
+  RollingAnalyticsAggregator,
+  type LogSink,
+} from "@chainmcp/analytics";
+import type { NavigationLimits } from "@chainmcp/json-navigation";
 
 /**
  * Strict schema for allowed upstream hosts.
@@ -202,6 +218,60 @@ export const ContractConfigSchema = z
 
 export type ContractConfig = z.infer<typeof ContractConfigSchema>;
 
+export const LogLevelSchema = z.enum([
+  "debug",
+  "info",
+  "warn",
+  "error",
+  "silent",
+]);
+
+export const LoggingConfigSchema = z
+  .object({
+    level: LogLevelSchema.default("info"),
+    destination: z.enum(["stdout", "stderr", "memory"]).default("stdout"),
+    redactKeys: z.array(z.string().min(1)).default([]),
+    includeRequestBodies: z.boolean().default(false),
+    includeResponseBodies: z.boolean().default(false),
+  })
+  .strict()
+  .prefault({});
+
+export type LoggingConfig = z.infer<typeof LoggingConfigSchema>;
+
+export const JsonNavigationConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    maxDepth: z.number().int().min(1).max(64).default(16),
+    maxArrayItems: z.number().int().min(1).max(10_000).default(1_000),
+    maxResultBytes: z.number().int().min(1).max(10_000_000).default(50_000),
+    maxVisitedNodes: z.number().int().min(1).max(1_000_000).default(50_000),
+    timeoutMs: z.number().int().min(1).max(60_000).default(5_000),
+  })
+  .strict()
+  .prefault({});
+
+export type JsonNavigationConfig = z.infer<typeof JsonNavigationConfigSchema>;
+
+export const AnalyticsConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    includeArguments: z.boolean().default(false),
+    includeResponseBodies: z.boolean().default(false),
+    retentionDays: z.number().int().positive().default(14),
+    openTelemetry: z
+      .object({
+        enabled: z.boolean().default(false),
+        serviceName: z.string().min(1).default("chainmcp"),
+      })
+      .strict()
+      .prefault({}),
+  })
+  .strict()
+  .prefault({});
+
+export type AnalyticsConfig = z.infer<typeof AnalyticsConfigSchema>;
+
 export const ChainMcpConfigSchema = z
   .object({
     version: z.literal(1),
@@ -241,6 +311,9 @@ export const ChainMcpConfigSchema = z
       .prefault({}),
     rateLimit: RateLimitConfigSchema,
     auth: AuthConfigSchema,
+    logging: LoggingConfigSchema,
+    jsonNavigation: JsonNavigationConfigSchema,
+    analytics: AnalyticsConfigSchema,
   })
   .strict();
 
@@ -505,11 +578,85 @@ export function buildExecutorOptions(
   };
 }
 
+export function resolveLogLevel(
+  envValue?: string,
+  configuredLevel: LogLevel = "info",
+): LogLevel {
+  if (envValue) {
+    const normalized = envValue.trim().toLowerCase();
+    if (
+      normalized === "debug" ||
+      normalized === "info" ||
+      normalized === "warn" ||
+      normalized === "error" ||
+      normalized === "silent"
+    ) {
+      return normalized;
+    }
+  }
+  return configuredLevel;
+}
+
+export interface LoggerFromConfigOptions {
+  env?: Record<string, string | undefined> | undefined;
+  sink?: LogSink | undefined;
+  auditSink?: LogSink | undefined;
+}
+
+export function createLoggerFromConfig(
+  config: LoggingConfig,
+  options?: LoggerFromConfigOptions,
+): Logger {
+  const envLevel =
+    options?.env?.["CHAINMCP_LOG_LEVEL"] ?? process.env["CHAINMCP_LOG_LEVEL"];
+  const level = resolveLogLevel(envLevel, config.level);
+
+  let diagnosticSink: LogSink;
+  if (options?.sink) {
+    diagnosticSink = options.sink;
+  } else if (config.destination === "stderr") {
+    diagnosticSink = new ConsoleSink({
+      stdout: (msg) => process.stderr.write(msg + "\n"),
+      stderr: (msg) => process.stderr.write(msg + "\n"),
+    });
+  } else if (config.destination === "memory") {
+    diagnosticSink = new MemorySink();
+  } else {
+    diagnosticSink = new ConsoleSink();
+  }
+
+  return createLogger({
+    level,
+    diagnosticSink,
+    auditSink: options?.auditSink,
+    redaction: {
+      additionalSensitiveKeys: config.redactKeys,
+      includeBodies:
+        config.includeRequestBodies || config.includeResponseBodies,
+    },
+  });
+}
+
+export function createNavigationLimitsFromConfig(
+  config: JsonNavigationConfig,
+): NavigationLimits {
+  return {
+    maxDepth: config.maxDepth,
+    maxArrayItems: config.maxArrayItems,
+    maxResultBytes: config.maxResultBytes,
+    maxVisitedNodes: config.maxVisitedNodes,
+    timeoutMs: config.timeoutMs,
+  };
+}
+
 export function buildRuntimeOptions(
   config: ChainMcpConfig,
   overrides?: Partial<RuntimeOptions>,
   factoryOptions?: {
     rateLimiterOptions?: RateLimiterFactoryOptions;
+    env?: Record<string, string | undefined>;
+    diagnosticSink?: LogSink;
+    auditSink?: LogSink;
   },
 ): RuntimeOptions {
   const requireInboundAuth =
@@ -529,12 +676,36 @@ export function buildRuntimeOptions(
       factoryOptions?.rateLimiterOptions,
     );
 
+  const logger =
+    overrides?.logger ??
+    (config.logging.level !== "silent"
+      ? createLoggerFromConfig(config.logging, {
+          env: factoryOptions?.env,
+          sink: factoryOptions?.diagnosticSink,
+          auditSink: factoryOptions?.auditSink,
+        })
+      : undefined);
+
+  let metrics: MetricsSink | undefined = overrides?.metrics;
+  if (metrics === undefined && config.analytics.enabled) {
+    if (config.analytics.openTelemetry.enabled) {
+      metrics = new OpenTelemetryMetricsSink({
+        meterName: config.analytics.openTelemetry.serviceName,
+      });
+    } else {
+      metrics = new RollingAnalyticsAggregator({
+        retentionMs: config.analytics.retentionDays * 86_400_000,
+      });
+    }
+  }
+
   return {
     ...(authorizer !== undefined ? { authorizer } : {}),
     ...(rateLimiter !== undefined ? { rateLimiter } : {}),
+    ...(logger !== undefined ? { logger } : {}),
+    ...(metrics !== undefined ? { metrics } : {}),
     defaultTimeoutMs:
       overrides?.defaultTimeoutMs ?? config.server.requestTimeoutMs,
-    ...(overrides?.metrics !== undefined ? { metrics: overrides.metrics } : {}),
     ...(overrides?.tenantMode !== undefined
       ? { tenantMode: overrides.tenantMode }
       : {}),
