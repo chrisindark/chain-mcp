@@ -10,8 +10,10 @@ import {
   createTokenizerFromConfig,
   createUpstreamCredentialProviderFromConfig,
   parseConfig,
+  parseGatewayConfig,
   resolveLogLevel,
   safeParseConfig,
+  safeParseGatewayConfig,
 } from "../src/index.js";
 import { OperationScopeAuthorizer } from "@chainmcp/auth";
 import {
@@ -868,6 +870,64 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
       });
 
       expect(execOpts.defaultReadCacheTtlSeconds).toBe(450);
+    });
+  });
+
+  describe("gateway configuration schema", () => {
+    it("parses valid gateway configuration with contracts and server settings", () => {
+      const config = parseGatewayConfig({
+        version: 1,
+        name: "my-gateway",
+        server: {
+          transport: "http",
+          port: 8080,
+          host: "0.0.0.0",
+        },
+        contracts: [
+          {
+            name: "petstore",
+            tenantId: "tenant-1",
+            spec: "./petstore.yaml",
+            destination: {
+              baseUrl: "https://api.petstore.com",
+              allowedHosts: ["api.petstore.com"],
+            },
+            auth: {
+              requiredScopes: ["pets:read"],
+            },
+          },
+        ],
+      });
+
+      expect(config.version).toBe(1);
+      expect(config.name).toBe("my-gateway");
+      expect(config.server.transport).toBe("http");
+      expect(config.server.port).toBe(8080);
+      expect(config.server.host).toBe("0.0.0.0");
+      expect(config.contracts).toHaveLength(1);
+      expect(config.contracts[0]?.name).toBe("petstore");
+      expect(config.contracts[0]?.tenantId).toBe("tenant-1");
+      expect(config.contracts[0]?.autoActivate).toBe(true);
+    });
+
+    it("rejects invalid contract names or missing destinations", () => {
+      const result = safeParseGatewayConfig({
+        version: 1,
+        name: "invalid-gw",
+        contracts: [
+          {
+            name: "invalid name with spaces!",
+            tenantId: "t1",
+            spec: "./spec.yaml",
+            destination: {
+              baseUrl: "https://example.com",
+              allowedHosts: [],
+            },
+          },
+        ],
+      });
+
+      expect(result.success).toBe(false);
     });
   });
 });

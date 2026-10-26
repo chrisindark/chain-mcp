@@ -352,44 +352,45 @@ export const ProjectionConfigSchema = z
 
 export type ProjectionConfig = z.infer<typeof ProjectionConfigSchema>;
 
+export const ServerConfigSchema = z
+  .object({
+    transport: z.enum(["stdio", "http"]).default("stdio"),
+    host: z.string().default("127.0.0.1"),
+    port: z.number().int().min(1).max(65535).default(3333),
+    path: z.string().default("/mcp"),
+    requestTimeoutMs: z.number().int().positive().max(300_000).default(15_000),
+    maxResponseBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(100_000_000)
+      .default(1_000_000),
+  })
+  .strict()
+  .prefault({});
+
+export type ServerConfig = z.infer<typeof ServerConfigSchema>;
+
+export const SecurityConfigSchema = z
+  .object({
+    requireInboundAuth: z.boolean().default(false),
+    allowedUpstreamHosts: z.array(AllowedHostSchema).default([]),
+    redactHeaders: z
+      .array(z.string().min(1))
+      .default(["authorization", "cookie", "x-api-key"]),
+  })
+  .strict()
+  .prefault({});
+
+export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
+
 export const ChainMcpConfigSchema = z
   .object({
     version: z.literal(1),
     name: z.string().min(1).max(128),
     contract: ContractConfigSchema.optional(),
-    server: z
-      .object({
-        transport: z.enum(["stdio", "http"]).default("stdio"),
-        host: z.string().default("127.0.0.1"),
-        port: z.number().int().min(1).max(65535).default(3333),
-        path: z.string().default("/mcp"),
-        requestTimeoutMs: z
-          .number()
-          .int()
-          .positive()
-          .max(300_000)
-          .default(15_000),
-        maxResponseBytes: z
-          .number()
-          .int()
-          .positive()
-          .max(100_000_000)
-          .default(1_000_000),
-      })
-      .strict()
-      // prefault, not default: Zod 4 `.default({})` short-circuits inner
-      // parsing and would return `{}` without the field defaults above.
-      .prefault({}),
-    security: z
-      .object({
-        requireInboundAuth: z.boolean().default(false),
-        allowedUpstreamHosts: z.array(AllowedHostSchema).default([]),
-        redactHeaders: z
-          .array(z.string().min(1))
-          .default(["authorization", "cookie", "x-api-key"]),
-      })
-      .strict()
-      .prefault({}),
+    server: ServerConfigSchema,
+    security: SecurityConfigSchema,
     rateLimit: RateLimitConfigSchema,
     cache: CacheConfigSchema,
     tokenMetrics: TokenMetricsConfigSchema,
@@ -411,6 +412,83 @@ export function safeParseConfig(
   input: unknown,
 ): ReturnType<typeof ChainMcpConfigSchema.safeParse> {
   return ChainMcpConfigSchema.safeParse(input);
+}
+
+export const GatewayContractDestinationSchema = z
+  .object({
+    baseUrl: z.string().min(1),
+    allowedHosts: z.array(AllowedHostSchema).min(1),
+    allowInsecureHttp: z.boolean().default(false),
+  })
+  .strict();
+
+export type GatewayContractDestination = z.infer<
+  typeof GatewayContractDestinationSchema
+>;
+
+export const GatewayContractAuthConfigSchema = z
+  .object({
+    requiredScopes: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+
+export type GatewayContractAuthConfig = z.infer<
+  typeof GatewayContractAuthConfigSchema
+>;
+
+export const GatewayContractLimitsSchema = z
+  .object({
+    timeoutMs: z.number().int().positive().optional(),
+    maxResponseBytes: z.number().int().positive().optional(),
+    maxRequestBytes: z.number().int().positive().optional(),
+    maxRedirects: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export type GatewayContractLimits = z.infer<typeof GatewayContractLimitsSchema>;
+
+export const GatewayContractConfigSchema = z
+  .object({
+    name: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
+    tenantId: z.string().min(1),
+    spec: z.string().min(1),
+    destination: GatewayContractDestinationSchema,
+    auth: GatewayContractAuthConfigSchema.optional(),
+    limits: GatewayContractLimitsSchema.optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+    autoActivate: z.boolean().default(true),
+  })
+  .strict();
+
+export type GatewayContractConfig = z.infer<typeof GatewayContractConfigSchema>;
+
+export const GatewayConfigSchema = z
+  .object({
+    version: z.literal(1),
+    name: z.string().min(1).max(128).default("chainmcp-gateway"),
+    server: ServerConfigSchema,
+    security: SecurityConfigSchema,
+    rateLimit: RateLimitConfigSchema,
+    cache: CacheConfigSchema,
+    tokenMetrics: TokenMetricsConfigSchema,
+    projection: ProjectionConfigSchema,
+    auth: AuthConfigSchema,
+    logging: LoggingConfigSchema,
+    analytics: AnalyticsConfigSchema,
+    contracts: z.array(GatewayContractConfigSchema).default([]),
+  })
+  .strict();
+
+export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
+
+export function parseGatewayConfig(input: unknown): GatewayConfig {
+  return GatewayConfigSchema.parse(input);
+}
+
+export function safeParseGatewayConfig(
+  input: unknown,
+): ReturnType<typeof GatewayConfigSchema.safeParse> {
+  return GatewayConfigSchema.safeParse(input);
 }
 
 export interface RateLimiterFactoryOptions {

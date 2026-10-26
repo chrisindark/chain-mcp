@@ -1,0 +1,35 @@
+version: 1
+name: enterprise-dynamic-gateway
+server:
+  transport: http
+  host: 0.0.0.0
+  port: 3333
+  path: /mcp
+  requestTimeoutMs: 15000
+  maxResponseBytes: 1000000
+security:
+  allowedUpstreamHosts:
+    - api.customers.internal
+    - api.orders.internal
+contracts:
+  - name: customers
+    tenantId: tenant-crm
+    spec: contracts/customers.yaml
+    destination:
+      baseUrl: https://api.customers.internal
+      allowedHosts:
+        - api.customers.internal
+    auth:
+      requiredScopes:
+        - crm:read
+
+  - name: orders
+    tenantId: tenant-ecommerce
+    spec: contracts/orders.yaml
+    destination:
+      baseUrl: https://api.orders.internal
+      allowedHosts:
+        - api.orders.internal
+    auth:
+      requiredScopes:
+        - orders:read

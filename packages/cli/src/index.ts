@@ -7,6 +7,8 @@ export type {
   DevResult,
   ExportOptions,
   ExportResult,
+  GatewayServeOptions,
+  GatewayServeResult,
   InitOptions,
   InitResult,
   ProjectManifest,
@@ -22,6 +24,7 @@ export { validateCommand } from "./commands/validate.js";
 export { buildCommand } from "./commands/build.js";
 export { devCommand } from "./commands/dev.js";
 export { serveCommand } from "./commands/serve.js";
+export { gatewayServeCommand } from "./commands/gateway-serve.js";
 export { exportCommand } from "./commands/export.js";
 
 export {

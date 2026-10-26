@@ -112,6 +112,28 @@ export interface ServeResult {
   closed: Promise<void>;
 }
 
+export interface GatewayServeOptions {
+  config?: string | undefined;
+  transport?: "stdio" | "http" | undefined;
+  port?: number | undefined;
+  host?: string | undefined;
+  path?: string | undefined;
+  cwd?: string | undefined;
+  stdin?: Readable | undefined;
+  stdout?: Writable | undefined;
+  signal?: AbortSignal | undefined;
+}
+
+export interface GatewayServeResult {
+  ok: boolean;
+  serverName: string;
+  contractCount: number;
+  totalToolCount: number;
+  url?: URL | undefined;
+  close(): Promise<void>;
+  closed: Promise<void>;
+}
+
 export interface DevOptions {
   config?: string | undefined;
   spec?: string | undefined;

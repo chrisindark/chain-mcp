@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import { buildCommand } from "./commands/build.js";
 import { devCommand } from "./commands/dev.js";
 import { exportCommand } from "./commands/export.js";
+import { gatewayServeCommand } from "./commands/gateway-serve.js";
 import { initCommand } from "./commands/init.js";
 import { serveCommand } from "./commands/serve.js";
 import { validateCommand } from "./commands/validate.js";
@@ -19,6 +20,7 @@ Commands:
   validate  Validate configuration and OpenAPI contract
   build     Compile contract and emit generation manifest
   serve     Serve the MCP server over stdio
+  gateway   Manage dynamic multi-contract MCP gateway (gateway serve)
   dev       Run local developer authoring loop (stdio)
   export    Export a self-contained, portable generated server project
 
@@ -61,6 +63,13 @@ Command options:
     --spec <path>        Path to OpenAPI contract (if contract-driven)
     --base-url <url>     Override upstream base URL
     --tenant <id>        Tenant identifier for context (default: default)
+
+  gateway serve:
+    --config <path>      Path to gateway.config.yaml (default: ./gateway.config.yaml)
+    --transport <type>   stdio | http (default: stdio, or config server.transport)
+    --port <number>      HTTP port when transport is http (default: 3333)
+    --host <string>      HTTP host when transport is http (default: 127.0.0.1)
+    --path <string>      HTTP base endpoint path (default: /mcp)
 
   export:
     --config <path>      Path to chainmcp.config.yaml
@@ -321,6 +330,59 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
         );
         return 1;
       }
+    }
+
+    case "gateway": {
+      const subCommand = positionals[1];
+      if (subCommand === "serve") {
+        try {
+          const result = await gatewayServeCommand({
+            ...(asString(values.config) !== undefined
+              ? { config: asString(values.config) }
+              : {}),
+            ...(asString(values.transport) !== undefined
+              ? {
+                  transport: asString(values.transport) as "stdio" | "http",
+                }
+              : {}),
+            ...(asString(values.port) !== undefined
+              ? { port: Number.parseInt(asString(values.port)!, 10) }
+              : {}),
+            ...(asString(values.host) !== undefined
+              ? { host: asString(values.host) }
+              : {}),
+            ...(asString(values.path) !== undefined
+              ? { path: asString(values.path) }
+              : {}),
+            ...(io?.stdin !== undefined ? { stdin: io.stdin } : {}),
+            ...(io?.stdoutStream !== undefined
+              ? { stdout: io.stdoutStream }
+              : {}),
+          });
+
+          if (result.url) {
+            log(
+              `Serving dynamic gateway '${result.serverName}' over Streamable HTTP at ${result.url.toString()} (${result.contractCount} contracts, ${result.totalToolCount} tools loaded)...`,
+            );
+          } else {
+            log(
+              `Serving dynamic gateway '${result.serverName}' over stdio (${result.contractCount} contracts, ${result.totalToolCount} tools loaded)...`,
+            );
+          }
+          await result.closed;
+          return 0;
+        } catch (err) {
+          errLog(
+            `Gateway serve error: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return 1;
+        }
+      }
+
+      errLog(
+        `Unknown gateway subcommand: '${subCommand}'. Expected 'chainmcp gateway serve'.`,
+      );
+      return 1;
     }
 
     case "export": {

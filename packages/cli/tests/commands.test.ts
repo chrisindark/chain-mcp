@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildCommand } from "../src/commands/build.js";
 import { devCommand } from "../src/commands/dev.js";
 import { exportCommand } from "../src/commands/export.js";
+import { gatewayServeCommand } from "../src/commands/gateway-serve.js";
 import { initCommand } from "../src/commands/init.js";
 import { serveCommand } from "../src/commands/serve.js";
 import { validateCommand } from "./../src/commands/validate.js";
@@ -421,6 +422,92 @@ security:
 
       await devHandle.close();
       await devHandle.closed;
+    });
+  });
+
+  describe("gatewayServeCommand", () => {
+    it("loads gateway configuration, publishes contracts, and serves over stdio", async () => {
+      const specFile = join(tempDir, "service.yaml");
+      await writeFile(specFile, SAMPLE_SPEC, "utf8");
+
+      const gwConfigFile = join(tempDir, "gateway.config.yaml");
+      const gwConfig = `
+version: 1
+name: test-dynamic-gw
+server:
+  transport: stdio
+contracts:
+  - name: pets
+    tenantId: tenant-alpha
+    spec: service.yaml
+    destination:
+      baseUrl: https://api.petstore.test
+      allowedHosts:
+        - api.petstore.test
+`;
+      await writeFile(gwConfigFile, gwConfig, "utf8");
+
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+
+      const gwHandle = await gatewayServeCommand({
+        cwd: tempDir,
+        config: "gateway.config.yaml",
+        stdin,
+        stdout,
+      });
+
+      expect(gwHandle.ok).toBe(true);
+      expect(gwHandle.serverName).toBe("test-dynamic-gw");
+      expect(gwHandle.contractCount).toBe(1);
+      expect(gwHandle.totalToolCount).toBe(1);
+
+      await gwHandle.close();
+      await gwHandle.closed;
+    });
+
+    it("serves gateway over HTTP transport with health check", async () => {
+      const specFile = join(tempDir, "service.yaml");
+      await writeFile(specFile, SAMPLE_SPEC, "utf8");
+
+      const gwConfigFile = join(tempDir, "gateway.config.yaml");
+      const gwConfig = `
+version: 1
+name: test-http-gw
+server:
+  transport: http
+  port: 3333
+  host: 127.0.0.1
+  path: /mcp
+contracts:
+  - name: pets
+    tenantId: tenant-alpha
+    spec: service.yaml
+    destination:
+      baseUrl: https://api.petstore.test
+      allowedHosts:
+        - api.petstore.test
+`;
+      await writeFile(gwConfigFile, gwConfig, "utf8");
+
+      const gwHandle = await gatewayServeCommand({
+        cwd: tempDir,
+        config: "gateway.config.yaml",
+        port: 0,
+      });
+
+      expect(gwHandle.ok).toBe(true);
+      expect(gwHandle.url).toBeDefined();
+
+      // Test /health endpoint
+      const healthUrl = new URL("/health", gwHandle.url!);
+      const res = await fetch(healthUrl.toString());
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { status: string };
+      expect(json.status).toBe("ok");
+
+      await gwHandle.close();
+      await gwHandle.closed;
     });
   });
 });

@@ -134,4 +134,15 @@ describe("CLI entry point (runCli)", () => {
       ),
     ).toBe(true);
   });
+
+  it("reports error when gateway config is missing", async () => {
+    const missingCode = await runCli(
+      ["gateway", "serve", "--config", "nonexistent.yaml"],
+      io,
+    );
+    expect(missingCode).toBe(1);
+    expect(
+      errLogs.some((l) => l.includes("Gateway config file not found")),
+    ).toBe(true);
+  });
 });

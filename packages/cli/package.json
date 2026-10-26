@@ -37,6 +37,7 @@
     "@chainmcp/config": "workspace:*",
     "@chainmcp/core": "workspace:*",
     "@chainmcp/executor": "workspace:*",
+    "@chainmcp/gateway": "workspace:*",
     "@chainmcp/json-navigation": "workspace:*",
     "@chainmcp/rate-limit": "workspace:*",
     "@chainmcp/server": "workspace:*",
