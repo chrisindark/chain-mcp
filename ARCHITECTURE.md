@@ -2,32 +2,36 @@
 
 ## 1. Overview
 
-The target architecture consists of tool sources, a shared runtime, MCP adapters, optional infrastructure adapters, and two deployment modes. The current implementation contains `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, and `@chainmcp/server`; remaining components shown below are planned. OpenAPI compilation is one tool source; tools may also be registered from application code through the authoring facade described in section 4.1.
+The architecture consists of tool sources, a shared runtime, MCP adapters, infrastructure adapters, and two delivery modes. The workspace contains 13 fully implemented packages: `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, `@chainmcp/server`, `@chainmcp/analytics`, `@chainmcp/json-navigation`, `@chainmcp/cli`, `@chainmcp/authoring`, and `@chainmcp/gateway`. OpenAPI compilation is one tool source; tools may also be registered from application code through the authoring facade.
 
-```text
-             API contract                 Code-defined tools
-                  |                              |
-          Contract compiler              Authoring facade
-                  |                              |
-                  +--------------+---------------+
-                                 |
-                          Tool definitions
-                                 |
-                  +--------------+---------------+
-                  |                              |
-          Generated server                Dynamic gateway
-                  |                              |
-                  +--------------+---------------+
-                                 |
-                           Shared runtime
-                                 |
-          +------------------+------------------+
-          |          |          |        |      |
-         Auth       Cache    Rate limit Metrics JSON
-          |          |          |        |    navigation
-          +------------------+------------------+
-                                 |
-                          Upstream HTTP API
+```mermaid
+flowchart TD
+    subgraph Sources["Tool Sources"]
+        Contract["OpenAPI 3.0 / 3.1 Contract"] --> Compiler["@chainmcp/compiler"]
+        Code["Code-Defined Tools"] --> Authoring["@chainmcp/authoring"]
+    end
+
+    Compiler --> Tools["Audited Tool Definitions"]
+    Authoring --> Tools
+
+    subgraph Modes["Deployment Modes"]
+        Tools --> Srv["Generated Server (@chainmcp/cli)"]
+        Tools --> GW["Dynamic Gateway (@chainmcp/gateway)"]
+    end
+
+    Srv --> Runtime["Shared Core Runtime (@chainmcp/core)"]
+    GW --> Runtime
+
+    subgraph Subsystems["Execution & Policy Subsystems"]
+        Runtime --> Auth["Inbound Auth & Scope Verifier (@chainmcp/auth)"]
+        Runtime --> Rate["Rate & Concurrency Limiting (@chainmcp/rate-limit)"]
+        Runtime --> Cache["Hashed Partitioned Cache (@chainmcp/cache-redis)"]
+        Runtime --> Analytics["Redacted Logs & OTel Metrics (@chainmcp/analytics)"]
+        Runtime --> JSONNav["JSON Navigation & Slicing (@chainmcp/json-navigation)"]
+        Runtime --> Executor["SSRF-Guarded HTTP Egress (@chainmcp/executor)"]
+    end
+
+    Executor --> Upstream["Upstream Protected APIs"]
 ```
 
 ## 2. Design goals
