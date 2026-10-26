@@ -92,6 +92,8 @@ These are initial architectural choices and may change through documented archit
 
 ## Repository documentation
 
+- **`docs/product-guide.md`**: Complete plain-English product guide, visual architecture, metrics, caching, and adoption
+- **`docs/README.md`**: Complete documentation index and topic map
 - `ROADMAP.md`: milestones and acceptance criteria
 - `docs/getting-started.md`: runnable end-to-end example and Inspector commands
 - `docs/supported-versions.md`: supported version matrix and lifecycle policy
@@ -105,7 +107,7 @@ These are initial architectural choices and may change through documented archit
 - `RELEASES.md`: versioning and release process
 - `CONTRIBUTING.md`: contribution workflow
 - `AGENTS.md`: coding-agent instructions
-- `docs/`: detailed product and implementation guides
+- `examples/README.md`: runnable examples catalog and Claude Desktop setup
 
 ## Project status
 
