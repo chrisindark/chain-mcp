@@ -202,6 +202,42 @@ export interface MetricsSink {
   record(event: RuntimeEvent): void | Promise<void>;
 }
 
+export type LogLevel = "debug" | "info" | "warn" | "error" | "silent";
+
+export interface LogCorrelationContext {
+  requestId?: string | undefined;
+  tenantId?: string | undefined;
+  principalId?: string | undefined;
+  toolName?: string | undefined;
+  contractRevision?: string | undefined;
+  [key: string]: unknown;
+}
+
+export interface LogRecord {
+  level: "debug" | "info" | "warn" | "error";
+  message: string;
+  timestamp: number;
+  category?: "diagnostic" | "audit" | undefined;
+  context?: LogCorrelationContext | undefined;
+  error?:
+    | {
+        code?: string | undefined;
+        message: string;
+        stack?: string | undefined;
+      }
+    | undefined;
+  attributes?: Record<string, unknown> | undefined;
+}
+
+export interface Logger {
+  debug(message: string, context?: Record<string, unknown>): void;
+  info(message: string, context?: Record<string, unknown>): void;
+  warn(message: string, context?: Record<string, unknown>): void;
+  error(message: string, context?: Record<string, unknown>): void;
+  audit?(message: string, context?: Record<string, unknown>): void;
+  child?(context: Record<string, unknown>): Logger;
+}
+
 export interface Tokenizer {
   /**
    * Stable identifier for the tokenizer or model, for example `cl100k_base` or
@@ -304,6 +340,12 @@ export interface RuntimeOptions {
   authorizer?: Authorizer;
   rateLimiter?: RateLimiter;
   metrics?: MetricsSink;
+  /**
+   * Injectable structured logger. Emits correlated diagnostic and audit records
+   * across tool invocation stages. Failures in logger invocation are isolated
+   * and never alter tool results.
+   */
+  logger?: Logger;
   /**
    * Tenancy mode. Defaults to `single-tenant`: tools resolve by name exactly
    * as in Milestone 2. `multi-tenant` requires an `Authorizer`, binds every
@@ -576,6 +618,7 @@ export class InMemoryToolRuntime implements ToolRuntime {
     let stage: InvocationStage = "context";
     let rateLimitDenied = false;
     let rateLimitAcquired = false;
+    let toolRevision: string | undefined;
     // Unknown and cross-tenant tools are the same observable miss in
     // multi-tenant mode and emit no metrics event, so metrics timing cannot
     // be used to enumerate another tenant's tools.
@@ -589,6 +632,7 @@ export class InMemoryToolRuntime implements ToolRuntime {
       const tool = this.resolveTool(name, context, () => {
         unresolved = true;
       });
+      toolRevision = tool.contractRevision;
       if (
         this.tenantMode === "single-tenant" &&
         this.pinnedTenantId !== undefined &&
@@ -711,6 +755,56 @@ export class InMemoryToolRuntime implements ToolRuntime {
           // Release failures must not alter tool results.
         }
       }
+      if (this.options.logger && !unresolved) {
+        const durationMs = Math.max(0, this.monotonicNow() - startedAt);
+        const logContext: LogCorrelationContext = {
+          requestId: context?.requestId,
+          tenantId: context?.tenantId ?? "unknown",
+          principalId: context?.principal?.id,
+          toolName: name,
+          ...(toolRevision ? { contractRevision: toolRevision } : {}),
+          durationMs,
+          outcome,
+          ...(errorCode ? { errorCode } : {}),
+          ...(cacheOutcome ? { cacheOutcome } : {}),
+        };
+        try {
+          if (outcome === "success") {
+            this.options.logger.info(
+              `Tool '${name}' completed successfully`,
+              logContext,
+            );
+          } else if (outcome === "rate_limited") {
+            this.options.logger.warn(
+              `Tool '${name}' was rate limited`,
+              logContext,
+            );
+            if (typeof this.options.logger.audit === "function") {
+              this.options.logger.audit(
+                `Rate limit exceeded for tool '${name}'`,
+                logContext,
+              );
+            }
+          } else {
+            this.options.logger.error(
+              `Tool '${name}' failed with error ${errorCode ?? "UNKNOWN"}`,
+              logContext,
+            );
+            if (
+              (errorCode === "AUTH_FORBIDDEN" ||
+                errorCode === "AUTH_REQUIRED") &&
+              typeof this.options.logger.audit === "function"
+            ) {
+              this.options.logger.audit(
+                `Authorization denied for tool '${name}'`,
+                logContext,
+              );
+            }
+          }
+        } catch {
+          // Logger failures must never change the tool result or surface to the caller.
+        }
+      }
       if (this.options.metrics && !unresolved) {
         const event: RuntimeEvent = {
           name: "tool_invocation",
@@ -772,6 +866,23 @@ export class InMemoryToolRuntime implements ToolRuntime {
     );
     if (cacheKey === undefined) return;
     await cache.store.delete(cacheKey);
+    if (this.options.logger) {
+      try {
+        if (typeof this.options.logger.audit === "function") {
+          this.options.logger.audit(
+            `Cache invalidation succeeded for tool '${name}'`,
+            {
+              toolName: name,
+              tenantId: context.tenantId,
+              principalId: context.principal?.id,
+              requestId: context.requestId,
+            },
+          );
+        }
+      } catch {
+        // Logging failure must never block or alter invalidation.
+      }
+    }
   }
 
   /**
