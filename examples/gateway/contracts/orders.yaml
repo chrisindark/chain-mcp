@@ -1,0 +1,23 @@
+openapi: "3.1.0"
+info:
+  title: Orders API
+  version: "1.0.0"
+paths:
+  /orders:
+    get:
+      operationId: listOrders
+      summary: List customer orders
+      responses:
+        "200":
+          description: A list of orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    total:
+                      type: number

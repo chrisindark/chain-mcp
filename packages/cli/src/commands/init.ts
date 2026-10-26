@@ -155,39 +155,77 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     };
   }
 
-  // 1. Locate spec file
-  let candidateSpecPath = options.spec ? resolve(cwd, options.spec) : undefined;
-  if (!candidateSpecPath) {
-    const candidates = [
-      resolve(cwd, "openapi.yaml"),
-      resolve(cwd, "openapi.json"),
-      resolve(cwd, "spec/openapi.yaml"),
-      resolve(cwd, "spec/openapi.json"),
-    ];
-    for (const cand of candidates) {
-      if (await fileExists(cand)) {
-        candidateSpecPath = cand;
-        break;
+  // 1. Locate spec file or fetch from URL
+  let candidateSpecPath = "";
+  let specContent = "";
+
+  if (
+    options.spec &&
+    (options.spec.startsWith("http://") || options.spec.startsWith("https://"))
+  ) {
+    try {
+      const res = await fetch(options.spec);
+      if (!res.ok) {
+        return {
+          ok: false,
+          projectName: "",
+          projectDir,
+          specPath: options.spec,
+          configPath: "",
+          toolCount: 0,
+          createdFiles: [],
+          error: `Failed to fetch OpenAPI spec from ${options.spec}: HTTP ${res.status} ${res.statusText}`,
+        };
+      }
+      specContent = await res.text();
+      candidateSpecPath = options.spec;
+    } catch (err) {
+      return {
+        ok: false,
+        projectName: "",
+        projectDir,
+        specPath: options.spec,
+        configPath: "",
+        toolCount: 0,
+        createdFiles: [],
+        error: `Network error fetching OpenAPI spec from ${options.spec}: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  } else {
+    let localPath = options.spec ? resolve(cwd, options.spec) : undefined;
+    if (!localPath) {
+      const candidates = [
+        resolve(cwd, "openapi.yaml"),
+        resolve(cwd, "openapi.json"),
+        resolve(cwd, "spec/openapi.yaml"),
+        resolve(cwd, "spec/openapi.json"),
+      ];
+      for (const cand of candidates) {
+        if (await fileExists(cand)) {
+          localPath = cand;
+          break;
+        }
       }
     }
+
+    if (!localPath || !(await fileExists(localPath))) {
+      return {
+        ok: false,
+        projectName: "",
+        projectDir,
+        specPath: "",
+        configPath: "",
+        toolCount: 0,
+        createdFiles: [],
+        error:
+          "OpenAPI specification file was not found. Please specify --spec <path>.",
+      };
+    }
+    candidateSpecPath = localPath;
+    specContent = await readFile(candidateSpecPath, "utf8");
   }
 
-  if (!candidateSpecPath || !(await fileExists(candidateSpecPath))) {
-    return {
-      ok: false,
-      projectName: "",
-      projectDir,
-      specPath: "",
-      configPath: "",
-      toolCount: 0,
-      createdFiles: [],
-      error:
-        "OpenAPI specification file was not found. Please specify --spec <path>.",
-    };
-  }
-
-  // 2. Read and compile spec
-  const specContent = await readFile(candidateSpecPath, "utf8");
+  // 2. Compile spec
   const compiled = compileOpenApi(specContent, { strict: false });
   if (!compiled.ok) {
     const errors = compiled.diagnostics
@@ -250,7 +288,12 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   const createdFiles: string[] = [];
 
   // Copy or write spec
-  if (resolve(candidateSpecPath) !== resolve(targetSpecPath)) {
+  if (
+    candidateSpecPath.startsWith("http://") ||
+    candidateSpecPath.startsWith("https://")
+  ) {
+    await writeFile(targetSpecPath, specContent, "utf8");
+  } else if (resolve(candidateSpecPath) !== resolve(targetSpecPath)) {
     await copyFile(candidateSpecPath, targetSpecPath);
   } else {
     await writeFile(targetSpecPath, specContent, "utf8");

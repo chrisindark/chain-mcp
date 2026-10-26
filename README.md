@@ -29,7 +29,9 @@ flowchart LR
 ### 1. Initialize a Project from an API Spec
 
 ```bash
-npx chainmcp init --spec ./openapi.yaml
+npx @chainmcp/cli init --spec ./openapi.yaml
+# Or directly from an HTTPS URL:
+npx @chainmcp/cli init --spec https://api.example.com/openapi.yaml
 ```
 
 ### 2. Validate and Build
@@ -111,12 +113,12 @@ These are initial architectural choices and may change through documented archit
 
 ## Project status
 
-ChainMcp has achieved its **1.0 Stable Release** milestone, satisfying all release gates in `RELEASES.md`.
+ChainMcp has implemented all milestones leading to the **1.0 release series** (currently version `0.1.0`), satisfying all release gates in `RELEASES.md`.
 
 The repository contains 13 fully verified workspace packages:
 
 - `@chainmcp/core`: in-memory tool registry, linear-time Re2 regex validation, output projection, token budgets, and cached execution.
-- `@chainmcp/config`: strict Zod configuration loader for `chainmcp.config.yaml`.
+- `@chainmcp/config`: strict Zod configuration loader for `chainmcp.config.yaml` and `gateway.config.yaml`.
 - `@chainmcp/compiler`: OpenAPI 3.0/3.1 contract parser, deterministic manifests, and tool lowering.
 - `@chainmcp/authoring`: code-first tool authoring facade (`defineTool`) with Zod lowering.
 - `@chainmcp/auth`: inbound caller authorization, operation scope verification, encrypted secret storage, and OAuth 2.0 client credentials.
@@ -134,13 +136,33 @@ Run `pnpm install` followed by `pnpm check` from the repository root to run form
 ## CLI commands
 
 ```bash
-chainmcp init --spec ./openapi.yaml  # Scaffolds project from API spec
+chainmcp init --spec ./openapi.yaml  # Scaffolds project from API spec (or HTTPS URL)
 chainmcp validate                    # Audits schemas, regexes, and URLs
 chainmcp build                       # Compiles tools and manifests
-chainmcp serve                       # Starts the local MCP server
+chainmcp diff --against baseline.yaml # Detects schema drift and breaking changes
+chainmcp serve                       # Starts the local MCP server (stdio by default)
+chainmcp serve --transport http --port 3333 # Serves Streamable HTTP / SSE endpoint
+chainmcp dev                         # Fast authoring loop; loads dist/tools.js or src/tools.ts
+chainmcp gateway serve               # Starts dynamic multi-contract gateway server
 chainmcp export --output ./dist-srv  # Exports portable standalone server
-chainmcp diff                        # Detects schema drift and breaking changes
 ```
+
+> [!NOTE]
+> When authoring TypeScript code-first tools (`src/tools.ts`), `chainmcp dev` automatically loads TypeScript files when executed under `tsx` (e.g. `npx tsx @chainmcp/cli dev`) or when precompiled (`chainmcp build` / `tsc`).
+
+## Transports and Inbound Authentication
+
+ChainMcp supports both standard MCP transport protocols:
+
+- **Stdio (`--transport stdio`):** Standard input/output for local desktop clients such as Claude Desktop and Cursor.
+- **Streamable HTTP (`--transport http`):** Modern HTTP/SSE server endpoint for containerized and remote deployments. Includes health probes (`/health`), CORS support, and graceful signal teardown.
+
+When running over HTTP, configure inbound caller authentication via `chainmcp.config.yaml`:
+
+- **Bearer Tokens:** Static or dynamic token verifiers mapping tokens to tenant ID, principal ID, and scopes.
+- **API Keys:** Header-based API key verifiers (e.g. `X-API-Key`).
+- **JSON Web Tokens (JWT):** Signed HS256/RS256/ES256 token verification with standard claims (`exp`, `nbf`, `iss`, `aud`) validated via standard crypto without external runtime dependencies.
+- Inbound identity is automatically propagated to runtime `ToolContext` and MCP `AuthInfo` for per-call authorization and rate limiting.
 
 ## Security
 

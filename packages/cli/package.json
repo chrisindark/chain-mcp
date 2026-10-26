@@ -14,7 +14,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "chainmcp": "./dist/bin.js"
+    "chainmcp": "./dist/bin.js",
+    "@chainmcp/cli": "./dist/bin.js"
   },
   "exports": {
     ".": {
@@ -37,6 +38,7 @@
     "@chainmcp/config": "workspace:*",
     "@chainmcp/core": "workspace:*",
     "@chainmcp/executor": "workspace:*",
+    "@chainmcp/gateway": "workspace:*",
     "@chainmcp/json-navigation": "workspace:*",
     "@chainmcp/rate-limit": "workspace:*",
     "@chainmcp/server": "workspace:*",

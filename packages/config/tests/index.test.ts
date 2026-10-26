@@ -3,13 +3,17 @@ import {
   buildExecutorOptions,
   buildRuntimeOptions,
   createAuthorizerFromConfig,
+  createCacheStoreFromConfig,
   createLoggerFromConfig,
   createNavigationLimitsFromConfig,
   createRateLimiterFromConfig,
+  createTokenizerFromConfig,
   createUpstreamCredentialProviderFromConfig,
   parseConfig,
+  parseGatewayConfig,
   resolveLogLevel,
   safeParseConfig,
+  safeParseGatewayConfig,
 } from "../src/index.js";
 import { OperationScopeAuthorizer } from "@chainmcp/auth";
 import {
@@ -17,7 +21,12 @@ import {
   InMemoryRateLimiter,
   type RedisRateLimitClient,
 } from "@chainmcp/rate-limit";
-import type { ToolContext } from "@chainmcp/core";
+import {
+  InMemoryCacheStore,
+  type ToolContext,
+  type ToolDefinition,
+} from "@chainmcp/core";
+import { RedisCacheStore, type RedisCacheClient } from "@chainmcp/cache-redis";
 import {
   MemorySink,
   OpenTelemetryMetricsSink,
@@ -696,6 +705,229 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
 
       const runtimeOpts = buildRuntimeOptions(config);
       expect(runtimeOpts.metrics).toBeInstanceOf(OpenTelemetryMetricsSink);
+    });
+  });
+
+  describe("cache, tokenMetrics, and projection configuration and factories", () => {
+    it("parses cache, tokenMetrics, and projection defaults", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test-cache",
+      });
+
+      expect(config.cache).toEqual({
+        enabled: false,
+        provider: "memory",
+        ttlSeconds: 300,
+        maxEntries: 10_000,
+        redis: {
+          keyPrefix: "chainmcp:cache:",
+          commandTimeoutMs: 1_000,
+        },
+      });
+
+      expect(config.tokenMetrics).toEqual({
+        enabled: false,
+        tokenizer: "approximate",
+        modelId: "cl100k_base",
+        charactersPerToken: 4,
+      });
+
+      expect(config.projection).toEqual({
+        enabled: true,
+      });
+    });
+
+    it("creates InMemoryCacheStore when cache is enabled and provider is memory", () => {
+      const store = createCacheStoreFromConfig({
+        enabled: true,
+        provider: "memory",
+        ttlSeconds: 600,
+        maxEntries: 500,
+        redis: { keyPrefix: "test:", commandTimeoutMs: 1_000 },
+      });
+
+      expect(store).toBeInstanceOf(InMemoryCacheStore);
+    });
+
+    it("returns undefined when cache is disabled", () => {
+      const store = createCacheStoreFromConfig({
+        enabled: false,
+        provider: "memory",
+        ttlSeconds: 600,
+        maxEntries: 500,
+        redis: { keyPrefix: "test:", commandTimeoutMs: 1_000 },
+      });
+
+      expect(store).toBeUndefined();
+    });
+
+    it("creates RedisCacheStore when provider is redis and client is provided", () => {
+      const mockRedisClient: RedisCacheClient = {
+        get: vi.fn(),
+        set: vi.fn(),
+        delete: vi.fn(),
+      };
+
+      const store = createCacheStoreFromConfig(
+        {
+          enabled: true,
+          provider: "redis",
+          ttlSeconds: 300,
+          maxEntries: 1_000,
+          redis: { keyPrefix: "chainmcp:test:", commandTimeoutMs: 1_000 },
+        },
+        { redisClient: mockRedisClient },
+      );
+
+      expect(store).toBeInstanceOf(RedisCacheStore);
+    });
+
+    it("throws TypeError if provider is redis but neither client nor URL is provided", () => {
+      expect(() =>
+        createCacheStoreFromConfig({
+          enabled: true,
+          provider: "redis",
+          ttlSeconds: 300,
+          maxEntries: 1_000,
+          redis: { keyPrefix: "chainmcp:test:", commandTimeoutMs: 1_000 },
+        }),
+      ).toThrow(TypeError);
+    });
+
+    it("creates approximate tokenizer from config", () => {
+      const tokenizer = createTokenizerFromConfig({
+        enabled: true,
+        tokenizer: "approximate",
+        modelId: "gpt-4o",
+        charactersPerToken: 4,
+      });
+
+      expect(tokenizer).toBeDefined();
+      expect(tokenizer?.id).toBe("gpt-4o");
+      expect(tokenizer?.measurement).toBe("estimate");
+      expect(tokenizer?.count("12345678")).toBe(2);
+      expect(tokenizer?.count("12345")).toBe(2);
+      expect(tokenizer?.count("")).toBe(0);
+    });
+
+    it("wires cache, tokenizer, and projector into buildRuntimeOptions", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test-runtime",
+        cache: {
+          enabled: true,
+          provider: "memory",
+          ttlSeconds: 120,
+          maxEntries: 200,
+        },
+        tokenMetrics: {
+          enabled: true,
+          modelId: "test-model",
+          charactersPerToken: 3,
+        },
+        projection: {
+          enabled: true,
+        },
+      });
+
+      const runtimeOpts = buildRuntimeOptions(config);
+      expect(runtimeOpts.cache).toBeDefined();
+      expect(runtimeOpts.cache?.store).toBeInstanceOf(InMemoryCacheStore);
+      const dummyTool: ToolDefinition = {
+        name: "testTool",
+        description: "test",
+        inputSchema: { type: "object" },
+        operation: {},
+        execute: async () => ({}),
+      };
+      expect(
+        runtimeOpts.cache?.authorizationPartition(toolContext(), dummyTool),
+      ).toBe("read");
+
+      expect(runtimeOpts.tokenizer).toBeDefined();
+      expect(runtimeOpts.tokenizer?.id).toBe("test-model");
+      expect(runtimeOpts.tokenizer?.count("123456")).toBe(2);
+
+      expect(runtimeOpts.projector).toBeDefined();
+    });
+
+    it("passes defaultReadCacheTtlSeconds to buildExecutorOptions when cache is enabled", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test-exec",
+        security: {
+          allowedUpstreamHosts: ["api.example.com"],
+        },
+        cache: {
+          enabled: true,
+          ttlSeconds: 450,
+        },
+      });
+
+      const execOpts = buildExecutorOptions(config, {
+        baseUrl: "https://api.example.com",
+      });
+
+      expect(execOpts.defaultReadCacheTtlSeconds).toBe(450);
+    });
+  });
+
+  describe("gateway configuration schema", () => {
+    it("parses valid gateway configuration with contracts and server settings", () => {
+      const config = parseGatewayConfig({
+        version: 1,
+        name: "my-gateway",
+        server: {
+          transport: "http",
+          port: 8080,
+          host: "0.0.0.0",
+        },
+        contracts: [
+          {
+            name: "petstore",
+            tenantId: "tenant-1",
+            spec: "./petstore.yaml",
+            destination: {
+              baseUrl: "https://api.petstore.com",
+              allowedHosts: ["api.petstore.com"],
+            },
+            auth: {
+              requiredScopes: ["pets:read"],
+            },
+          },
+        ],
+      });
+
+      expect(config.version).toBe(1);
+      expect(config.name).toBe("my-gateway");
+      expect(config.server.transport).toBe("http");
+      expect(config.server.port).toBe(8080);
+      expect(config.server.host).toBe("0.0.0.0");
+      expect(config.contracts).toHaveLength(1);
+      expect(config.contracts[0]?.name).toBe("petstore");
+      expect(config.contracts[0]?.tenantId).toBe("tenant-1");
+      expect(config.contracts[0]?.autoActivate).toBe(true);
+    });
+
+    it("rejects invalid contract names or missing destinations", () => {
+      const result = safeParseGatewayConfig({
+        version: 1,
+        name: "invalid-gw",
+        contracts: [
+          {
+            name: "invalid name with spaces!",
+            tenantId: "t1",
+            spec: "./spec.yaml",
+            destination: {
+              baseUrl: "https://example.com",
+              allowedHosts: [],
+            },
+          },
+        ],
+      });
+
+      expect(result.success).toBe(false);
     });
   });
 });

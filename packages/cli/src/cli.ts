@@ -2,7 +2,9 @@ import { parseArgs } from "node:util";
 
 import { buildCommand } from "./commands/build.js";
 import { devCommand } from "./commands/dev.js";
+import { diffCommand } from "./commands/diff.js";
 import { exportCommand } from "./commands/export.js";
+import { gatewayServeCommand } from "./commands/gateway-serve.js";
 import { initCommand } from "./commands/init.js";
 import { serveCommand } from "./commands/serve.js";
 import { validateCommand } from "./commands/validate.js";
@@ -18,7 +20,9 @@ Commands:
   init      Initialize a new ChainMcp project (OpenAPI contract or blank code-first)
   validate  Validate configuration and OpenAPI contract
   build     Compile contract and emit generation manifest
+  diff      Compare contract against baseline or previous manifest
   serve     Serve the MCP server over stdio
+  gateway   Manage dynamic multi-contract MCP gateway (gateway serve)
   dev       Run local developer authoring loop (stdio)
   export    Export a self-contained, portable generated server project
 
@@ -46,9 +50,18 @@ Command options:
     --out-dir <dir>      Output directory for build artifacts (default: ./dist)
     --check              Verify reproducibility against existing manifest
 
+  diff:
+    --config <path>      Path to chainmcp.config.yaml
+    --spec <path>        Path to OpenAPI contract
+    --against <target>   Baseline OpenAPI contract or manifest.json to compare against
+
   serve:
     --config <path>      Path to chainmcp.config.yaml
     --spec <path>        Path to OpenAPI contract
+    --transport <type>   stdio | http (default: stdio, or config server.transport)
+    --port <number>      HTTP port when transport is http (default: 3333)
+    --host <string>      HTTP host when transport is http (default: 127.0.0.1)
+    --path <string>      HTTP base endpoint path (default: /mcp)
     --base-url <url>     Override upstream base URL
     --tenant <id>        Tenant identifier for context (default: default)
 
@@ -57,6 +70,13 @@ Command options:
     --spec <path>        Path to OpenAPI contract (if contract-driven)
     --base-url <url>     Override upstream base URL
     --tenant <id>        Tenant identifier for context (default: default)
+
+  gateway serve:
+    --config <path>      Path to gateway.config.yaml (default: ./gateway.config.yaml)
+    --transport <type>   stdio | http (default: stdio, or config server.transport)
+    --port <number>      HTTP port when transport is http (default: 3333)
+    --host <string>      HTTP host when transport is http (default: 127.0.0.1)
+    --path <string>      HTTP base endpoint path (default: /mcp)
 
   export:
     --config <path>      Path to chainmcp.config.yaml
@@ -84,12 +104,16 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       version: { type: "boolean", short: "v", default: false },
       help: { type: "boolean", short: "h", default: false },
       spec: { type: "string" },
+      against: { type: "string" },
       config: { type: "string" },
       output: { type: "string" },
       name: { type: "string" },
       "base-url": { type: "string" },
       "out-dir": { type: "string" },
       transport: { type: "string" },
+      port: { type: "string" },
+      host: { type: "string" },
+      path: { type: "string" },
       tenant: { type: "string" },
       blank: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
@@ -226,14 +250,84 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       return 0;
     }
 
+    case "diff": {
+      const result = await diffCommand({
+        ...(asString(values.config) !== undefined
+          ? { config: asString(values.config) }
+          : {}),
+        ...(asString(values.spec) !== undefined
+          ? { spec: asString(values.spec) }
+          : {}),
+        ...(asString(values.against) !== undefined
+          ? { against: asString(values.against) }
+          : {}),
+      });
+
+      if (!result.ok) {
+        errLog(`Diff error: ${result.error ?? "Failed to diff contracts"}`);
+        return 1;
+      }
+
+      if (!result.hasChanges) {
+        log(
+          `No schema changes detected. Toolset is identical (hash: ${result.toolsetHash}).`,
+        );
+        return 0;
+      }
+
+      log(`Contract diff detected:`);
+      log(`Contract revision: ${result.contractRevision}`);
+      log(`Toolset hash: ${result.toolsetHash}`);
+      if (result.addedTools.length > 0) {
+        log(`  Added tools (${result.addedTools.length}):`);
+        for (const t of result.addedTools) {
+          log(`    + ${t}`);
+        }
+      }
+      if (result.removedTools.length > 0) {
+        log(`  Removed tools (BREAKING) (${result.removedTools.length}):`);
+        for (const t of result.removedTools) {
+          log(`    - ${t}`);
+        }
+      }
+      if (result.changedTools.length > 0) {
+        log(`  Modified tools (${result.changedTools.length}):`);
+        for (const t of result.changedTools) {
+          log(`    ~ ${t}`);
+        }
+      }
+      if (result.hasBreakingChanges) {
+        errLog(
+          `Warning: Breaking changes detected (${result.removedTools.length} tools removed).`,
+        );
+      }
+      return 0;
+    }
+
     case "serve": {
       try {
+        const portStr = asString(values.port);
+        const parsedPort =
+          portStr !== undefined ? Number.parseInt(portStr, 10) : undefined;
+        const transport = asString(values.transport) as
+          "stdio" | "http" | undefined;
+
         const result = await serveCommand({
           ...(asString(values.config) !== undefined
             ? { config: asString(values.config) }
             : {}),
           ...(asString(values.spec) !== undefined
             ? { spec: asString(values.spec) }
+            : {}),
+          ...(transport !== undefined ? { transport } : {}),
+          ...(parsedPort !== undefined && !Number.isNaN(parsedPort)
+            ? { port: parsedPort }
+            : {}),
+          ...(asString(values.host) !== undefined
+            ? { host: asString(values.host) }
+            : {}),
+          ...(asString(values.path) !== undefined
+            ? { path: asString(values.path) }
             : {}),
           ...(asString(values["base-url"]) !== undefined
             ? { baseUrl: asString(values["base-url"]) }
@@ -247,9 +341,15 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
             : {}),
         });
 
-        log(
-          `Serving MCP server '${result.serverName}' over stdio (${result.toolCount} tools registered)...`,
-        );
+        if (result.url) {
+          log(
+            `Serving MCP server '${result.serverName}' over HTTP at ${result.url.toString()} (${result.toolCount} tools registered)...`,
+          );
+        } else {
+          log(
+            `Serving MCP server '${result.serverName}' over stdio (${result.toolCount} tools registered)...`,
+          );
+        }
         await result.closed;
         return 0;
       } catch (err) {
@@ -292,6 +392,59 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
         );
         return 1;
       }
+    }
+
+    case "gateway": {
+      const subCommand = positionals[1];
+      if (subCommand === "serve") {
+        try {
+          const result = await gatewayServeCommand({
+            ...(asString(values.config) !== undefined
+              ? { config: asString(values.config) }
+              : {}),
+            ...(asString(values.transport) !== undefined
+              ? {
+                  transport: asString(values.transport) as "stdio" | "http",
+                }
+              : {}),
+            ...(asString(values.port) !== undefined
+              ? { port: Number.parseInt(asString(values.port)!, 10) }
+              : {}),
+            ...(asString(values.host) !== undefined
+              ? { host: asString(values.host) }
+              : {}),
+            ...(asString(values.path) !== undefined
+              ? { path: asString(values.path) }
+              : {}),
+            ...(io?.stdin !== undefined ? { stdin: io.stdin } : {}),
+            ...(io?.stdoutStream !== undefined
+              ? { stdout: io.stdoutStream }
+              : {}),
+          });
+
+          if (result.url) {
+            log(
+              `Serving dynamic gateway '${result.serverName}' over Streamable HTTP at ${result.url.toString()} (${result.contractCount} contracts, ${result.totalToolCount} tools loaded)...`,
+            );
+          } else {
+            log(
+              `Serving dynamic gateway '${result.serverName}' over stdio (${result.contractCount} contracts, ${result.totalToolCount} tools loaded)...`,
+            );
+          }
+          await result.closed;
+          return 0;
+        } catch (err) {
+          errLog(
+            `Gateway serve error: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return 1;
+        }
+      }
+
+      errLog(
+        `Unknown gateway subcommand: '${subCommand}'. Expected 'chainmcp gateway serve'.`,
+      );
+      return 1;
     }
 
     case "export": {

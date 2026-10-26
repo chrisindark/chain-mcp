@@ -5,8 +5,12 @@ export type {
   CliIo,
   DevOptions,
   DevResult,
+  DiffOptions,
+  DiffResult,
   ExportOptions,
   ExportResult,
+  GatewayServeOptions,
+  GatewayServeResult,
   InitOptions,
   InitResult,
   ProjectManifest,
@@ -20,8 +24,10 @@ export { runCli } from "./cli.js";
 export { initCommand } from "./commands/init.js";
 export { validateCommand } from "./commands/validate.js";
 export { buildCommand } from "./commands/build.js";
+export { diffCommand } from "./commands/diff.js";
 export { devCommand } from "./commands/dev.js";
 export { serveCommand } from "./commands/serve.js";
+export { gatewayServeCommand } from "./commands/gateway-serve.js";
 export { exportCommand } from "./commands/export.js";
 
 export {

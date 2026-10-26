@@ -30,6 +30,7 @@
   "dependencies": {
     "@chainmcp/analytics": "workspace:*",
     "@chainmcp/auth": "workspace:*",
+    "@chainmcp/cache-redis": "workspace:*",
     "@chainmcp/core": "workspace:*",
     "@chainmcp/executor": "workspace:*",
     "@chainmcp/json-navigation": "workspace:*",

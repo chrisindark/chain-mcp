@@ -1,0 +1,23 @@
+{
+  "name": "@chainmcp/example-gateway",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@chainmcp/cli": "workspace:*",
+    "@chainmcp/config": "workspace:*",
+    "@chainmcp/core": "workspace:*",
+    "@chainmcp/gateway": "workspace:*",
+    "@chainmcp/server": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.7"
+  }
+}

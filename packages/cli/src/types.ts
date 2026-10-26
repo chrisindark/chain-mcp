@@ -59,6 +59,7 @@ export interface ValidateResult {
   config?: ChainMcpConfig | undefined;
   configPath?: string | undefined;
   specPath?: string | undefined;
+  specContent?: string | undefined;
   contractRevision?: string | undefined;
   sourceHash?: string | undefined;
   toolsetHash?: string | undefined;
@@ -88,10 +89,34 @@ export interface BuildResult {
   error?: string | undefined;
 }
 
+export interface DiffOptions {
+  config?: string | undefined;
+  spec?: string | undefined;
+  against?: string | undefined;
+  cwd?: string | undefined;
+}
+
+export interface DiffResult {
+  ok: boolean;
+  contractRevision: string;
+  sourceHash: string;
+  toolsetHash: string;
+  hasChanges: boolean;
+  hasBreakingChanges: boolean;
+  addedTools: readonly string[];
+  removedTools: readonly string[];
+  changedTools: readonly string[];
+  unchangedTools: readonly string[];
+  error?: string | undefined;
+}
+
 export interface ServeOptions {
   config?: string | undefined;
   spec?: string | undefined;
-  transport?: "stdio" | undefined;
+  transport?: "stdio" | "http" | undefined;
+  port?: number | undefined;
+  host?: string | undefined;
+  path?: string | undefined;
   baseUrl?: string | undefined;
   tenantId?: string | undefined;
   cwd?: string | undefined;
@@ -104,6 +129,29 @@ export interface ServeResult {
   ok: boolean;
   serverName: string;
   toolCount: number;
+  url?: URL | undefined;
+  close(): Promise<void>;
+  closed: Promise<void>;
+}
+
+export interface GatewayServeOptions {
+  config?: string | undefined;
+  transport?: "stdio" | "http" | undefined;
+  port?: number | undefined;
+  host?: string | undefined;
+  path?: string | undefined;
+  cwd?: string | undefined;
+  stdin?: Readable | undefined;
+  stdout?: Writable | undefined;
+  signal?: AbortSignal | undefined;
+}
+
+export interface GatewayServeResult {
+  ok: boolean;
+  serverName: string;
+  contractCount: number;
+  totalToolCount: number;
+  url?: URL | undefined;
   close(): Promise<void>;
   closed: Promise<void>;
 }

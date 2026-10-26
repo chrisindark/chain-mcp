@@ -99,6 +99,7 @@ export interface DynamicGatewayOptions {
   readonly resolveHost?: HostResolver | undefined;
   readonly transport?: UpstreamTransport | undefined;
   readonly defaultTimeoutMs?: number | undefined;
+  readonly onToolsChanged?: (() => void | Promise<void>) | undefined;
   readonly now?: (() => number) | undefined;
   readonly monotonicNow?: (() => number) | undefined;
 }

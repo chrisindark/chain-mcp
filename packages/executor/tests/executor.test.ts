@@ -1423,4 +1423,66 @@ describe("OAuth token acquisition through the outbound policy", () => {
     await expectRuntimeError(tool.execute({}, context), "AUTH_REQUIRED");
     expect(transport.requests).toHaveLength(0);
   });
+
+  it("attaches opt-in read caching to GET operations and caches responses in runtime", async () => {
+    const transport = new FakeTransport([
+      jsonResponse({ id: "1", name: "Cached Widget" }),
+    ]);
+    const executor = createUpstreamExecutor(
+      options(transport, {
+        defaultReadCacheTtlSeconds: 300,
+        contractRevision: "rev-2026",
+      }),
+    );
+
+    const getTool = executor.createTool(
+      operation({
+        name: "getWidget",
+        method: "get",
+        readOnly: true,
+      }),
+    );
+    expect(getTool.cache).toEqual({ ttlSeconds: 300 });
+    expect(getTool.contractRevision).toBe("rev-2026");
+
+    const postTool = executor.createTool(
+      operation({
+        name: "createWidget",
+        method: "post",
+        readOnly: false,
+      }),
+    );
+    expect(postTool.cache).toBeUndefined();
+
+    // Verify end-to-end cache hit in runtime
+    const runtime = new InMemoryToolRuntime({
+      cache: {
+        store: new MapCacheStore(),
+        authorizationPartition: () => "public",
+      },
+    });
+    runtime.register(getTool);
+
+    const res1 = await runtime.callTool("getWidget", {}, async () => context);
+    expect(res1).toEqual({ id: "1", name: "Cached Widget" });
+    expect(transport.requests).toHaveLength(1);
+
+    // Second call hits cache; transport is NOT called again
+    const res2 = await runtime.callTool("getWidget", {}, async () => context);
+    expect(res2).toEqual({ id: "1", name: "Cached Widget" });
+    expect(transport.requests).toHaveLength(1);
+  });
 });
+
+class MapCacheStore {
+  private readonly map = new Map<string, unknown>();
+  async get<T>(key: string): Promise<T | undefined> {
+    return this.map.get(key) as T | undefined;
+  }
+  async set<T>(key: string, value: T): Promise<void> {
+    this.map.set(key, value);
+  }
+  async delete(key: string): Promise<void> {
+    this.map.delete(key);
+  }
+}

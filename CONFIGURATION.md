@@ -36,15 +36,22 @@ security:
 
 cache:
   enabled: true
-  provider: memory
-  defaultTtlSeconds: 30
-  maxEntryBytes: 250000
-  cacheOnlyExplicitlySafeReads: true
+  provider: memory # memory | redis
+  ttlSeconds: 300
+  maxEntries: 10000
+  redis:
+    url: redis://127.0.0.1:6379 # or CHAINMCP_REDIS_URL
+    keyPrefix: "chainmcp:cache:"
+    commandTimeoutMs: 1000
 
 tokenMetrics:
   enabled: true
-  mode: estimate
-  tokenizer: null
+  tokenizer: approximate # approximate | none
+  modelId: cl100k_base
+  charactersPerToken: 4
+
+projection:
+  enabled: true
 
 rateLimit:
   enabled: true
@@ -86,32 +93,43 @@ The implemented `@chainmcp/config` package exports `ChainMcpConfigSchema`, `pars
 
 Production encryption keys should generally come from a managed secret or key-management service. Never print environment variable values.
 
-## 4. Operation-level policies
+## 4. Tool-level and operation policies
+
+Tool-level rate limits are configured in `chainmcp.config.yaml` under `rateLimit.tools`:
 
 ```yaml
-operations:
-  listProducts:
-    cache:
-      enabled: true
-      ttlSeconds: 60
-    rateLimit:
+rateLimit:
+  enabled: true
+  requestsPerMinute: 60
+  tools:
+    listProducts:
       requestsPerMinute: 120
-    response:
-      select:
-        - $.items[*].id
-        - $.items[*].name
-
-  createPayment:
-    cache:
-      enabled: false
-    authorization:
-      requiredScopes:
-        - payments:write
-    rateLimit:
+    createPayment:
       requestsPerMinute: 5
 ```
 
-Mandatory authorization partitions, SSRF protections, and response-size limits cannot be disabled through operation configuration.
+For code-first authoring, per-tool scopes, cache TTLs, and response projections are declared using `defineTool` in `@chainmcp/authoring`:
+
+```typescript
+import { defineTool } from "@chainmcp/authoring";
+import { z } from "zod";
+
+export const createPayment = defineTool({
+  name: "createPayment",
+  description: "Processes a customer payment",
+  requiredScopes: ["payments:write"],
+  cacheTtlSeconds: 0, // Never cache mutating actions
+  inputSchema: z.object({
+    amount: z.number().positive(),
+    currency: z.string().length(3),
+  }),
+  execute: async (input, ctx) => {
+    // Execution logic
+  },
+});
+```
+
+Mandatory authorization partitions, SSRF protections, and response-size limits cannot be disabled through tool configuration.
 
 ## 5. Validation requirements
 

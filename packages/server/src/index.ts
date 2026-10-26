@@ -36,6 +36,7 @@ export interface McpServerOptions {
     request: McpRequestContext,
   ) => ToolContext | Promise<ToolContext>;
   maxResponseBytes?: number;
+  listChanged?: boolean;
   onclose?: () => void;
 }
 
@@ -89,37 +90,55 @@ export function createMcpServer(
   });
   if (runtime.tenantMode === "multi-tenant") {
     installMultiTenantToolHandlers(server, runtime, options, maxResponseBytes);
-    return server;
+  } else {
+    // The adapter snapshots tools at creation, which is exact for
+    // single-tenant runtimes. The runtime declares its tenancy mode on the
+    // public `ToolRuntime` interface, so a multi-tenant runtime cannot be
+    // mistaken for a single-tenant one and listed without a caller context.
+    for (const tool of runtime.listTools()) {
+      assertServerToolSchema(tool.name, tool.inputSchema);
+      server.registerTool(
+        tool.name,
+        {
+          description: tool.description,
+          inputSchema: fromJsonSchema(
+            // The audit above is the compatibility gate for this SDK conversion;
+            // keep schema parity tests alongside any changes to the audited subset.
+            tool.inputSchema as Parameters<typeof fromJsonSchema>[0],
+          ),
+        },
+        async (input, requestContext) => {
+          const result = await toolCallResult(
+            runtime,
+            tool.name,
+            input,
+            async () => establishContext(options, requestContext),
+            maxResponseBytes,
+          );
+          return server.server.projectCallToolResult(result, undefined);
+        },
+      );
+    }
   }
 
-  // The adapter snapshots tools at creation, which is exact for
-  // single-tenant runtimes. The runtime declares its tenancy mode on the
-  // public `ToolRuntime` interface, so a multi-tenant runtime cannot be
-  // mistaken for a single-tenant one and listed without a caller context.
-  for (const tool of runtime.listTools()) {
-    assertServerToolSchema(tool.name, tool.inputSchema);
-    server.registerTool(
-      tool.name,
-      {
-        description: tool.description,
-        inputSchema: fromJsonSchema(
-          // The audit above is the compatibility gate for this SDK conversion;
-          // keep schema parity tests alongside any changes to the audited subset.
-          tool.inputSchema as Parameters<typeof fromJsonSchema>[0],
-        ),
-      },
-      async (input, requestContext) => {
-        const result = await toolCallResult(
-          runtime,
-          tool.name,
-          input,
-          async () => establishContext(options, requestContext),
-          maxResponseBytes,
-        );
-        return server.server.projectCallToolResult(result, undefined);
-      },
-    );
+  const observableRuntime = runtime as unknown as {
+    onToolsChanged?: (listener: () => void | Promise<void>) => () => void;
+  };
+  if (typeof observableRuntime.onToolsChanged === "function") {
+    const unsubscribe = observableRuntime.onToolsChanged(async () => {
+      try {
+        await server.sendToolListChanged();
+      } catch {
+        // Notification errors when transport closes are ignored safely
+      }
+    });
+    const originalClose = server.close.bind(server);
+    server.close = async () => {
+      unsubscribe();
+      return originalClose();
+    };
   }
+
   return server;
 }
 
@@ -217,9 +236,9 @@ function installMultiTenantToolHandlers(
   options: McpServerOptions,
   maxResponseBytes: number,
 ): void {
-  // Low-level handlers own the capability declaration; this adapter does not
-  // emit list-changed notifications.
-  server.server.registerCapabilities({ tools: { listChanged: false } });
+  // Multi-tenant handlers declare tool capabilities including listChanged support.
+  const listChanged = options.listChanged ?? true;
+  server.server.registerCapabilities({ tools: { listChanged } });
   server.server.setRequestHandler("tools/list", async (_request, ctx) => {
     try {
       const context = await establishContext(options, ctx);
@@ -421,3 +440,6 @@ export async function serveStdio(
   void connected.closed.then(cleanup);
   return connected;
 }
+
+export * from "./verifier.js";
+export * from "./http.js";

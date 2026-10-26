@@ -353,4 +353,50 @@ describe("DynamicGateway", () => {
       active: true,
     });
   });
+
+  it("notifies listeners on publish, activate, disable, and rollback", async () => {
+    const gateway = new DynamicGateway();
+    let changeCount = 0;
+    const unsubscribe = gateway.onToolsChanged(() => {
+      changeCount++;
+    });
+
+    const tool1: ToolDefinition = {
+      name: "tool1",
+      description: "tool 1",
+      inputSchema: { type: "object" },
+      ownerTenantId: "t1",
+      operation: {},
+      execute: async () => ({ v: 1 }),
+    };
+
+    // 1. Publish (autoActivate = true) -> changeCount = 1
+    const rev1 = await gateway.publishContract({
+      tenantId: "t1",
+      contractName: "c1",
+      tools: [tool1],
+      destinationPolicy: {
+        baseUrl: "https://api.example.com",
+        allowedHosts: ["api.example.com"],
+      },
+    });
+    expect(changeCount).toBe(1);
+
+    // 2. Disable contract -> changeCount = 2
+    await gateway.disableContract("t1", "c1");
+    expect(changeCount).toBe(2);
+
+    // 3. Rollback / reactivate rev1 -> changeCount = 3
+    await gateway.rollbackContract("t1", "c1", rev1.revisionId);
+    expect(changeCount).toBe(3);
+
+    // 4. Manual activateRevision -> changeCount = 4
+    await gateway.activateRevision("t1", "c1", rev1.revisionId);
+    expect(changeCount).toBe(4);
+
+    // 5. Unsubscribe stops receiving notifications
+    unsubscribe();
+    await gateway.disableContract("t1", "c1");
+    expect(changeCount).toBe(4);
+  });
 });

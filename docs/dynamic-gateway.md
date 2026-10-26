@@ -55,6 +55,41 @@ Each `ContractRevision` contains:
 5. **Credential Isolation:** Outbound requests use the revision's configured `credentialProvider`, preventing credential leakage across contracts.
 6. **Cache Isolation:** Cache keys incorporate `tenantId` and `contractRevision`, guaranteeing cached results for one tenant or revision cannot be retrieved by another.
 
+## CLI deployment (`chainmcp gateway serve`)
+
+You can run the dynamic gateway directly using the CLI:
+
+```bash
+# Serve gateway using gateway.config.yaml over HTTP or stdio
+chainmcp gateway serve --config gateway.config.yaml
+
+# Override transport and port from command line
+chainmcp gateway serve --config gateway.config.yaml --transport http --port 3333
+```
+
+### Example `gateway.config.yaml`
+
+```yaml
+version: 1
+name: enterprise-dynamic-gateway
+server:
+  transport: http
+  host: 0.0.0.0
+  port: 3333
+  path: /mcp
+contracts:
+  - name: customers
+    tenantId: tenant-crm
+    spec: contracts/customers.yaml
+    destination:
+      baseUrl: https://api.customers.internal
+      allowedHosts:
+        - api.customers.internal
+    auth:
+      requiredScopes:
+        - crm:read
+```
+
 ## Programmatic usage
 
 ```ts

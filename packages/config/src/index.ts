@@ -1,12 +1,23 @@
 import { z } from "zod";
-import type {
-  Authorizer,
-  Logger,
-  LogLevel,
-  MetricsSink,
-  RateLimiter,
-  RuntimeOptions,
+import {
+  InMemoryCacheStore,
+  createFieldProjector,
+  type Authorizer,
+  type CacheStore,
+  type Logger,
+  type LogLevel,
+  type MetricsSink,
+  type RateLimiter,
+  type ResultProjector,
+  type RuntimeCacheOptions,
+  type RuntimeOptions,
+  type Tokenizer,
 } from "@chainmcp/core";
+import {
+  RedisCacheStore,
+  createSimpleRedisCacheClient,
+  type RedisCacheClient,
+} from "@chainmcp/cache-redis";
 import {
   CompositeCredentialProvider,
   EncryptedSecretStore,
@@ -107,10 +118,38 @@ export const RateLimitConfigSchema = z
 
 export type RateLimitConfig = z.infer<typeof RateLimitConfigSchema>;
 
+export const InboundPrincipalConfigSchema = z
+  .object({
+    tenantId: z.string().min(1),
+    principalId: z.string().min(1),
+    scopes: z.array(z.string()).optional(),
+  })
+  .strict();
+
+export type InboundPrincipalConfig = z.infer<
+  typeof InboundPrincipalConfigSchema
+>;
+
+export const InboundJwtConfigSchema = z
+  .object({
+    secret: z.string().optional(),
+    publicKey: z.string().optional(),
+    issuer: z.string().optional(),
+    audience: z.string().optional(),
+    clockToleranceSeconds: z.number().int().nonnegative().default(30),
+  })
+  .strict();
+
+export type InboundJwtConfig = z.infer<typeof InboundJwtConfigSchema>;
+
 export const InboundAuthConfigSchema = z
   .object({
     requireInboundAuth: z.boolean().default(false),
     authorizer: z.enum(["scope", "none"]).default("scope"),
+    tokens: z.record(z.string(), InboundPrincipalConfigSchema).optional(),
+    apiKeys: z.record(z.string(), InboundPrincipalConfigSchema).optional(),
+    apiKeyHeader: z.string().optional(),
+    jwt: InboundJwtConfigSchema.optional(),
   })
   .strict()
   .prefault({});
@@ -272,44 +311,90 @@ export const AnalyticsConfigSchema = z
 
 export type AnalyticsConfig = z.infer<typeof AnalyticsConfigSchema>;
 
+export const CacheConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    provider: z.enum(["memory", "redis"]).default("memory"),
+    ttlSeconds: z.number().int().positive().default(300),
+    maxEntries: z.number().int().positive().default(10_000),
+    redis: z
+      .object({
+        url: z.string().optional(),
+        keyPrefix: z.string().default("chainmcp:cache:"),
+        commandTimeoutMs: z.number().int().positive().default(1_000),
+      })
+      .strict()
+      .prefault({}),
+  })
+  .strict()
+  .prefault({});
+
+export type CacheConfig = z.infer<typeof CacheConfigSchema>;
+
+export const TokenMetricsConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    tokenizer: z.enum(["approximate", "none"]).default("approximate"),
+    modelId: z.string().default("cl100k_base"),
+    charactersPerToken: z.number().positive().default(4),
+  })
+  .strict()
+  .prefault({});
+
+export type TokenMetricsConfig = z.infer<typeof TokenMetricsConfigSchema>;
+
+export const ProjectionConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+  })
+  .strict()
+  .prefault({});
+
+export type ProjectionConfig = z.infer<typeof ProjectionConfigSchema>;
+
+export const ServerConfigSchema = z
+  .object({
+    transport: z.enum(["stdio", "http"]).default("stdio"),
+    host: z.string().default("127.0.0.1"),
+    port: z.number().int().min(1).max(65535).default(3333),
+    path: z.string().default("/mcp"),
+    requestTimeoutMs: z.number().int().positive().max(300_000).default(15_000),
+    maxResponseBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(100_000_000)
+      .default(1_000_000),
+  })
+  .strict()
+  .prefault({});
+
+export type ServerConfig = z.infer<typeof ServerConfigSchema>;
+
+export const SecurityConfigSchema = z
+  .object({
+    requireInboundAuth: z.boolean().default(false),
+    allowedUpstreamHosts: z.array(AllowedHostSchema).default([]),
+    redactHeaders: z
+      .array(z.string().min(1))
+      .default(["authorization", "cookie", "x-api-key"]),
+  })
+  .strict()
+  .prefault({});
+
+export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
+
 export const ChainMcpConfigSchema = z
   .object({
     version: z.literal(1),
     name: z.string().min(1).max(128),
     contract: ContractConfigSchema.optional(),
-    server: z
-      .object({
-        transport: z.literal("stdio").default("stdio"),
-        host: z.string().default("127.0.0.1"),
-        port: z.number().int().min(1).max(65535).default(3333),
-        requestTimeoutMs: z
-          .number()
-          .int()
-          .positive()
-          .max(300_000)
-          .default(15_000),
-        maxResponseBytes: z
-          .number()
-          .int()
-          .positive()
-          .max(100_000_000)
-          .default(1_000_000),
-      })
-      .strict()
-      // prefault, not default: Zod 4 `.default({})` short-circuits inner
-      // parsing and would return `{}` without the field defaults above.
-      .prefault({}),
-    security: z
-      .object({
-        requireInboundAuth: z.boolean().default(false),
-        allowedUpstreamHosts: z.array(AllowedHostSchema).default([]),
-        redactHeaders: z
-          .array(z.string().min(1))
-          .default(["authorization", "cookie", "x-api-key"]),
-      })
-      .strict()
-      .prefault({}),
+    server: ServerConfigSchema,
+    security: SecurityConfigSchema,
     rateLimit: RateLimitConfigSchema,
+    cache: CacheConfigSchema,
+    tokenMetrics: TokenMetricsConfigSchema,
+    projection: ProjectionConfigSchema,
     auth: AuthConfigSchema,
     logging: LoggingConfigSchema,
     jsonNavigation: JsonNavigationConfigSchema,
@@ -327,6 +412,83 @@ export function safeParseConfig(
   input: unknown,
 ): ReturnType<typeof ChainMcpConfigSchema.safeParse> {
   return ChainMcpConfigSchema.safeParse(input);
+}
+
+export const GatewayContractDestinationSchema = z
+  .object({
+    baseUrl: z.string().min(1),
+    allowedHosts: z.array(AllowedHostSchema).min(1),
+    allowInsecureHttp: z.boolean().default(false),
+  })
+  .strict();
+
+export type GatewayContractDestination = z.infer<
+  typeof GatewayContractDestinationSchema
+>;
+
+export const GatewayContractAuthConfigSchema = z
+  .object({
+    requiredScopes: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+
+export type GatewayContractAuthConfig = z.infer<
+  typeof GatewayContractAuthConfigSchema
+>;
+
+export const GatewayContractLimitsSchema = z
+  .object({
+    timeoutMs: z.number().int().positive().optional(),
+    maxResponseBytes: z.number().int().positive().optional(),
+    maxRequestBytes: z.number().int().positive().optional(),
+    maxRedirects: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export type GatewayContractLimits = z.infer<typeof GatewayContractLimitsSchema>;
+
+export const GatewayContractConfigSchema = z
+  .object({
+    name: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
+    tenantId: z.string().min(1),
+    spec: z.string().min(1),
+    destination: GatewayContractDestinationSchema,
+    auth: GatewayContractAuthConfigSchema.optional(),
+    limits: GatewayContractLimitsSchema.optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+    autoActivate: z.boolean().default(true),
+  })
+  .strict();
+
+export type GatewayContractConfig = z.infer<typeof GatewayContractConfigSchema>;
+
+export const GatewayConfigSchema = z
+  .object({
+    version: z.literal(1),
+    name: z.string().min(1).max(128).default("chainmcp-gateway"),
+    server: ServerConfigSchema,
+    security: SecurityConfigSchema,
+    rateLimit: RateLimitConfigSchema,
+    cache: CacheConfigSchema,
+    tokenMetrics: TokenMetricsConfigSchema,
+    projection: ProjectionConfigSchema,
+    auth: AuthConfigSchema,
+    logging: LoggingConfigSchema,
+    analytics: AnalyticsConfigSchema,
+    contracts: z.array(GatewayContractConfigSchema).default([]),
+  })
+  .strict();
+
+export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
+
+export function parseGatewayConfig(input: unknown): GatewayConfig {
+  return GatewayConfigSchema.parse(input);
+}
+
+export function safeParseGatewayConfig(
+  input: unknown,
+): ReturnType<typeof GatewayConfigSchema.safeParse> {
+  return GatewayConfigSchema.safeParse(input);
 }
 
 export interface RateLimiterFactoryOptions {
@@ -398,6 +560,65 @@ export function createRateLimiterFromConfig(
     maxTrackedWindows: config.maxTrackedWindows,
     ...(options?.now !== undefined ? { now: options.now } : {}),
   });
+}
+
+export interface CacheStoreFactoryOptions {
+  redisClient?: RedisCacheClient | undefined;
+  redisUrl?: string | undefined;
+}
+
+export function createCacheStoreFromConfig(
+  config: CacheConfig,
+  options?: CacheStoreFactoryOptions,
+): CacheStore | undefined {
+  if (!config.enabled) {
+    return undefined;
+  }
+  if (config.provider === "memory") {
+    const memoryOptions: { maxEntries?: number; maxTtlSeconds?: number } = {
+      maxEntries: config.maxEntries,
+    };
+    if (config.ttlSeconds !== undefined) {
+      memoryOptions.maxTtlSeconds = Math.max(config.ttlSeconds, 3_600);
+    }
+    return new InMemoryCacheStore(memoryOptions);
+  }
+  if (config.provider === "redis") {
+    let client = options?.redisClient;
+    if (!client) {
+      const url =
+        options?.redisUrl ?? config.redis.url ?? process.env.CHAINMCP_REDIS_URL;
+      if (!url) {
+        throw new TypeError(
+          "Redis cache store requires a Redis client (options.redisClient) or CHAINMCP_REDIS_URL",
+        );
+      }
+      client = createSimpleRedisCacheClient(url);
+    }
+    return new RedisCacheStore({
+      client,
+      keyPrefix: config.redis.keyPrefix,
+      commandTimeoutMs: config.redis.commandTimeoutMs,
+    });
+  }
+  return undefined;
+}
+
+export function createTokenizerFromConfig(
+  config: TokenMetricsConfig,
+): Tokenizer | undefined {
+  if (!config.enabled || config.tokenizer === "none") {
+    return undefined;
+  }
+  const ratio = config.charactersPerToken || 4;
+  return {
+    id: config.modelId,
+    measurement: "estimate",
+    count(text: string): number {
+      if (!text) return 0;
+      return Math.ceil(text.length / ratio);
+    },
+  };
 }
 
 function normalizeStaticCredential(
@@ -572,6 +793,11 @@ export function buildExecutorOptions(
     ...(overrides.contractRevision !== undefined
       ? { contractRevision: overrides.contractRevision }
       : {}),
+    ...(overrides.defaultReadCacheTtlSeconds !== undefined
+      ? { defaultReadCacheTtlSeconds: overrides.defaultReadCacheTtlSeconds }
+      : config.cache.enabled && config.cache.ttlSeconds > 0
+        ? { defaultReadCacheTtlSeconds: config.cache.ttlSeconds }
+        : {}),
     ...(overrides.ownerTenantId !== undefined
       ? { ownerTenantId: overrides.ownerTenantId }
       : {}),
@@ -654,6 +880,7 @@ export function buildRuntimeOptions(
   overrides?: Partial<RuntimeOptions>,
   factoryOptions?: {
     rateLimiterOptions?: RateLimiterFactoryOptions;
+    cacheStoreOptions?: CacheStoreFactoryOptions;
     env?: Record<string, string | undefined>;
     diagnosticSink?: LogSink;
     auditSink?: LogSink;
@@ -699,6 +926,34 @@ export function buildRuntimeOptions(
     }
   }
 
+  let cache: RuntimeCacheOptions | undefined = overrides?.cache;
+  if (cache === undefined && config.cache.enabled) {
+    const store = createCacheStoreFromConfig(
+      config.cache,
+      factoryOptions?.cacheStoreOptions,
+    );
+    if (store) {
+      cache = {
+        store,
+        authorizationPartition(context) {
+          return context.principal.scopes.length > 0
+            ? [...context.principal.scopes].sort().join(",")
+            : "public";
+        },
+      };
+    }
+  }
+
+  const tokenizer: Tokenizer | undefined =
+    overrides?.tokenizer ??
+    (config.tokenMetrics.enabled
+      ? createTokenizerFromConfig(config.tokenMetrics)
+      : undefined);
+
+  const projector: ResultProjector | undefined =
+    overrides?.projector ??
+    (config.projection.enabled ? createFieldProjector() : undefined);
+
   return {
     ...(authorizer !== undefined ? { authorizer } : {}),
     ...(rateLimiter !== undefined ? { rateLimiter } : {}),
@@ -716,12 +971,8 @@ export function buildRuntimeOptions(
     ...(overrides?.monotonicNow !== undefined
       ? { monotonicNow: overrides.monotonicNow }
       : {}),
-    ...(overrides?.cache !== undefined ? { cache: overrides.cache } : {}),
-    ...(overrides?.tokenizer !== undefined
-      ? { tokenizer: overrides.tokenizer }
-      : {}),
-    ...(overrides?.projector !== undefined
-      ? { projector: overrides.projector }
-      : {}),
+    ...(cache !== undefined ? { cache } : {}),
+    ...(tokenizer !== undefined ? { tokenizer } : {}),
+    ...(projector !== undefined ? { projector } : {}),
   };
 }

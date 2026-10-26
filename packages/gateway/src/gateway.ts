@@ -40,16 +40,45 @@ export class DynamicGateway implements ToolRuntime {
   private readonly registry: ContractRegistry;
   private readonly options: DynamicGatewayOptions;
   private readonly mutex = new AsyncMutex();
+  private readonly toolChangeListeners = new Set<() => void | Promise<void>>();
   private activeRuntime: InMemoryToolRuntime;
 
   constructor(options: DynamicGatewayOptions = {}) {
     this.options = options;
     this.registry = new ContractRegistry();
     this.activeRuntime = this.buildEmptyRuntime();
+    if (options.onToolsChanged) {
+      this.toolChangeListeners.add(options.onToolsChanged);
+    }
   }
 
   getRegistry(): ContractRegistry {
     return this.registry;
+  }
+
+  /**
+   * Registers a listener invoked whenever active tools change across any tenant
+   * (via contract publication, activation, disabling, or rollback).
+   * Returns an unsubscribe function.
+   */
+  onToolsChanged(listener: () => void | Promise<void>): () => void {
+    if (typeof listener !== "function") {
+      throw new TypeError("listener must be a function");
+    }
+    this.toolChangeListeners.add(listener);
+    return () => {
+      this.toolChangeListeners.delete(listener);
+    };
+  }
+
+  private async notifyToolsChanged(): Promise<void> {
+    for (const listener of this.toolChangeListeners) {
+      try {
+        await listener();
+      } catch {
+        // Notification listeners must not interrupt runtime operations
+      }
+    }
   }
 
   /**
@@ -218,6 +247,8 @@ export class DynamicGateway implements ToolRuntime {
           toolCount: activatedRevision.tools.length,
         });
 
+        await this.notifyToolsChanged();
+
         return activatedRevision;
       }
 
@@ -251,6 +282,8 @@ export class DynamicGateway implements ToolRuntime {
         toolCount: activatedRevision.tools.length,
       });
 
+      await this.notifyToolsChanged();
+
       return activatedRevision;
     });
   }
@@ -279,6 +312,8 @@ export class DynamicGateway implements ToolRuntime {
         revisionId: disabledRevision.revisionId,
         toolCount: disabledRevision.tools.length,
       });
+
+      await this.notifyToolsChanged();
 
       return disabledRevision;
     });
@@ -320,6 +355,8 @@ export class DynamicGateway implements ToolRuntime {
             }
           : {}),
       });
+
+      await this.notifyToolsChanged();
 
       return reactivatedRevision;
     });
