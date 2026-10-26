@@ -1425,6 +1425,68 @@ For embedded use and tests, stdin and stdout streams can be injected and
 process signal handling can be disabled. The server package does not yet
 implement remote transports or HTTP authentication.
 
+## `@chainmcp/cli`
+
+The `@chainmcp/cli` package implements developer commands and generated server scaffolding and export capabilities.
+
+### CLI Binary
+
+Exported as the `chainmcp` executable (`dist/bin.js`).
+
+```bash
+chainmcp init --spec <path> [--output <dir>] [--name <name>] [--base-url <url>] [--force]
+chainmcp validate [--config <path>] [--spec <path>] [--strict]
+chainmcp build [--config <path>] [--spec <path>] [--out-dir <dir>] [--check]
+chainmcp serve [--config <path>] [--spec <path>] [--base-url <url>] [--tenant <id>]
+chainmcp export [--config <path>] [--spec <path>] [--output <dir>] [--force] [--check]
+```
+
+### Programmatic API
+
+```ts
+export function runCli(args: string[], io?: CliIo): Promise<number>;
+
+export function initCommand(options: InitOptions): Promise<InitResult>;
+export function validateCommand(
+  options: ValidateOptions,
+): Promise<ValidateResult>;
+export function buildCommand(options: BuildOptions): Promise<BuildResult>;
+export function serveCommand(options: ServeOptions): Promise<ServeResult>;
+export function exportCommand(options: ExportOptions): Promise<ExportResult>;
+
+export function buildProjectManifest(
+  projectName: string,
+  compiled: CompileResult,
+  options?: { generatedAt?: string },
+): ProjectManifest;
+
+export function verifyProjectManifest(
+  existing: ProjectManifest,
+  recompiled: ProjectManifest,
+): ManifestVerificationResult;
+```
+
+### Manifest Schema (`chainmcp.manifest.json`)
+
+```ts
+export interface ProjectManifest {
+  manifestVersion: 1;
+  generatorVersion: string;
+  compilerVersion: string;
+  openapiVersion: string;
+  projectName: string;
+  contractRevision: string;
+  sourceHash: string;
+  toolsetHash: string;
+  toolCount: number;
+  tools: readonly {
+    name: string;
+    hash: string;
+  }[];
+  generatedAt: string;
+}
+```
+
 ## Compatibility
 
 Public APIs are subject to Semantic Versioning once stable. Before version 1.0, breaking changes must be documented in `CHANGELOG.md`.

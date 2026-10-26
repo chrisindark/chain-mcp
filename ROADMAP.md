@@ -226,14 +226,34 @@ options via `buildRuntimeOptions`.
 
 ## Milestone 7 — Generated servers
 
-- [ ] Implement `init`, `validate`, `build`, `serve`, and `export`.
-- [ ] Generate a portable project with a pinned contract revision.
-- [ ] Share runtime and policy implementations.
-- [ ] Add generation manifests and reproducibility checks.
-- [ ] Add Docker templates and deployment documentation.
-- [ ] Test generated projects from clean installations.
+- [x] Implement `init`, `validate`, `build`, `serve`, and `export`.
+- [x] Generate a portable project with a pinned contract revision.
+- [x] Share runtime and policy implementations.
+- [x] Add generation manifests and reproducibility checks.
+- [x] Add Docker templates and deployment documentation.
+- [x] Test generated projects from clean installations.
 
 **Exit criteria:** an exported server builds and runs independently.
+
+**Status (2026-10-26):** all Milestone 7 items are implemented and covered by
+tests. `@chainmcp/cli` implements the developer CLI with `init`, `validate`,
+`build`, `serve`, and `export` commands via Node.js native `util.parseArgs` with
+strict asynchronous I/O (`chainmcp/no-blocking-io`). `chainmcp export` generates
+portable standalone projects containing pinned contract snapshots in
+`spec/openapi.yaml`, configuration in `chainmcp.config.yaml`, TypeScript configs,
+multi-stage `Dockerfile` templates, `.dockerignore`, `.gitignore`, `README.md`,
+and an immutable generation manifest (`chainmcp.manifest.json`) recording
+`manifestVersion`, `generatorVersion`, `compilerVersion`, `contractRevision`,
+`sourceHash`, `toolsetHash`, and individual tool hashes.
+Generated servers share the `@chainmcp/*` runtime, executor, server, auth,
+analytics, and JSON navigation implementations without duplicating policy logic
+(preserving ADR 0002). Reproducibility checks (`verifyProjectManifest`,
+`--check` on `build` and `export`) assert exact byte-for-byte and hash identity.
+Deployment documentation is established in `docs/deployment.md`.
+End-to-end integration tests (`end-to-end.test.ts`) demonstrate that an exported
+server compiles with `tsc` and runs independently, discovering and executing both
+OpenAPI-compiled tools and JSON navigation tools over the official MCP SDK
+client.
 
 ## Milestone 8 — Tool sources and code-first authoring
 

@@ -8,6 +8,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Documentation
 
+- Document developer CLI commands, generation manifests, reproducibility requirements, and containerization in `docs/generated-servers.md`, `docs/deployment.md`, `API_REFERENCE.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and ADR 0024.
 - Document JSON navigation, structured logging, OpenTelemetry integration, and analytics aggregation in `docs/json-navigation.md`, `docs/analytics.md`, `API_REFERENCE.md`, `CONFIGURATION.md`, `ROADMAP.md`, and ADR 0023.
 - Document configuration wiring for network security, upstream credentials, and rate limiting in `CONFIGURATION.md`, `API_REFERENCE.md`, `ROADMAP.md`, and ADR 0022.
 - Document authentication, upstream credentials, encrypted secret storage, and distributed rate limiting in `docs/authentication.md`, `docs/rate-limiting.md`, `API_REFERENCE.md`, `CONFIGURATION.md`, `ARCHITECTURE.md`, `SECURITY.md`, and ADR 0021.
@@ -32,6 +33,12 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- Complete Milestone 7 (Developer CLI and Generated Servers):
+  - Add `@chainmcp/cli` package implementing developer CLI commands (`init`, `validate`, `build`, `serve`, `export`) using Node.js built-in `util.parseArgs` and strictly asynchronous I/O conforming to `chainmcp/no-blocking-io`.
+  - Add deterministic generation manifest (`chainmcp.manifest.json`) and verification helper (`verifyProjectManifest`) asserting compiler, generator, contract, and toolset hash equality.
+  - Add portable server export (`chainmcp export`) generating standalone, buildable projects with pinned contract snapshots, project configurations, TypeScript configs, multi-stage `Dockerfile` templates, and server entry points sharing `@chainmcp/*` runtime packages.
+  - Implement comprehensive deployment documentation in `docs/deployment.md` covering stdio client integration, Docker container builds, process signals, and SSRF security controls.
+  - Verify independent build, execution, and MCP SDK protocol conformance via clean-installation end-to-end integration tests.
 - Complete Milestone 6 (JSON navigation, logging, and analytics):
   - Add `@chainmcp/json-navigation` package providing bounded JSON path selection (`selectPath`), shape inspection (`inspectShape`), pagination (`paginate`), and declarative filtering (`filterData`) with strict enforcement of depth, node visit budgets, array limits, serialized result bytes, and execution deadlines, plus runnable MCP tool definitions (`json_inspect_shape`, `json_select_path`, `json_paginate`, `json_filter`).
   - Add injectable `Logger`, `LogLevel`, `LogRecord`, and `LogCorrelationContext` interfaces to `@chainmcp/core`.

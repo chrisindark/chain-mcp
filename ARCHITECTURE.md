@@ -41,7 +41,7 @@ The target architecture consists of tool sources, a shared runtime, MCP adapters
 
 ## 3. Monorepo package boundaries
 
-Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, and `@chainmcp/server`. Remaining rows describe planned boundaries; no empty packages are created for them.
+Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, `@chainmcp/server`, `@chainmcp/analytics`, `@chainmcp/json-navigation`, and `@chainmcp/cli`. Remaining rows describe planned boundaries; no empty packages are created for them.
 
 | Package                     | Responsibility                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------ |
@@ -224,16 +224,17 @@ documents the Inspector CLI commands, and `pnpm conformance:inspector` asserts
 
 ## 6. Generated server mode
 
-The compiler produces a project containing:
+The developer CLI (`@chainmcp/cli`) produces a standalone, portable project via `chainmcp export` containing:
 
-- A contract snapshot or reference with an integrity hash.
-- Generated tool definitions.
-- Runtime configuration and examples.
-- Dependencies pinned through a lockfile.
-- A generation manifest containing compiler and contract versions.
+- A pinned contract snapshot in `spec/openapi.yaml` with an integrity hash (`sourceHash`).
+- Generated tool definitions and server entry point (`src/server.ts`).
+- Project configuration (`chainmcp.config.yaml`) with explicit upstream host allowlists.
+- Dependencies pinned through `package.json` referencing published shared packages.
+- A generation manifest (`chainmcp.manifest.json`) containing generator, compiler, and contract revisions, source hashes, and a toolset hash.
+- Multi-stage `Dockerfile` and ignore files for containerization.
 - No embedded production credentials.
 
-Generated servers use the shared runtime package. Generated source must be deterministic for the same contract and compiler version.
+Generated servers use the shared runtime package (`@chainmcp/core`), outbound executor (`@chainmcp/executor`), and server adapter (`@chainmcp/server`). Generated source and manifests are deterministic and byte-identical for the same contract and compiler/generator versions. Reproducibility checks (`verifyProjectManifest` and `chainmcp build --check` / `chainmcp export --check`) assert contract and toolset integrity.
 
 ## 7. Dynamic gateway mode
 

@@ -20,6 +20,14 @@ import {
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import type { Readable, Writable } from "node:stream";
 
+export type {
+  AuthInfo,
+  CallToolResult,
+  RequestId,
+  ServerContext,
+  Transport,
+} from "@modelcontextprotocol/server";
+
 export interface McpServerOptions {
   name: string;
   version: string;

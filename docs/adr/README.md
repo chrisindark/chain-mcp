@@ -42,6 +42,7 @@ Create an ADR before making a substantial change to public APIs, tenant isolatio
 | [0021](0021-authentication-and-rate-limiting.md)      | Authentication and rate limiting       | proposed |
 | [0022](0022-configuration-wiring-auth-rate-limit.md)  | Configuration wiring for auth and rate | proposed |
 | [0023](0023-json-navigation-logging-analytics.md)     | JSON navigation, logging, analytics    | proposed |
+| [0024](0024-cli-and-generated-servers.md)             | CLI and portable generated servers     | accepted |
 
 ADRs 0001–0003 were recorded retroactively from existing documentation and
 implementation. They describe decisions already reflected in the project, not
