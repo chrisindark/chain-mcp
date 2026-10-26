@@ -7,11 +7,54 @@ is an open-source TypeScript/Node.js toolkit that converts API contracts into MC
 
 ## Vision
 
-A developer provides an OpenAPI contract. ChainMcp
-validates it, generates discoverable MCP tools, and makes them available through a standalone server or a dynamic gateway.
+A developer provides an OpenAPI contract or writes a simple TypeScript tool. ChainMcp validates it, generates discoverable MCP tools, and makes them available through a standalone server or a dynamic gateway.
 
-ChainMcp
-is more than an API-to-MCP code generator: it is a reusable execution and policy layer for MCP servers.
+ChainMcp is more than an API-to-MCP code generator: it is an enterprise execution and policy layer for Model Context Protocol servers.
+
+```mermaid
+flowchart LR
+    LLM["AI Client (Claude / Cursor)"] <-->|"MCP Protocol (stdio/SSE)"| ChainMcp["ChainMcp Runtime"]
+    ChainMcp <-->|"SSRF Guard & Auth"| API["Upstream APIs & Microservices"]
+
+    subgraph SecurityShield["ChainMcp Security & Policy Shield"]
+        Auth["Inbound Auth & Scope Verifier"]
+        Rate["Rate & Concurrency Limits"]
+        Cache["Hashed Partition Cache"]
+        Projection["Token Budget & Field Projection"]
+    end
+```
+
+## Quick Start (From 0 to MCP in 3 Steps)
+
+### 1. Initialize a Project from an API Spec
+
+```bash
+npx chainmcp init --spec ./openapi.yaml
+```
+
+### 2. Validate and Build
+
+```bash
+chainmcp validate
+chainmcp build
+```
+
+### 3. Connect to Claude Desktop or Your AI IDE
+
+Add the server to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "my-api": {
+      "command": "chainmcp",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+Open Claude Desktop or your AI IDE. Your API tools appear automatically in the tool inventory!
 
 ## Core capabilities
 
@@ -49,8 +92,13 @@ These are initial architectural choices and may change through documented archit
 
 ## Repository documentation
 
+- **`docs/product-guide.md`**: Complete plain-English product guide, visual architecture, metrics, caching, and adoption
+- **`docs/README.md`**: Complete documentation index and topic map
 - `ROADMAP.md`: milestones and acceptance criteria
 - `docs/getting-started.md`: runnable end-to-end example and Inspector commands
+- `docs/supported-versions.md`: supported version matrix and lifecycle policy
+- `docs/migration-and-rollback.md`: upgrade and rollback procedures
+- `docs/troubleshooting.md`: error codes, diagnosis, and operational troubleshooting
 - `ARCHITECTURE.md`: system design and component boundaries
 - `CONFIGURATION.md`: configuration contract
 - `DEVELOPMENT.md`: development and testing workflows
@@ -59,28 +107,40 @@ These are initial architectural choices and may change through documented archit
 - `RELEASES.md`: versioning and release process
 - `CONTRIBUTING.md`: contribution workflow
 - `AGENTS.md`: coding-agent instructions
-- `docs/`: detailed product and implementation guides
+- `examples/README.md`: runnable examples catalog and Claude Desktop setup
 
 ## Project status
 
-ChainMcp
-begins as an early-stage project. Features are considered implemented only when the code, tests, documentation, and security requirements agree.
+ChainMcp has achieved its **1.0 Stable Release** milestone, satisfying all release gates in `RELEASES.md`.
 
-The current workspace contains `@chainmcp/core` (an in-memory tool registry/runtime with input validation, injectable policy/telemetry interfaces, hashed cache keys, opt-in per-tool result caching, output projection and token budgets, token measurement, and a bounded in-memory store), `@chainmcp/config` (a strict Zod schema and parser for project configuration and adapter wiring), `@chainmcp/auth` (the default authorizer enforcing `operation.requiredScopes` against the caller's principal, encrypted secret storage, and pluggable upstream credential providers including the OAuth 2.0 client credentials flow), `@chainmcp/cache-redis` (an optional shared Redis cache adapter), `@chainmcp/compiler` (an OpenAPI 3.0/3.1 parser and metadata compiler with local reference resolution, deterministic tool names, supported-schema translation, parameter/request-body bindings, response metadata, explicit authentication policies, and generation manifests), `@chainmcp/executor` (a bounded Node HTTP/HTTPS executor with exact host allowlisting, DNS pinning, private/metadata range blocking, redirect revalidation, response caps, cancellation binding, and upstream credential injection), `@chainmcp/rate-limit` (in-memory and Redis-backed quota and concurrency limiters), `@chainmcp/analytics` (structured logging with redaction, OpenTelemetry metrics/tracing, and rolling analytics aggregation), `@chainmcp/json-navigation` (bounded JSON navigation, pagination, and inspection tools), `@chainmcp/server` (an official TypeScript MCP SDK adapter with local stdio transport), `@chainmcp/cli` (developer CLI for scaffolding, validation, building, serving, and exporting standalone servers), `@chainmcp/authoring` (code-first tool authoring facade with Zod lowering), and `@chainmcp/gateway` (multi-tenant dynamic gateway with versioned contract registries, atomic candidate activation, tenant policy binding, per-contract authentication and network policies, and rollback). Response schemas are compiled as unvalidated metadata, while authentication policies are enforced by the executor. An output validator, shared stores other than Redis, and remote MCP transports are not implemented.
+The repository contains 13 fully verified workspace packages:
 
-Run `pnpm install` followed by `pnpm check` from the repository root to run formatting verification, lint, typecheck, unit tests, and builds.
+- `@chainmcp/core`: in-memory tool registry, linear-time Re2 regex validation, output projection, token budgets, and cached execution.
+- `@chainmcp/config`: strict Zod configuration loader for `chainmcp.config.yaml`.
+- `@chainmcp/compiler`: OpenAPI 3.0/3.1 contract parser, deterministic manifests, and tool lowering.
+- `@chainmcp/authoring`: code-first tool authoring facade (`defineTool`) with Zod lowering.
+- `@chainmcp/auth`: inbound caller authorization, operation scope verification, encrypted secret storage, and OAuth 2.0 client credentials.
+- `@chainmcp/executor`: outbound HTTP execution with strict SSRF defense, DNS pinning, private range blocking, and response byte caps.
+- `@chainmcp/rate-limit`: quota and concurrency rate limiters with in-memory and Redis backends.
+- `@chainmcp/cache-redis`: distributed Redis cache store adapter.
+- `@chainmcp/analytics`: structured logging with automatic secret redaction, OpenTelemetry metrics/tracing, and sliding-window aggregation.
+- `@chainmcp/json-navigation`: bounded JSON pagination, slicing, and inspection tools for LLMs.
+- `@chainmcp/server`: official TypeScript MCP SDK server adapter (stdio and HTTP/SSE).
+- `@chainmcp/gateway`: multi-tenant dynamic gateway with atomic contract revisions and rollback.
+- `@chainmcp/cli`: developer CLI commands for scaffolding, building, diffing, and serving.
 
-## Intended CLI experience
+Run `pnpm install` followed by `pnpm check` from the repository root to run formatting, linting, custom ESLint blocking-I/O rules, package builds, type checking, unit tests, resilience tests, and SBOM checks.
+
+## CLI commands
 
 ```bash
-chainmcp init --spec ./openapi.yaml
-chainmcp validate
-chainmcp build
-chainmcp serve
-chainmcp export --output ./generated-server
+chainmcp init --spec ./openapi.yaml  # Scaffolds project from API spec
+chainmcp validate                    # Audits schemas, regexes, and URLs
+chainmcp build                       # Compiles tools and manifests
+chainmcp serve                       # Starts the local MCP server
+chainmcp export --output ./dist-srv  # Exports portable standalone server
+chainmcp diff                        # Detects schema drift and breaking changes
 ```
-
-These commands describe the target developer experience, not a claim that the commands already exist.
 
 ## Security
 
