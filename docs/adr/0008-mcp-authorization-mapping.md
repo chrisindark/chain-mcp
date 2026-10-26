@@ -1,7 +1,7 @@
 # ADR 0008 — MCP authorization mapping: tenant ownership and tool access
 
-- Status: proposed
-- Recorded: 2026-10-20
+- Status: accepted
+- Recorded: 2026-10-20 (accepted 2026-10-26 with Milestone 9 implementation and verification)
 
 ## Context and problem
 

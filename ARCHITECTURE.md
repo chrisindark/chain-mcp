@@ -41,7 +41,7 @@ The target architecture consists of tool sources, a shared runtime, MCP adapters
 
 ## 3. Monorepo package boundaries
 
-Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, `@chainmcp/server`, `@chainmcp/analytics`, `@chainmcp/json-navigation`, `@chainmcp/cli`, and `@chainmcp/authoring`. Remaining rows describe planned boundaries; no empty packages are created for them.
+Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, `@chainmcp/server`, `@chainmcp/analytics`, `@chainmcp/json-navigation`, `@chainmcp/cli`, `@chainmcp/authoring`, and `@chainmcp/gateway`. Remaining rows describe planned boundaries; no empty packages are created for them.
 
 | Package                     | Responsibility                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------ |
@@ -57,7 +57,7 @@ Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config
 | `@chainmcp/json-navigation` | Bounded JSON exploration                                                                               |
 | `@chainmcp/config`          | Configuration schema and loading                                                                       |
 | `@chainmcp/cli`             | Developer commands                                                                                     |
-| `apps/gateway`              | Dynamic multi-contract gateway                                                                         |
+| `@chainmcp/gateway`         | Dynamic multi-contract gateway                                                                         |
 
 Use workspace dependencies. Core packages must not directly depend on concrete Redis, PostgreSQL, or cloud SDKs unless the package specifically implements that adapter.
 
@@ -240,18 +240,20 @@ Generated servers use the shared runtime package (`@chainmcp/core`), outbound ex
 
 ## 7. Dynamic gateway mode
 
-The gateway serves multiple registered API contracts through a shared process.
+The gateway (`@chainmcp/gateway`) serves multiple registered API contracts through a shared process with strict tenant isolation, immutable versioned revisions, atomic candidate activation, and per-contract authentication and network policies.
 
-Each contract revision has:
+Each contract revision (`ContractRevision`) contains:
 
-- An immutable identifier.
-- A tenant or explicit owner.
-- A validated tool registry.
-- An upstream destination policy.
-- An authorization policy.
-- Cache and rate-limit settings.
+- An immutable digest-based revision identifier (`revisionId`).
+- An owner tenant (`tenantId`) and contract name (`contractName`).
+- A validated tool registry (`tools`) stamped with the revision and tenant ID.
+- An upstream destination policy (`baseUrl`, `allowedHosts`, `allowInsecureHttp`).
+- An authorization and credential policy (`authConfig` with `requiredScopes` and `credentialProvider`).
+- Resource limits (`limits` with timeouts and byte caps).
 
-Load new revisions into an isolated candidate registry. Validate completely, then atomically activate. Support rollback and disabling without mutating active registries in place.
+New revisions compile and validate in an isolated candidate state (`ContractRegistry.createRevision`), rejecting schema violations, unsupported schemas, invalid destinations, and intra-tenant tool name collisions before activation.
+
+Atomic activation swaps the shared runtime instance (`this.activeRuntime = nextRuntime`), ensuring in-flight requests on previous revisions complete cleanly while new calls immediately observe the updated toolset. Rollback restores a prior revision and disabling removes a contract's tools from discovery and execution, emitting structured, redacted audit events (`contract_published`, `contract_activated`, `contract_disabled`, `contract_rolled_back`). Discovery (`listTools`) and invocation (`callTool`) are strictly scoped to the caller's tenant context: missing context fails closed with `AUTH_REQUIRED`, and cross-tenant requests fail closed with `TOOL_NOT_FOUND` (ADR 0008, ADR 0026).
 
 ## 8. Core interfaces
 

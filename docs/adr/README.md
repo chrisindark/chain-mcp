@@ -26,7 +26,7 @@ Create an ADR before making a substantial change to public APIs, tenant isolatio
 | [0005](0005-versioned-hashed-cache-keys.md)           | Versioned, hashed cache keys           | proposed |
 | [0006](0006-stage-aware-policy-errors.md)             | Stage-aware policy adapter errors      | proposed |
 | [0007](0007-wall-clock-and-monotonic-duration.md)     | Wall clock and monotonic duration      | proposed |
-| [0008](0008-mcp-authorization-mapping.md)             | MCP authorization mapping              | proposed |
+| [0008](0008-mcp-authorization-mapping.md)             | MCP authorization mapping              | accepted |
 | [0009](0009-mcp-sdk-v2-packages.md)                   | MCP SDK v2 package split and pin       | proposed |
 | [0010](0010-runtime-cache-eligibility.md)             | Runtime cache eligibility and binding  | proposed |
 | [0011](0011-token-measurement-labeling.md)            | Token measurement labeling             | proposed |
@@ -44,6 +44,7 @@ Create an ADR before making a substantial change to public APIs, tenant isolatio
 | [0023](0023-json-navigation-logging-analytics.md)     | JSON navigation, logging, analytics    | proposed |
 | [0024](0024-cli-and-generated-servers.md)             | CLI and portable generated servers     | accepted |
 | [0025](0025-tool-sources-and-code-first-authoring.md) | Tool sources and code-first authoring  | accepted |
+| [0026](0026-dynamic-gateway-architecture.md)          | Dynamic gateway architecture           | accepted |
 
 ADRs 0001–0003 were recorded retroactively from existing documentation and
 implementation. They describe decisions already reflected in the project, not

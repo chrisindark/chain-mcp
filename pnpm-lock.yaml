@@ -202,6 +202,31 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/gateway:
+    dependencies:
+      "@chainmcp/auth":
+        specifier: workspace:*
+        version: link:../auth
+      "@chainmcp/compiler":
+        specifier: workspace:*
+        version: link:../compiler
+      "@chainmcp/core":
+        specifier: workspace:*
+        version: link:../core
+      "@chainmcp/executor":
+        specifier: workspace:*
+        version: link:../executor
+      "@chainmcp/server":
+        specifier: workspace:*
+        version: link:../server
+      "@modelcontextprotocol/server":
+        specifier: 2.3.1
+        version: 2.3.1
+    devDependencies:
+      "@modelcontextprotocol/client":
+        specifier: 2.3.1
+        version: 2.3.1
+
   packages/json-navigation:
     dependencies:
       "@chainmcp/core":

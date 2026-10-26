@@ -295,14 +295,38 @@ Documentation is updated in `docs/getting-started.md`, `API_REFERENCE.md`,
 
 ## Milestone 9 — Dynamic gateway
 
-- [ ] Add versioned contract registry.
-- [ ] Bind each contract revision to tenant policy.
-- [ ] Load and reload revisions atomically.
-- [ ] Enforce per-contract authentication and network policies.
-- [ ] Support rollback and revision disabling.
-- [ ] Test tenant isolation and concurrent reloads.
+- [x] Add versioned contract registry.
+- [x] Bind each contract revision to tenant policy.
+- [x] Load and reload revisions atomically.
+- [x] Enforce per-contract authentication and network policies.
+- [x] Support rollback and revision disabling.
+- [x] Test tenant isolation and concurrent reloads.
 
 **Exit criteria:** multiple contracts can be served safely without cross-tenant access.
+
+**Status (2026-10-26):** all Milestone 9 items are implemented and covered by
+tests. `@chainmcp/gateway` implements `ContractRegistry` and `DynamicGateway`
+with versioned immutable contract revisions (`revisionId`, `sourceHash`,
+`tools`, `destinationPolicy`, `authConfig`, and `limits`).
+Candidate revisions are compiled and validated in isolation with
+`@chainmcp/compiler` and `@chainmcp/executor`, auditing all input schemas and
+destination allowlists before activation. Tool name collisions within a revision
+and across active contracts for the same tenant are rejected at candidate
+validation and activation; distinct tenants may safely publish identical tool
+names without collision or cross-talk.
+Atomic state swap (`this.activeRuntime = nextRuntime`) serialized by an
+asynchronous mutex ensures in-flight requests complete cleanly while new
+requests immediately observe updated revisions.
+Rollback reactivates prior revisions atomically and disabling removes tools
+from discovery and execution, emitting structured, redacted audit events
+(`contract_published`, `contract_activated`, `contract_disabled`,
+`contract_rolled_back`).
+Per-contract network destination policies and upstream credentials are strictly
+isolated per contract revision.
+Multi-tenant isolation tests demonstrate that callers without context fail with
+`AUTH_REQUIRED`, and cross-tenant requests fail closed as `TOOL_NOT_FOUND`
+without leaking other tenants' inventory.
+ADR 0008 is accepted, and ADR 0026 is recorded.
 
 ## Milestone 10 — Stable release
 
