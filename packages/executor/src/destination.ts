@@ -246,7 +246,11 @@ export async function resolveDestination(
   // address while a private one is also present would leave the choice to DNS
   // ordering and make rebinding harder to reason about.
   for (const address of canonical) {
-    if (classifyAddress(address) !== "public") {
+    const classification = classifyAddress(address);
+    const isAllowed =
+      classification === "public" ||
+      (policy.allowInsecureHttp && classification === "loopback");
+    if (!isAllowed) {
       throw new DestinationPolicyError(
         "Upstream host resolves to a non-public address",
       );

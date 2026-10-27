@@ -95,7 +95,12 @@ local references are resolved with cycle/depth limits; the runtime-supported
 constraints are preserved and enforced; unsupported input annotations are
 rejected in strict mode and reported when droppable in permissive mode; input
 `oneOf`/`anyOf`/`not`, conditional/dependent/pattern composition, and remote
-references are always rejected.
+references are always rejected. Path-item and operation-level `servers` overrides
+and inbound `callbacks` are rejected in strict mode (`UNSUPPORTED_SERVERS`,
+`UNSUPPORTED_CALLBACKS`) or warned in permissive mode. Non-default parameter
+`style`, `explode`, `allowReserved`, and unknown parameter keys are strictly
+validated and rejected in strict mode (`PARAMETER_UNSUPPORTED`, `PARAMETER_INVALID`)
+or warned in permissive mode, with warnings preserved in the manifest and tool entries.
 
 `@chainmcp/executor` converts compiled operations into runnable tools. It maps
 path, query, header, and JSON body inputs; enforces an exact host allowlist,
@@ -250,6 +255,9 @@ analytics, and JSON navigation implementations without duplicating policy logic
 (preserving ADR 0002). Reproducibility checks (`verifyProjectManifest`,
 `--check` on `build` and `export`) assert exact byte-for-byte and hash identity.
 Deployment documentation is established in `docs/deployment.md`.
+Upstream base URL scheme, port, and path prefix are preserved end-to-end
+through `chainmcp init`, configuration `contract.baseUrl`, `security.allowInsecureHttp`,
+and generated server templates without arbitrary host synthesis.
 End-to-end integration tests (`end-to-end.test.ts`) demonstrate that an exported
 server compiles with `tsc` and runs independently, discovering and executing both
 OpenAPI-compiled tools and JSON navigation tools over the official MCP SDK

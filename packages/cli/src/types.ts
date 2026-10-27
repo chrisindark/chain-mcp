@@ -23,6 +23,7 @@ export interface ProjectManifest {
     name: string;
     hash: string;
   }[];
+  warnings?: readonly CompileDiagnostic[];
   generatedAt: string;
 }
 

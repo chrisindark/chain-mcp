@@ -1472,6 +1472,89 @@ describe("OAuth token acquisition through the outbound policy", () => {
     expect(res2).toEqual({ id: "1", name: "Cached Widget" });
     expect(transport.requests).toHaveLength(1);
   });
+
+  describe("Base URL scheme, port, and path prefix preservation (RM-06)", () => {
+    it("preserves path prefix when building upstream URL", async () => {
+      const transport = new FakeTransport([jsonResponse({ status: "ok" })]);
+      const executor = createUpstreamExecutor({
+        baseUrl: "https://api.example.com/v2",
+        allowedHosts: ["api.example.com"],
+        resolveHost: async () => ["8.8.8.8"],
+        transport,
+      });
+
+      const tool = executor.createTool(
+        operation({
+          name: "getPets",
+          method: "get",
+          path: "/pets",
+        }),
+      );
+
+      const runtime = new InMemoryToolRuntime();
+      runtime.register(tool);
+
+      await runtime.callTool("getPets", {}, async () => context);
+      expect(transport.requests).toHaveLength(1);
+      expect(transport.requests[0]?.url.toString()).toBe(
+        "https://api.example.com/v2/pets",
+      );
+    });
+
+    it("does not double-slash when baseUrl has a trailing slash", async () => {
+      const transport = new FakeTransport([jsonResponse({ status: "ok" })]);
+      const executor = createUpstreamExecutor({
+        baseUrl: "https://api.example.com/v2/",
+        allowedHosts: ["api.example.com"],
+        resolveHost: async () => ["8.8.8.8"],
+        transport,
+      });
+
+      const tool = executor.createTool(
+        operation({
+          name: "getPets",
+          method: "get",
+          path: "/pets",
+        }),
+      );
+
+      const runtime = new InMemoryToolRuntime();
+      runtime.register(tool);
+
+      await runtime.callTool("getPets", {}, async () => context);
+      expect(transport.requests).toHaveLength(1);
+      expect(transport.requests[0]?.url.toString()).toBe(
+        "https://api.example.com/v2/pets",
+      );
+    });
+
+    it("preserves custom port and http scheme when allowInsecureHttp is enabled", async () => {
+      const transport = new FakeTransport([jsonResponse({ status: "ok" })]);
+      const executor = createUpstreamExecutor({
+        baseUrl: "http://127.0.0.1:8080",
+        allowedHosts: ["127.0.0.1"],
+        allowInsecureHttp: true,
+        transport,
+      });
+
+      const tool = executor.createTool(
+        operation({
+          name: "getPets",
+          method: "get",
+          path: "/pets",
+        }),
+      );
+
+      const runtime = new InMemoryToolRuntime();
+      runtime.register(tool);
+
+      await runtime.callTool("getPets", {}, async () => context);
+      expect(transport.requests).toHaveLength(1);
+      expect(transport.requests[0]?.url.toString()).toBe(
+        "http://127.0.0.1:8080/pets",
+      );
+    });
+  });
 });
 
 class MapCacheStore {

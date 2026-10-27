@@ -40,6 +40,9 @@ export type CompileDiagnosticCode =
   | "SECURITY_INVALID"
   | "SECURITY_REQUIREMENT_INVALID"
   | "SECURITY_SCHEME_INVALID"
+  | "UNSUPPORTED_SERVERS"
+  | "UNSUPPORTED_CALLBACKS"
+  | "CONFIG_DEPRECATED"
   | "INTERNAL_ERROR";
 
 export interface CompileDiagnostic {
@@ -195,6 +198,7 @@ export interface CompiledOperation {
   /** Explicit OR/AND authentication policy derived from `security`. */
   authentication: CompiledAuthenticationPolicy;
   sourceLocation: string;
+  warnings?: readonly CompileDiagnostic[];
 }
 
 export interface ManifestToolEntry {
@@ -211,6 +215,7 @@ export interface CompileManifest {
   toolsetHash: string;
   toolCount: number;
   tools: readonly ManifestToolEntry[];
+  warnings?: readonly CompileDiagnostic[];
 }
 
 export interface CompileResult {

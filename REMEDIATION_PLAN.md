@@ -48,8 +48,8 @@ rather than marking it complete.
 | [x]  | RM-01 | Fix inbound verifier prototype-chain auth bypass              | P0       | server/auth          | —           |
 | [x]  | RM-02 | Enforce HTTP request size, Host, Origin, DNS-rebinding limits | P0       | server/transport     | —           |
 | [x]  | RM-03 | Make HTTP inbound auth fail closed                            | P0       | server/cli           | RM-02       |
-| [ ]  | RM-04 | Replace origin reflection with configurable CORS allowlist    | P1       | server/transport     | RM-02       |
-| [ ]  | RM-05 | Reject or implement silently ignored OpenAPI constructs       | P1       | compiler             | —           |
+| [x]  | RM-04 | Replace origin reflection with configurable CORS allowlist    | P1       | server/transport     | RM-02       |
+| [x]  | RM-05 | Reject or implement silently ignored OpenAPI constructs       | P1       | compiler             | —           |
 | [ ]  | RM-06 | Preserve upstream base URL scheme, port, and path prefix      | P1       | config/executor/cli  | —           |
 | [ ]  | RM-07 | Unify remote spec loading with SSRF-safe fetch policy         | P1       | cli                  | RM-06       |
 | [ ]  | RM-08 | Support code-first projects in `serve`, `build`, `export`     | P1       | cli                  | RM-07       |
@@ -477,6 +477,8 @@ pnpm --filter @chainmcp/compiler test
 pnpm --filter @chainmcp/compiler typecheck
 ```
 
+**Status:** Completed on 2026-10-27. Implemented explicit compiler diagnostics for previously silently accepted OpenAPI constructs. Path-item and operation-level `servers` overrides are rejected in strict mode (`UNSUPPORTED_SERVERS`) or warned in permissive mode. Inbound `callbacks` are rejected in strict mode (`UNSUPPORTED_CALLBACKS`) or warned in permissive mode. Parameter `style`, `explode`, and `allowReserved` are strictly validated, rejecting non-default values in strict mode (`PARAMETER_UNSUPPORTED`, `PARAMETER_INVALID`) and warning in permissive mode while falling back to default wire serialization. Unknown parameter fields are rejected in strict mode (`PARAMETER_INVALID`) and warned in permissive mode, while extensions (`x-*`) remain permitted. Permissive mode warnings survive into `CompileManifest.warnings` and `CompiledOperation.warnings`, persisting into `compiled-tools.json` and `chainmcp.manifest.json`. 7 new unit tests in `packages/compiler/tests/compile.test.ts` added and passing; `pnpm check` clean.
+
 ---
 
 # Wave 2 — Correctness for real APIs
@@ -549,6 +551,8 @@ pnpm --filter @chainmcp/config test
 pnpm --filter @chainmcp/cli test
 pnpm --filter @chainmcp/executor test
 ```
+
+**Status:** Completed on 2026-10-27. Added `contract.baseUrl` and `BaseUrlSchema` to `@chainmcp/config` with strict validation (HTTP/HTTPS, no credentials, no query/fragment, canonical single-slash normalization). Added `security.allowInsecureHttp: false` across schemas and executor options. Auto-derived `baseUrl` host into `allowedUpstreamHosts` while preserving explicit extras. Updated `chainmcp init` to capture and record the full base URL including scheme, port, and path prefix into `chainmcp.config.yaml`, and set `allowInsecureHttp: true` when HTTP is used. Updated `serve`, `dev`, `export`, and `renderServerTs` to resolve `baseUrl` from config without synthesising `https://${allowedUpstreamHosts[0]}`. Added `validateCommand` diagnostics for undeclared base hosts, missing `contract.baseUrl` (`CONFIG_DEPRECATED`), and insecure HTTP without `allowInsecureHttp: true`. Updated `@chainmcp/executor` destination policy to allow loopback destinations when `allowInsecureHttp: true`. Added 11 unit tests in `@chainmcp/config`, 5 in `@chainmcp/cli`, and 3 in `@chainmcp/executor`. All validation commands, inspector conformance, and `pnpm check` clean.
 
 ---
 

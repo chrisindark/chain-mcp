@@ -35,10 +35,18 @@ chainmcp init --spec ./openapi.yaml [--output <dir>] [--name <name>] [--base-url
 - `--spec <path>`: Path to OpenAPI 3.0 or 3.1 contract (YAML or JSON).
 - `--output <dir>`: Target directory (default: current directory `.`).
 - `--name <name>`: Project name (defaults to sanitized contract title).
-- `--base-url <url>`: Upstream API base URL (defaults to spec `servers[0].url`).
+- `--base-url <url>`: Upstream API base URL (defaults to spec `servers[0].url`). Preserves scheme, custom port, and path prefix (e.g. `https://api.example.com/v2` or `http://127.0.0.1:8080`). Auto-derives host into `security.allowedUpstreamHosts` and sets `security.allowInsecureHttp: true` if `http://` is used.
 - `--force`: Overwrite existing files if target directory is not empty.
 
 Emits: `spec/openapi.yaml`, `chainmcp.config.yaml`, `package.json`, `tsconfig.json`, `tsconfig.build.json`, `src/server.ts`, `src/tools.ts`, `Dockerfile`, `.dockerignore`, `.gitignore`, and `README.md`.
+
+#### Base URL Resolution Precedence
+
+In generated servers and runtime commands (`serve`, `dev`, `export`):
+
+1. Runtime CLI option `--base-url <url>`.
+2. Explicit `contract.baseUrl` from `chainmcp.config.yaml`.
+3. Backward compatibility fallback: `https://${security.allowedUpstreamHosts[0]}` (emits deprecation warning `CONFIG_DEPRECATED` during validation).
 
 ### 2. `chainmcp validate`
 

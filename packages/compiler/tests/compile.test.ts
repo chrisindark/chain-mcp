@@ -1803,3 +1803,407 @@ describe("document validation", () => {
     ).toThrow(TypeError);
   });
 });
+
+describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
+  it("rejects operation-level servers in strict mode and warns in permissive mode", () => {
+    const doc = baseDocument({
+      "/items": {
+        get: operation({
+          servers: [{ url: "https://override.example.com" }],
+        }),
+      },
+    });
+
+    // strict: true (default)
+    const strictResult = compileDocument(doc, { strict: true });
+    expect(strictResult.ok).toBe(false);
+    expect(codes(strictResult)).toContain("UNSUPPORTED_SERVERS");
+    const strictDiag = strictResult.diagnostics.find(
+      (d) => d.code === "UNSUPPORTED_SERVERS",
+    );
+    expect(strictDiag?.severity).toBe("error");
+    expect(strictDiag?.location).toBe("#/paths/~1items/get/servers");
+    expect(strictDiag?.message).toContain(
+      "Operation 'servers' override is not supported",
+    );
+    expect(strictDiag?.message).toContain("strict: false");
+    expect(strictResult.tools).toHaveLength(0);
+
+    // strict: false (permissive mode)
+    const permissiveResult = compileDocument(doc, { strict: false });
+    expect(permissiveResult.ok).toBe(true);
+    expect(codes(permissiveResult)).toContain("UNSUPPORTED_SERVERS");
+    const permissiveDiag = permissiveResult.diagnostics.find(
+      (d) => d.code === "UNSUPPORTED_SERVERS",
+    );
+    expect(permissiveDiag?.severity).toBe("warning");
+    expect(permissiveResult.tools).toHaveLength(1);
+    expect(permissiveResult.manifest.warnings).toBeDefined();
+    expect(
+      permissiveResult.manifest.warnings?.some(
+        (w) => w.code === "UNSUPPORTED_SERVERS",
+      ),
+    ).toBe(true);
+    expect(
+      permissiveResult.tools[0]?.warnings?.some(
+        (w) => w.code === "UNSUPPORTED_SERVERS",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects path-item-level servers in strict mode and warns in permissive mode", () => {
+    const doc = baseDocument({
+      "/items": {
+        servers: [{ url: "https://path-override.example.com" }],
+        get: operation(),
+      },
+    });
+
+    const strictResult = compileDocument(doc, { strict: true });
+    expect(strictResult.ok).toBe(false);
+    expect(codes(strictResult)).toContain("UNSUPPORTED_SERVERS");
+    const strictDiag = strictResult.diagnostics.find(
+      (d) => d.code === "UNSUPPORTED_SERVERS",
+    );
+    expect(strictDiag?.severity).toBe("error");
+    expect(strictDiag?.location).toBe("#/paths/~1items/servers");
+    expect(strictResult.tools).toHaveLength(0);
+
+    const permissiveResult = compileDocument(doc, { strict: false });
+    expect(permissiveResult.ok).toBe(true);
+    expect(codes(permissiveResult)).toContain("UNSUPPORTED_SERVERS");
+    const permissiveDiag = permissiveResult.diagnostics.find(
+      (d) => d.code === "UNSUPPORTED_SERVERS",
+    );
+    expect(permissiveDiag?.severity).toBe("warning");
+    expect(permissiveResult.tools).toHaveLength(1);
+    expect(
+      permissiveResult.manifest.warnings?.some(
+        (w) => w.code === "UNSUPPORTED_SERVERS",
+      ),
+    ).toBe(true);
+    expect(
+      permissiveResult.tools[0]?.warnings?.some(
+        (w) => w.code === "UNSUPPORTED_SERVERS",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects operation-level callbacks in strict mode and warns in permissive mode", () => {
+    const doc = baseDocument({
+      "/items": {
+        post: operation({
+          callbacks: {
+            onEvent: {
+              "{$request.body#/callbackUrl}": {
+                post: {
+                  responses: { "200": { description: "callback received" } },
+                },
+              },
+            },
+          },
+        }),
+      },
+    });
+
+    const strictResult = compileDocument(doc, { strict: true });
+    expect(strictResult.ok).toBe(false);
+    expect(codes(strictResult)).toContain("UNSUPPORTED_CALLBACKS");
+    const strictDiag = strictResult.diagnostics.find(
+      (d) => d.code === "UNSUPPORTED_CALLBACKS",
+    );
+    expect(strictDiag?.severity).toBe("error");
+    expect(strictDiag?.location).toBe("#/paths/~1items/post/callbacks");
+    expect(strictDiag?.message).toContain(
+      "Operation 'callbacks' (inbound webhooks) are not supported",
+    );
+    expect(strictResult.tools).toHaveLength(0);
+
+    const permissiveResult = compileDocument(doc, { strict: false });
+    expect(permissiveResult.ok).toBe(true);
+    expect(codes(permissiveResult)).toContain("UNSUPPORTED_CALLBACKS");
+    const permissiveDiag = permissiveResult.diagnostics.find(
+      (d) => d.code === "UNSUPPORTED_CALLBACKS",
+    );
+    expect(permissiveDiag?.severity).toBe("warning");
+    expect(permissiveResult.tools).toHaveLength(1);
+    expect(
+      permissiveResult.manifest.warnings?.some(
+        (w) => w.code === "UNSUPPORTED_CALLBACKS",
+      ),
+    ).toBe(true);
+    expect(
+      permissiveResult.tools[0]?.warnings?.some(
+        (w) => w.code === "UNSUPPORTED_CALLBACKS",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects non-default parameter style, explode, and allowReserved combinations in strict mode and warns in permissive mode", () => {
+    const docWithCustomStyle = baseDocument({
+      "/items": {
+        get: operation({
+          parameters: [
+            {
+              name: "filter",
+              in: "query",
+              style: "deepObject",
+              schema: { type: "object" },
+            },
+          ],
+        }),
+      },
+    });
+
+    // style: "deepObject"
+    const strictStyle = compileDocument(docWithCustomStyle, { strict: true });
+    expect(strictStyle.ok).toBe(false);
+    expect(codes(strictStyle)).toContain("PARAMETER_UNSUPPORTED");
+    const styleDiag = strictStyle.diagnostics.find(
+      (d) => d.code === "PARAMETER_UNSUPPORTED",
+    );
+    expect(styleDiag?.severity).toBe("error");
+    expect(styleDiag?.location).toBe("#/paths/~1items/get/parameters/0/style");
+    expect(styleDiag?.message).toContain(
+      "Query parameter 'filter' specifies unsupported style 'deepObject'",
+    );
+    expect(styleDiag?.message).toContain("only 'form' is supported");
+
+    const permissiveStyle = compileDocument(docWithCustomStyle, {
+      strict: false,
+    });
+    expect(permissiveStyle.ok).toBe(true);
+    expect(codes(permissiveStyle)).toContain("PARAMETER_UNSUPPORTED");
+    expect(
+      permissiveStyle.manifest.warnings?.some(
+        (w) => w.code === "PARAMETER_UNSUPPORTED",
+      ),
+    ).toBe(true);
+
+    // explode: false
+    const docWithExplodeFalse = baseDocument({
+      "/items": {
+        get: operation({
+          parameters: [
+            {
+              name: "tags",
+              in: "query",
+              explode: false,
+              schema: { type: "array", items: { type: "string" } },
+            },
+          ],
+        }),
+      },
+    });
+
+    const strictExplode = compileDocument(docWithExplodeFalse, {
+      strict: true,
+    });
+    expect(strictExplode.ok).toBe(false);
+    expect(codes(strictExplode)).toContain("PARAMETER_UNSUPPORTED");
+    const explodeDiag = strictExplode.diagnostics.find(
+      (d) => d.code === "PARAMETER_UNSUPPORTED",
+    );
+    expect(explodeDiag?.severity).toBe("error");
+    expect(explodeDiag?.location).toBe(
+      "#/paths/~1items/get/parameters/0/explode",
+    );
+    expect(explodeDiag?.message).toContain(
+      "Query parameter 'tags' specifies unsupported explode: false",
+    );
+
+    const permissiveExplode = compileDocument(docWithExplodeFalse, {
+      strict: false,
+    });
+    expect(permissiveExplode.ok).toBe(true);
+    expect(codes(permissiveExplode)).toContain("PARAMETER_UNSUPPORTED");
+    expect(
+      permissiveExplode.manifest.warnings?.some(
+        (w) => w.code === "PARAMETER_UNSUPPORTED",
+      ),
+    ).toBe(true);
+
+    // allowReserved: true
+    const docWithAllowReserved = baseDocument({
+      "/items": {
+        get: operation({
+          parameters: [
+            {
+              name: "queryParam",
+              in: "query",
+              allowReserved: true,
+              schema: { type: "string" },
+            },
+          ],
+        }),
+      },
+    });
+
+    const strictReserved = compileDocument(docWithAllowReserved, {
+      strict: true,
+    });
+    expect(strictReserved.ok).toBe(false);
+    expect(codes(strictReserved)).toContain("PARAMETER_UNSUPPORTED");
+    const reservedDiag = strictReserved.diagnostics.find(
+      (d) => d.code === "PARAMETER_UNSUPPORTED",
+    );
+    expect(reservedDiag?.severity).toBe("error");
+    expect(reservedDiag?.location).toBe(
+      "#/paths/~1items/get/parameters/0/allowReserved",
+    );
+    expect(reservedDiag?.message).toContain(
+      "Query parameter 'queryParam' specifies unsupported allowReserved: true",
+    );
+
+    const permissiveReserved = compileDocument(docWithAllowReserved, {
+      strict: false,
+    });
+    expect(permissiveReserved.ok).toBe(true);
+    expect(codes(permissiveReserved)).toContain("PARAMETER_UNSUPPORTED");
+    expect(
+      permissiveReserved.manifest.warnings?.some(
+        (w) => w.code === "PARAMETER_UNSUPPORTED",
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts default parameter style, explode, and allowReserved combinations without warnings", () => {
+    const doc = baseDocument({
+      "/items/{itemId}": {
+        get: operation({
+          parameters: [
+            {
+              name: "itemId",
+              in: "path",
+              required: true,
+              style: "simple",
+              explode: false,
+              schema: { type: "string" },
+            },
+            {
+              name: "q",
+              in: "query",
+              style: "form",
+              explode: true,
+              allowReserved: false,
+              schema: { type: "string" },
+            },
+            {
+              name: "X-Trace",
+              in: "header",
+              style: "simple",
+              explode: false,
+              schema: { type: "string" },
+            },
+          ],
+        }),
+      },
+    });
+
+    const result = compileDocument(doc, { strict: true });
+    expect(result.ok).toBe(true);
+    expect(result.tools).toHaveLength(1);
+    expect(codes(result)).not.toContain("PARAMETER_UNSUPPORTED");
+    expect(codes(result)).not.toContain("PARAMETER_INVALID");
+    expect(result.manifest.warnings).toBeUndefined();
+  });
+
+  it("rejects unknown parameter keys in strict mode and warns in permissive mode", () => {
+    const docWithUnknown = baseDocument({
+      "/items": {
+        get: operation({
+          parameters: [
+            {
+              name: "search",
+              in: "query",
+              unknownProp: "badValue",
+              schema: { type: "string" },
+            },
+          ],
+        }),
+      },
+    });
+
+    const strictResult = compileDocument(docWithUnknown, { strict: true });
+    expect(strictResult.ok).toBe(false);
+    expect(codes(strictResult)).toContain("PARAMETER_INVALID");
+    const diag = strictResult.diagnostics.find(
+      (d) => d.code === "PARAMETER_INVALID",
+    );
+    expect(diag?.severity).toBe("error");
+    expect(diag?.location).toBe("#/paths/~1items/get/parameters/0");
+    expect(diag?.message).toContain(
+      "Unsupported parameter field 'unknownProp'",
+    );
+    expect(diag?.message).toContain("x-unknownProp");
+
+    const permissiveResult = compileDocument(docWithUnknown, { strict: false });
+    expect(permissiveResult.ok).toBe(true);
+    expect(codes(permissiveResult)).toContain("PARAMETER_INVALID");
+    const warnDiag = permissiveResult.diagnostics.find(
+      (d) => d.code === "PARAMETER_INVALID",
+    );
+    expect(warnDiag?.severity).toBe("warning");
+    expect(permissiveResult.tools).toHaveLength(1);
+    expect(
+      permissiveResult.manifest.warnings?.some(
+        (w) => w.code === "PARAMETER_INVALID",
+      ),
+    ).toBe(true);
+
+    // Extension fields (x-*) are allowed
+    const docWithExtension = baseDocument({
+      "/items": {
+        get: operation({
+          parameters: [
+            {
+              name: "search",
+              in: "query",
+              "x-custom-field": "goodValue",
+              schema: { type: "string" },
+            },
+          ],
+        }),
+      },
+    });
+    const extResult = compileDocument(docWithExtension, { strict: true });
+    expect(extResult.ok).toBe(true);
+    expect(codes(extResult)).not.toContain("PARAMETER_INVALID");
+  });
+
+  it("does not swallow any diagnostics: all are returned in the diagnostics array", () => {
+    const doc = baseDocument({
+      "/items": {
+        servers: [{ url: "https://override.example.com" }],
+        get: operation({
+          callbacks: { cb: {} },
+          parameters: [
+            {
+              name: "filter",
+              in: "query",
+              style: "deepObject",
+              schema: { type: "object" },
+            },
+          ],
+        }),
+      },
+    });
+
+    const result = compileDocument(doc, { strict: false });
+    expect(result.ok).toBe(true);
+    const resultCodes = codes(result);
+    expect(resultCodes).toContain("UNSUPPORTED_SERVERS");
+    expect(resultCodes).toContain("UNSUPPORTED_CALLBACKS");
+    expect(resultCodes).toContain("PARAMETER_UNSUPPORTED");
+
+    // All diagnostics must have code, message, severity, and location
+    for (const d of result.diagnostics) {
+      expect(typeof d.code).toBe("string");
+      expect(typeof d.message).toBe("string");
+      expect(d.message.length).toBeGreaterThan(0);
+      expect(d.severity === "error" || d.severity === "warning").toBe(true);
+      expect(typeof d.location).toBe("string");
+      expect(d.location?.startsWith("#")).toBe(true);
+    }
+  });
+});

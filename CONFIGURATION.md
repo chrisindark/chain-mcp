@@ -17,6 +17,7 @@ name: catalog-api
 contract:
   source: ./openapi.yaml
   strict: true
+  baseUrl: https://api.example.com/v1
 
 server:
   transport: stdio
@@ -42,6 +43,7 @@ server:
 security:
   requireInboundAuth: false
   allowUnauthenticatedHttp: false
+  allowInsecureHttp: false
   allowedUpstreamHosts:
     - api.example.com
   redactHeaders:
@@ -88,11 +90,14 @@ analytics:
 
 The implemented `@chainmcp/config` package exports `ChainMcpConfigSchema`, `parseConfig`, `safeParseConfig`, and wiring helpers. The supported sections are `version`, `name`, `contract`, `server`, `security`, `rateLimit`, `auth`, `logging`, `jsonNavigation`, and `analytics`. Unknown keys are rejected with Zod `.strict()`.
 
-- **`contract`:** (Optional) Declares the OpenAPI specification file (`contract.source`) and compilation mode (`contract.strict`). For code-first projects authored with `@chainmcp/authoring`, the `contract` section is omitted.
+- **`contract`:** (Optional) Declares the OpenAPI specification file (`contract.source`), compilation mode (`contract.strict`), and target upstream base URL (`contract.baseUrl`). For code-first projects authored with `@chainmcp/authoring`, the `contract` section is omitted.
+  - **`contract.baseUrl`:** Absolute `http://` or `https://` base URL preserving origin, port, and path prefix (e.g., `https://api.example.com/v2` or `http://127.0.0.1:8080`). Credentials (`user:pass@`), query parameters (`?`), and fragments (`#`) are strictly rejected. Trailing slashes are canonically normalized. The host from `baseUrl` is automatically derived and added to `security.allowedUpstreamHosts`.
+  - **Migration Note:** Configurations that omit `contract.baseUrl` continue to derive their origin from `https://${security.allowedUpstreamHosts[0]}` for backward compatibility, but emit a `CONFIG_DEPRECATED` warning during `chainmcp validate`. Explicit declaration of `contract.baseUrl` is strongly recommended.
 - **`server`:** Configures transport (`stdio` or `http`), binding host (`127.0.0.1`), port (`3333`), base path (`/mcp`), `requestTimeoutMs` (default 15,000 ms), `maxResponseBytes` (default 1,000,000), `maxRequestBytes` (default 1,048,576 = 1 MiB), `allowedHosts` for DNS rebinding protection, `allowedOrigins` for browser/CORS origin verification, `enableDnsRebindingProtection`, and `cors` configuration (`enabled`, `allowedOrigins`, `allowedHeaders`, `allowCredentials`, `maxAgeSeconds`). CORS accepts boolean shorthand or explicit object, defaults to off on non-loopback bindings, rejects wildcard origin with credentials at parse time, reflects only exact matches, and sets `Vary: Origin`.
 - **`security.requireInboundAuth`:** (default `false`) Enforces inbound authentication on HTTP requests. When set to `true`, incoming requests must present valid credentials, and an inbound verifier (`auth.inbound.tokens`, `apiKeys`, or `jwt`) must be configured or startup fails fast.
 - **`security.allowUnauthenticatedHttp`:** (default `false`) Explicit override required when binding the HTTP server or dynamic gateway to a non-loopback host (e.g. `0.0.0.0`, external IPs) without authentication. If `false` and inbound authentication is not configured, binding to non-loopback hosts fails fast at startup. Unauthenticated startups on loopback (`127.0.0.1`, `localhost`, `::1`) or with `allowUnauthenticatedHttp: true` emit a prominent security warning.
-- **`security.allowedUpstreamHosts`:** Strictly validated against schemes, ports, paths, queries, credentials, and wildcards. Automatically normalized to lowercase canonical hostnames. Wired directly into executor options via `buildExecutorOptions`.
+- **`security.allowInsecureHttp`:** (default `false`) Explicit override required to permit unencrypted plain HTTP traffic to upstreams (e.g., local loopback services during development like `http://127.0.0.1:8080`). If `false` and `contract.baseUrl` uses `http://`, validation and runtime execution fail closed.
+- **`security.allowedUpstreamHosts`:** Strictly validated against schemes, ports, paths, queries, credentials, and wildcards. Automatically normalized to lowercase canonical hostnames. Wired directly into executor options via `buildExecutorOptions`. Extra explicit hosts are preserved alongside the auto-derived host from `contract.baseUrl`.
 - **`rateLimit`:** Configures in-memory or Redis distributed rate limiting with shorthand (`requestsPerMinute`, `concurrency`) or explicit global, tenant, and tool quotas. Wired into runtime options via `createRateLimiterFromConfig`.
 - **`auth`:** Configures inbound authorization (`authorizer: "scope"`) and upstream credential providers (`static`, `env`, `secretStore`, `oauth`). Wired into executor options via `createUpstreamCredentialProviderFromConfig`.
 - **`logging`:** Configures structured logger levels (`debug`, `info`, `warn`, `error`, `silent`), output destination (`stdout`, `stderr`, `memory`), secret redaction keys, and body exclusion. Overridable via `CHAINMCP_LOG_LEVEL`. Wired into runtime options via `createLoggerFromConfig`.

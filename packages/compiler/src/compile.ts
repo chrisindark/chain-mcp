@@ -84,6 +84,22 @@ const OPERATION_KEYS = new Set<string>([
 
 const PARAMETER_LOCATIONS = new Set(["path", "query", "header"]);
 
+const PARAMETER_KEYS = new Set<string>([
+  "name",
+  "in",
+  "description",
+  "required",
+  "deprecated",
+  "allowEmptyValue",
+  "style",
+  "explode",
+  "allowReserved",
+  "schema",
+  "example",
+  "examples",
+  "content",
+]);
+
 const RESPONSE_KEYS = new Set(["description", "headers", "links", "content"]);
 
 /**
@@ -260,6 +276,19 @@ export function compileOpenApi(
     }
     if (invalidPathItem) continue;
 
+    const pathItemStart = diagnostics.length;
+
+    if (Object.hasOwn(pathItem, "servers")) {
+      diagnostics.push({
+        severity: settings.strict ? "error" : "warning",
+        code: "UNSUPPORTED_SERVERS",
+        message:
+          "Path-item 'servers' override is not supported; all operations route through the configured upstream baseUrl. Remove the field or set strict: false to ignore with a warning",
+        location: pointer("paths", path, "servers"),
+      });
+      if (settings.strict) continue;
+    }
+
     const pathParameterStart = diagnostics.length;
     const pathParameters = collectParameters(
       pathItem.parameters,
@@ -270,6 +299,9 @@ export function compileOpenApi(
       pointer("paths", path, "parameters"),
     );
     const pathParametersValid = !hasError(diagnostics, pathParameterStart);
+    const pathItemWarnings = diagnostics
+      .slice(pathItemStart)
+      .filter((d) => d.severity === "warning");
 
     for (const method of HTTP_METHODS) {
       if (!Object.hasOwn(pathItem, method)) continue;
@@ -300,6 +332,7 @@ export function compileOpenApi(
         nameState,
         pathParameters,
         pathParametersValid,
+        pathItemWarnings,
         securitySchemes,
         globalSecurity,
         globalSecurityLocation: "#/security",
@@ -369,6 +402,7 @@ interface CompileOperationArguments {
   nameState: ToolNameState;
   pathParameters: ReadonlyMap<string, ParameterInfo> | undefined;
   pathParametersValid: boolean;
+  pathItemWarnings: readonly CompileDiagnostic[];
   securitySchemes: Readonly<Record<string, CompiledSecurityScheme>>;
   globalSecurity: readonly SecurityRequirement[];
   globalSecurityLocation: string;
@@ -389,6 +423,7 @@ function compileOperation(
     nameState,
     pathParameters,
     pathParametersValid,
+    pathItemWarnings,
     securitySchemes,
     globalSecurity,
     globalSecurityLocation,
@@ -413,6 +448,28 @@ function compileOperation(
       message: `Unsupported operation field '${key}'`,
       location: operationLocation,
     });
+  }
+
+  if (Object.hasOwn(rawOperation, "servers")) {
+    diagnostics.push({
+      severity: settings.strict ? "error" : "warning",
+      code: "UNSUPPORTED_SERVERS",
+      message:
+        "Operation 'servers' override is not supported; all operations route through the configured upstream baseUrl. Remove the field or set strict: false to ignore with a warning",
+      location: pointer("paths", path, method, "servers"),
+    });
+    if (settings.strict) return undefined;
+  }
+
+  if (Object.hasOwn(rawOperation, "callbacks")) {
+    diagnostics.push({
+      severity: settings.strict ? "error" : "warning",
+      code: "UNSUPPORTED_CALLBACKS",
+      message:
+        "Operation 'callbacks' (inbound webhooks) are not supported. Remove the callbacks declaration or set strict: false to ignore with a warning",
+      location: pointer("paths", path, method, "callbacks"),
+    });
+    if (settings.strict) return undefined;
   }
 
   let deprecated = false;
@@ -603,6 +660,13 @@ function compileOperation(
         compareCodeUnits(left.in, right.in),
     );
 
+  const operationWarnings = [
+    ...pathItemWarnings,
+    ...diagnostics
+      .slice(operationStart)
+      .filter((d) => d.severity === "warning"),
+  ];
+
   return {
     name,
     description,
@@ -628,6 +692,7 @@ function compileOperation(
     security,
     authentication,
     sourceLocation: operationLocation,
+    ...(operationWarnings.length > 0 ? { warnings: operationWarnings } : {}),
   };
 }
 
@@ -758,6 +823,159 @@ function collectParameters(
       });
       return undefined;
     }
+
+    let parameterHasError = false;
+
+    for (const key of Object.keys(parameter)) {
+      if (PARAMETER_KEYS.has(key) || key.startsWith("x-")) continue;
+      diagnostics.push({
+        severity: settings.strict ? "error" : "warning",
+        code: "PARAMETER_INVALID",
+        message: `Unsupported parameter field '${key}'; remove this field or use an extension (x-${key})`,
+        location: parameterLocation,
+      });
+      if (settings.strict) {
+        parameterHasError = true;
+      }
+    }
+
+    if (Object.hasOwn(parameter, "style")) {
+      if (typeof parameter.style !== "string") {
+        diagnostics.push({
+          severity: "error",
+          code: "PARAMETER_INVALID",
+          message: `Parameter '${parameter.name}' 'style' must be a string`,
+          location: `${parameterLocation}/style`,
+        });
+        parameterHasError = true;
+      } else {
+        const style = parameter.style;
+        if (parameterIn === "query" && style !== "form") {
+          diagnostics.push({
+            severity: settings.strict ? "error" : "warning",
+            code: "PARAMETER_UNSUPPORTED",
+            message: `Query parameter '${parameter.name}' specifies unsupported style '${style}'; only 'form' is supported for query parameters. Remove 'style' or use 'form'`,
+            location: `${parameterLocation}/style`,
+          });
+          if (settings.strict) parameterHasError = true;
+        } else if (
+          (parameterIn === "path" || parameterIn === "header") &&
+          style !== "simple"
+        ) {
+          diagnostics.push({
+            severity: settings.strict ? "error" : "warning",
+            code: "PARAMETER_UNSUPPORTED",
+            message: `${parameterIn === "path" ? "Path" : "Header"} parameter '${parameter.name}' specifies unsupported style '${style}'; only 'simple' is supported for ${parameterIn} parameters. Remove 'style' or use 'simple'`,
+            location: `${parameterLocation}/style`,
+          });
+          if (settings.strict) parameterHasError = true;
+        }
+      }
+    }
+
+    if (Object.hasOwn(parameter, "explode")) {
+      if (typeof parameter.explode !== "boolean") {
+        diagnostics.push({
+          severity: "error",
+          code: "PARAMETER_INVALID",
+          message: `Parameter '${parameter.name}' 'explode' must be a boolean`,
+          location: `${parameterLocation}/explode`,
+        });
+        parameterHasError = true;
+      } else {
+        const explode = parameter.explode;
+        if (parameterIn === "query" && !explode) {
+          diagnostics.push({
+            severity: settings.strict ? "error" : "warning",
+            code: "PARAMETER_UNSUPPORTED",
+            message: `Query parameter '${parameter.name}' specifies unsupported explode: false; only explode: true is supported for query parameters. Remove 'explode' or set to true`,
+            location: `${parameterLocation}/explode`,
+          });
+          if (settings.strict) parameterHasError = true;
+        } else if (
+          (parameterIn === "path" || parameterIn === "header") &&
+          explode
+        ) {
+          diagnostics.push({
+            severity: settings.strict ? "error" : "warning",
+            code: "PARAMETER_UNSUPPORTED",
+            message: `${parameterIn === "path" ? "Path" : "Header"} parameter '${parameter.name}' specifies unsupported explode: true; only explode: false is supported for ${parameterIn} parameters. Remove 'explode' or set to false`,
+            location: `${parameterLocation}/explode`,
+          });
+          if (settings.strict) parameterHasError = true;
+        }
+      }
+    }
+
+    if (Object.hasOwn(parameter, "allowReserved")) {
+      if (typeof parameter.allowReserved !== "boolean") {
+        diagnostics.push({
+          severity: "error",
+          code: "PARAMETER_INVALID",
+          message: `Parameter '${parameter.name}' 'allowReserved' must be a boolean`,
+          location: `${parameterLocation}/allowReserved`,
+        });
+        parameterHasError = true;
+      } else if (parameterIn !== "query") {
+        diagnostics.push({
+          severity: settings.strict ? "error" : "warning",
+          code: "PARAMETER_INVALID",
+          message: `Parameter '${parameter.name}' in ${parameterIn} cannot specify 'allowReserved'; allowReserved is only valid for query parameters. Remove 'allowReserved'`,
+          location: `${parameterLocation}/allowReserved`,
+        });
+        if (settings.strict) parameterHasError = true;
+      } else if (parameter.allowReserved) {
+        diagnostics.push({
+          severity: settings.strict ? "error" : "warning",
+          code: "PARAMETER_UNSUPPORTED",
+          message: `Query parameter '${parameter.name}' specifies unsupported allowReserved: true; reserved characters are always percent-encoded. Remove 'allowReserved' or set to false`,
+          location: `${parameterLocation}/allowReserved`,
+        });
+        if (settings.strict) parameterHasError = true;
+      }
+    }
+
+    if (Object.hasOwn(parameter, "allowEmptyValue")) {
+      if (typeof parameter.allowEmptyValue !== "boolean") {
+        diagnostics.push({
+          severity: "error",
+          code: "PARAMETER_INVALID",
+          message: `Parameter '${parameter.name}' 'allowEmptyValue' must be a boolean`,
+          location: `${parameterLocation}/allowEmptyValue`,
+        });
+        parameterHasError = true;
+      } else if (parameterIn !== "query") {
+        diagnostics.push({
+          severity: settings.strict ? "error" : "warning",
+          code: "PARAMETER_INVALID",
+          message: `Parameter '${parameter.name}' in ${parameterIn} cannot specify 'allowEmptyValue'; allowEmptyValue is only valid for query parameters. Remove 'allowEmptyValue'`,
+          location: `${parameterLocation}/allowEmptyValue`,
+        });
+        if (settings.strict) parameterHasError = true;
+      } else if (parameter.allowEmptyValue) {
+        diagnostics.push({
+          severity: settings.strict ? "error" : "warning",
+          code: "PARAMETER_UNSUPPORTED",
+          message: `Query parameter '${parameter.name}' specifies unsupported allowEmptyValue: true. Remove 'allowEmptyValue' or set to false`,
+          location: `${parameterLocation}/allowEmptyValue`,
+        });
+        if (settings.strict) parameterHasError = true;
+      }
+    }
+
+    if (Object.hasOwn(parameter, "deprecated")) {
+      if (typeof parameter.deprecated !== "boolean") {
+        diagnostics.push({
+          severity: "error",
+          code: "PARAMETER_INVALID",
+          message: `Parameter '${parameter.name}' 'deprecated' must be a boolean`,
+          location: `${parameterLocation}/deprecated`,
+        });
+        parameterHasError = true;
+      }
+    }
+
+    if (parameterHasError && settings.strict) return undefined;
 
     const schema = translateInputSchema(parameter.schema, {
       document,
@@ -1201,6 +1419,9 @@ function buildResult(arguments_: BuildResultArguments): CompileResult {
       tools: toolEntries,
     }),
   );
+  const warnings = arguments_.diagnostics.filter(
+    (diagnostic) => diagnostic.severity === "warning",
+  );
   const manifest: CompileManifest = {
     manifestVersion: 1,
     compilerVersion: COMPILER_VERSION,
@@ -1210,6 +1431,7 @@ function buildResult(arguments_: BuildResultArguments): CompileResult {
     toolsetHash,
     toolCount: toolEntries.length,
     tools: toolEntries,
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
   return {
     ok: !arguments_.diagnostics.some(
@@ -1241,6 +1463,9 @@ function hashTool(tool: CompiledOperation): string {
       responses: tool.responses,
       security: tool.security,
       authentication: tool.authentication,
+      ...(tool.warnings !== undefined && tool.warnings.length > 0
+        ? { warnings: tool.warnings }
+        : {}),
     }),
   );
 }

@@ -36,18 +36,35 @@ function sanitizeProjectName(input: string): string {
   return sanitized.length > 0 ? sanitized : "chainmcp-server";
 }
 
-function extractHostFromUrl(urlStr: string): string {
-  try {
-    const url = new URL(urlStr);
-    return normalizeAllowedHost(url.hostname);
-  } catch {
-    // If not a full URL, attempt normalizing directly
-    try {
-      return normalizeAllowedHost(urlStr);
-    } catch {
-      return "api.example.com";
-    }
+interface NormalizedBaseUrlResult {
+  baseUrl: string;
+  host: string;
+  allowInsecureHttp: boolean;
+}
+
+function normalizeInitBaseUrl(raw: string): NormalizedBaseUrlResult {
+  let urlStr = raw.trim();
+  if (!urlStr.startsWith("http://") && !urlStr.startsWith("https://")) {
+    urlStr = `https://${urlStr}`;
   }
+  let url: URL;
+  try {
+    url = new URL(urlStr);
+  } catch {
+    url = new URL("https://api.example.com");
+  }
+
+  let host: string;
+  try {
+    host = normalizeAllowedHost(url.hostname);
+  } catch {
+    host = "api.example.com";
+  }
+
+  const pathname = url.pathname.replace(/\/+$/, "");
+  const baseUrl = `${url.origin}${pathname}`;
+  const allowInsecureHttp = url.protocol === "http:";
+  return { baseUrl, host, allowInsecureHttp };
 }
 
 export async function initCommand(options: InitOptions): Promise<InitResult> {
@@ -260,9 +277,16 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     "chainmcp-server";
   const projectName = sanitizeProjectName(rawTitle);
 
-  const rawUrl =
+  let rawUrl =
     options.baseUrl ?? parsedRaw.servers?.[0]?.url ?? "https://api.example.com";
-  const allowedHost = extractHostFromUrl(rawUrl);
+  if (rawUrl.startsWith("/")) {
+    rawUrl = options.baseUrl ?? "https://api.example.com";
+  }
+  const {
+    baseUrl,
+    host: allowedHost,
+    allowInsecureHttp,
+  } = normalizeInitBaseUrl(rawUrl);
 
   // 4. Check for existing project
   const configPath = join(projectDir, "chainmcp.config.yaml");
@@ -305,6 +329,8 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     name: projectName,
     allowedHosts: [allowedHost],
     specRelativePath: "./spec/openapi.yaml",
+    baseUrl,
+    allowInsecureHttp,
   });
   await writeFile(configPath, configYaml, "utf8");
   createdFiles.push("chainmcp.config.yaml");

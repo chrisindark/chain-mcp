@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  BaseUrlSchema,
   buildExecutorOptions,
   buildRuntimeOptions,
   createAuthorizerFromConfig,
@@ -1062,6 +1063,181 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
         "https://app.example.com",
       ]);
       expect(config.server.cors.allowCredentials).toBe(true);
+    });
+  });
+
+  describe("BaseUrlSchema and upstream base URL handling (RM-06)", () => {
+    it("validates and normalizes valid absolute HTTP and HTTPS URLs with port and path", () => {
+      expect(BaseUrlSchema.parse("http://127.0.0.1:8080")).toBe(
+        "http://127.0.0.1:8080",
+      );
+      expect(BaseUrlSchema.parse("https://api.example.com:8443/v2")).toBe(
+        "https://api.example.com:8443/v2",
+      );
+      expect(BaseUrlSchema.parse("https://api.example.com/v1/subpath")).toBe(
+        "https://api.example.com/v1/subpath",
+      );
+    });
+
+    it("normalizes trailing slashes exactly once", () => {
+      expect(BaseUrlSchema.parse("https://api.example.com/")).toBe(
+        "https://api.example.com",
+      );
+      expect(BaseUrlSchema.parse("https://api.example.com///")).toBe(
+        "https://api.example.com",
+      );
+      expect(BaseUrlSchema.parse("https://api.example.com/v2/")).toBe(
+        "https://api.example.com/v2",
+      );
+      expect(BaseUrlSchema.parse("https://api.example.com/v2///")).toBe(
+        "https://api.example.com/v2",
+      );
+      expect(BaseUrlSchema.parse("http://127.0.0.1:8080/")).toBe(
+        "http://127.0.0.1:8080",
+      );
+    });
+
+    it("rejects URLs with embedded credentials", () => {
+      expect(() =>
+        BaseUrlSchema.parse("https://user:pass@api.example.com"),
+      ).toThrow(/credentials/);
+      expect(() => BaseUrlSchema.parse("https://user@api.example.com")).toThrow(
+        /credentials/,
+      );
+      expect(() =>
+        BaseUrlSchema.parse("https://:pass@api.example.com"),
+      ).toThrow(/credentials/);
+    });
+
+    it("rejects URLs with query parameters or fragments", () => {
+      expect(() =>
+        BaseUrlSchema.parse("https://api.example.com/v2?query=1"),
+      ).toThrow(/query parameters or fragments/);
+      expect(() =>
+        BaseUrlSchema.parse("https://api.example.com/v2#section"),
+      ).toThrow(/query parameters or fragments/);
+    });
+
+    it("rejects non-HTTP/HTTPS schemes and relative URLs", () => {
+      expect(() => BaseUrlSchema.parse("ftp://api.example.com")).toThrow(
+        /Only http: and https: are supported/,
+      );
+      expect(() => BaseUrlSchema.parse("/v2/pets")).toThrow(
+        /not a valid absolute URL/,
+      );
+      expect(() => BaseUrlSchema.parse("api.example.com/v2")).toThrow(
+        /not a valid absolute URL/,
+      );
+    });
+
+    it("auto-derives baseUrl host into security.allowedUpstreamHosts in ChainMcpConfigSchema", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test-server",
+        contract: {
+          source: "./spec/openapi.yaml",
+          baseUrl: "https://api.example.com/v2/",
+        },
+      });
+
+      expect(config.contract?.baseUrl).toBe("https://api.example.com/v2");
+      expect(config.security.allowedUpstreamHosts).toContain("api.example.com");
+    });
+
+    it("preserves explicit extra allowedUpstreamHosts when baseUrl host is auto-derived", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test-server",
+        contract: {
+          source: "./spec/openapi.yaml",
+          baseUrl: "https://api.example.com/v2",
+        },
+        security: {
+          allowedUpstreamHosts: ["auxiliary.example.com"],
+        },
+      });
+
+      expect(config.security.allowedUpstreamHosts).toEqual([
+        "api.example.com",
+        "auxiliary.example.com",
+      ]);
+    });
+
+    it("parses security.allowInsecureHttp", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test-server",
+        contract: {
+          source: "./spec/openapi.yaml",
+          baseUrl: "http://127.0.0.1:8080",
+        },
+        security: {
+          allowInsecureHttp: true,
+        },
+      });
+
+      expect(config.security.allowInsecureHttp).toBe(true);
+      expect(config.contract?.baseUrl).toBe("http://127.0.0.1:8080");
+      expect(config.security.allowedUpstreamHosts).toContain("127.0.0.1");
+    });
+
+    it("buildExecutorOptions resolves baseUrl from config.contract.baseUrl", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test-server",
+        contract: {
+          source: "./spec/openapi.yaml",
+          baseUrl: "https://api.example.com/v2",
+        },
+      });
+
+      const options = buildExecutorOptions(config);
+      expect(options.baseUrl).toBe("https://api.example.com/v2");
+      expect(options.allowedHosts).toContain("api.example.com");
+    });
+
+    it("buildExecutorOptions propagates security.allowInsecureHttp", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test-server",
+        contract: {
+          source: "./spec/openapi.yaml",
+          baseUrl: "http://127.0.0.1:8080",
+        },
+        security: {
+          allowInsecureHttp: true,
+        },
+      });
+
+      const options = buildExecutorOptions(config);
+      expect(options.baseUrl).toBe("http://127.0.0.1:8080");
+      expect(options.allowInsecureHttp).toBe(true);
+      expect(options.allowedHosts).toContain("127.0.0.1");
+    });
+
+    it("auto-derives destination.allowedHosts from baseUrl in GatewayContractDestinationSchema", () => {
+      const gatewayConfig = parseGatewayConfig({
+        version: 1,
+        name: "gateway",
+        contracts: [
+          {
+            name: "service-a",
+            tenantId: "tenant-1",
+            spec: "https://example.com/openapi.json",
+            destination: {
+              baseUrl: "https://internal.service.local:9000/api",
+            },
+          },
+        ],
+      });
+
+      const contract = gatewayConfig.contracts[0];
+      expect(contract?.destination.baseUrl).toBe(
+        "https://internal.service.local:9000/api",
+      );
+      expect(contract?.destination.allowedHosts).toEqual([
+        "internal.service.local",
+      ]);
     });
   });
 });

@@ -4,6 +4,7 @@ import { parse as parseYaml } from "yaml";
 
 import { compileOpenApi, type CompileDiagnostic } from "@chainmcp/compiler";
 import { parseConfig, type ChainMcpConfig } from "@chainmcp/config";
+import { normalizeAllowedHost } from "@chainmcp/executor";
 
 import type { ValidateOptions, ValidateResult } from "../types.js";
 
@@ -43,10 +44,15 @@ export async function validateCommand(
   }
 
   let config: ChainMcpConfig | undefined;
+  let rawParsedConfig: Record<string, unknown> | undefined;
   if (configPath && (await fileExists(configPath))) {
     try {
       const rawText = await readFile(configPath, "utf8");
       const parsed = parseYaml(rawText);
+      rawParsedConfig =
+        typeof parsed === "object" && parsed !== null
+          ? (parsed as Record<string, unknown>)
+          : undefined;
       config = parseConfig(parsed);
     } catch (err) {
       return {
@@ -164,8 +170,68 @@ export async function validateCommand(
 
   const diagnostics: CompileDiagnostic[] = [...compiled.diagnostics];
 
-  // 4. Validate security configuration if config is present
+  // 4. Validate security and contract configuration if config is present
   if (config) {
+    if (config.contract?.baseUrl) {
+      let parsedBase: URL | undefined;
+      try {
+        parsedBase = new URL(config.contract.baseUrl);
+      } catch {
+        // BaseUrlSchema parse already caught invalid URLs
+      }
+
+      if (parsedBase) {
+        let baseHost: string;
+        try {
+          baseHost = normalizeAllowedHost(parsedBase.hostname);
+        } catch {
+          baseHost = parsedBase.hostname;
+        }
+
+        const rawSecurity = rawParsedConfig?.security as
+          { allowedUpstreamHosts?: unknown[] } | undefined;
+        const rawHosts = Array.isArray(rawSecurity?.allowedUpstreamHosts)
+          ? rawSecurity.allowedUpstreamHosts.map((h) => {
+              if (typeof h === "string") {
+                try {
+                  return normalizeAllowedHost(h);
+                } catch {
+                  return h;
+                }
+              }
+              return "";
+            })
+          : [];
+
+        if (!rawHosts.includes(baseHost)) {
+          diagnostics.push({
+            severity: "warning",
+            code: "SECURITY_INVALID",
+            message: `contract.baseUrl host '${baseHost}' was not declared in security.allowedUpstreamHosts; automatically added to allowlist.`,
+          });
+        }
+
+        if (
+          parsedBase.protocol === "http:" &&
+          !config.security.allowInsecureHttp
+        ) {
+          diagnostics.push({
+            severity: "error",
+            code: "SECURITY_INVALID",
+            message:
+              "contract.baseUrl uses insecure HTTP ('http://'). Set security.allowInsecureHttp: true to permit insecure upstream traffic.",
+          });
+        }
+      }
+    } else if (config.contract?.source) {
+      diagnostics.push({
+        severity: "warning",
+        code: "CONFIG_DEPRECATED",
+        message:
+          "contract.baseUrl is not configured. Falling back to allowedUpstreamHosts[0]. Configure contract.baseUrl to explicitly define the upstream target scheme, port, and path.",
+      });
+    }
+
     if (config.security.allowedUpstreamHosts.length === 0) {
       diagnostics.push({
         severity: "warning",
