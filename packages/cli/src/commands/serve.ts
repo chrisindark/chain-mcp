@@ -98,6 +98,12 @@ export async function serveCommand(
     const host = options.host ?? config.server.host ?? "127.0.0.1";
     const path = options.path ?? config.server.path ?? "/mcp";
     const verifier = createInboundVerifier(config.auth.inbound);
+    const requireInboundAuth =
+      config.security.requireInboundAuth ||
+      config.auth.inbound.requireInboundAuth;
+    const allowUnauthenticatedHttp =
+      options.allowUnauthenticatedHttp ??
+      config.security.allowUnauthenticatedHttp;
 
     const serverHandle = await serveHttp(
       runtime,
@@ -125,7 +131,23 @@ export async function serveCommand(
         host,
         path,
         verifier,
-        requireAuth: config.auth.inbound.requireInboundAuth,
+        requireAuth: requireInboundAuth,
+        requireInboundAuth,
+        allowUnauthenticatedHttp,
+        authorizer: requireInboundAuth
+          ? config.auth.inbound.authorizer
+          : "none",
+        authorizerType: requireInboundAuth
+          ? config.auth.inbound.authorizer
+          : "none",
+        toolCount: totalToolCount,
+        maxRequestBytes: config.server.maxRequestBytes,
+        allowedHosts: config.server.allowedHosts,
+        allowedOrigins: config.server.allowedOrigins,
+        cors: config.server.cors,
+        enableDnsRebindingProtection:
+          config.server.enableDnsRebindingProtection,
+        requestTimeoutMs: config.server.requestTimeoutMs,
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
       },
     );

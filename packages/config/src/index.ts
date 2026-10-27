@@ -352,6 +352,32 @@ export const ProjectionConfigSchema = z
 
 export type ProjectionConfig = z.infer<typeof ProjectionConfigSchema>;
 
+export const CorsConfigObjectSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    allowedOrigins: z.array(z.string().min(1)).default([]),
+    allowedHeaders: z.array(z.string().min(1)).default([]),
+    allowCredentials: z.boolean().default(false),
+    maxAgeSeconds: z.number().int().nonnegative().default(600),
+  })
+  .strict()
+  .prefault({})
+  .refine(
+    (data) => !(data.allowedOrigins.includes("*") && data.allowCredentials),
+    {
+      message:
+        "Wildcard origin ('*') cannot be used when allowCredentials is true",
+      path: ["allowedOrigins"],
+    },
+  );
+
+export const CorsConfigSchema = z.preprocess(
+  (val) => (typeof val === "boolean" ? { enabled: val } : (val ?? {})),
+  CorsConfigObjectSchema,
+);
+
+export type CorsConfig = z.infer<typeof CorsConfigObjectSchema>;
+
 export const ServerConfigSchema = z
   .object({
     transport: z.enum(["stdio", "http"]).default("stdio"),
@@ -365,6 +391,16 @@ export const ServerConfigSchema = z
       .positive()
       .max(100_000_000)
       .default(1_000_000),
+    maxRequestBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(100_000_000)
+      .default(1_048_576),
+    allowedHosts: z.array(z.string().min(1)).default([]),
+    allowedOrigins: z.array(z.string().min(1)).default([]),
+    enableDnsRebindingProtection: z.boolean().default(false),
+    cors: CorsConfigSchema,
   })
   .strict()
   .prefault({});
@@ -374,6 +410,7 @@ export type ServerConfig = z.infer<typeof ServerConfigSchema>;
 export const SecurityConfigSchema = z
   .object({
     requireInboundAuth: z.boolean().default(false),
+    allowUnauthenticatedHttp: z.boolean().default(false),
     allowedUpstreamHosts: z.array(AllowedHostSchema).default([]),
     redactHeaders: z
       .array(z.string().min(1))

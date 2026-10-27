@@ -180,6 +180,39 @@ security:
 - **SSRF Defense:** All DNS resolutions are pinned. Resolved IP addresses in private (RFC 1918), loopback (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`), multicast, documentation, or cloud metadata ranges (`169.254.169.254`) fail closed with `SSRF_BLOCKED`.
 - **Redirect Revalidation:** Redirects are only followed if they remain on the exact same host, protocol, and port.
 
+### HTTP Deployment & Reverse-Proxy Guidance
+
+When deploying servers or the dynamic gateway over Streamable HTTP (`--transport http`), enforce limits at both the reverse proxy (e.g. Nginx, Envoy, Cloudflare) and the application layer:
+
+1. **Request Body Size Limits (`server.maxRequestBytes`):**
+   - ChainMcp enforces a default 1 MiB (`1,048,576` bytes) hard cap on incoming request bodies.
+   - Declared `Content-Length` headers exceeding the cap are rejected with `413 Payload Too Large` before buffering.
+   - Chunked streaming bodies exceeding the cap are aborted mid-stream with `413` without unbounded memory buffering.
+   - Align your reverse proxy (e.g., `client_max_body_size 1m;` in Nginx) to match or stay below `server.maxRequestBytes`.
+
+2. **Host and DNS Rebinding Protection (`server.allowedHosts`, `server.enableDnsRebindingProtection`):**
+   - Host headers are strictly validated. Missing or malformed Host headers are rejected with `400 Bad Request`.
+   - When `enableDnsRebindingProtection` is enabled (or `allowedHosts` is configured), Host headers not matching the allowlist are rejected with `403 Forbidden` without echoing request data.
+   - Ensure the reverse proxy forwards the client's canonical host (`proxy_set_header Host $host;`).
+
+3. **CORS and Browser-Client Origin Verification (`server.cors`, `server.allowedOrigins`):**
+   - When serving web or browser-based MCP clients (such as web chat UIs or browser extensions), configure `server.cors` with an explicit origin allowlist (`allowedOrigins`).
+   - Arbitrary origin reflection is strictly prevented: only exact allowlist matches or `"null"` (if explicitly declared) are reflected in `Access-Control-Allow-Origin`.
+   - Disallowed origins receive `403 Forbidden` on preflight `OPTIONS` requests, and do not receive `Access-Control-Allow-Origin` headers on standard requests.
+   - Wildcard origin (`"*"`) is never permitted when `allowCredentials: true` is configured; this dangerous combination is rejected at config parse time and server startup.
+   - `Access-Control-Allow-Headers` is dynamically computed from configured inbound verifier headers (such as custom `ApiKeyVerifierOptions.headerName`), standard defaults, and custom `allowedHeaders`.
+   - `Vary: Origin` is always attached to HTTP responses whenever CORS is enabled.
+   - In production and non-loopback bindings, CORS defaults to disabled (`enabled: false`) unless explicitly configured. Loopback bindings (`127.0.0.1`) permit CORS for development with wildcard origin and emit a prominent security warning.
+
+4. **Timeouts (`server.requestTimeoutMs`):**
+   - Default request timeout is 15,000 ms (15s). Ensure reverse proxy timeouts (`proxy_read_timeout`, `proxy_send_timeout`) are aligned to prevent hung connections.
+
+5. **Inbound Authentication & Fail-Closed Non-Loopback Binds (`security.requireInboundAuth`, `security.allowUnauthenticatedHttp`):**
+   - ChainMcp strictly refuses to bind HTTP servers or dynamic gateways to non-loopback interfaces (e.g. `0.0.0.0`, LAN/public IPs) without authentication, failing fast at startup unless `security.allowUnauthenticatedHttp: true` (or `--allow-unauthenticated-http`) is explicitly configured.
+   - Loopback binds (`127.0.0.1`, `localhost`, `::1`) permit unauthenticated development access but emit a prominent startup warning naming the host, port, exposed tool count, and config keys.
+   - When `security.requireInboundAuth: true` is configured, an inbound verifier (`auth.inbound.tokens`, `apiKeys`, or `jwt`) must be present; starting with auth required but no verifier fails fast at startup.
+   - When inbound authorizer is `scope`, an inbound verifier is mandatory; starting with a scope authorizer without a verifier fails fast at startup.
+
 ### Upstream Credentials
 
 Never hardcode credentials or secrets in `chainmcp.config.yaml` or repository files. Use:

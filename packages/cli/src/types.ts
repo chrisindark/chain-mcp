@@ -119,6 +119,7 @@ export interface ServeOptions {
   path?: string | undefined;
   baseUrl?: string | undefined;
   tenantId?: string | undefined;
+  allowUnauthenticatedHttp?: boolean | undefined;
   cwd?: string | undefined;
   stdin?: Readable | undefined;
   stdout?: Writable | undefined;
@@ -140,6 +141,7 @@ export interface GatewayServeOptions {
   port?: number | undefined;
   host?: string | undefined;
   path?: string | undefined;
+  allowUnauthenticatedHttp?: boolean | undefined;
   cwd?: string | undefined;
   stdin?: Readable | undefined;
   stdout?: Writable | undefined;

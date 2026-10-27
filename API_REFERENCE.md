@@ -1524,8 +1524,52 @@ transport closure; observer exceptions are isolated from teardown.
 stdin EOF, an optional `AbortSignal`, SIGINT, or SIGTERM. Signal handlers are
 removed at closure; SIGINT and SIGTERM set conventional exit codes 130 and 143.
 For embedded use and tests, stdin and stdout streams can be injected and
-process signal handling can be disabled. The server package does not yet
-implement remote transports or HTTP authentication.
+process signal handling can be disabled.
+
+`serveHttp(runtime, options, httpOptions)` starts an HTTP server supporting modern
+Streamable HTTP and SSE transports for Model Context Protocol clients.
+
+`HttpServeOptions`:
+
+- `port` (`number`, optional; default `3333`): Port to listen on (use `0` for ephemeral port assignment).
+- `host` (`string`, optional; default `"127.0.0.1"`): Host interface to bind to.
+- `path` (`string`, optional; default `"/mcp"`): Base path for the MCP endpoint.
+- `signal` (`AbortSignal`, optional): Cancellation signal to trigger graceful server shutdown.
+- `verifier` (`InboundAuthVerifier`, optional): Inbound verifier to parse and validate caller identity.
+- `requireAuth` / `requireInboundAuth` (`boolean`, optional; default `false`): Whether requests must present valid inbound credentials. If `true` and no verifier is provided, startup fails fast.
+- `allowUnauthenticatedHttp` (`boolean`, optional; default `false`): Explicitly allows unauthenticated HTTP binding on non-loopback network interfaces. When `false` (the default), binding to a non-loopback host (e.g. `0.0.0.0`, external IPs) without an authenticated verifier fails fast at startup.
+- `authorizer` / `authorizerType` (`Authorizer | "scope" | "none"`, optional): Declares the inbound authorizer. If set to `"scope"` without a configured inbound verifier, startup fails fast.
+- `toolCount` (`number`, optional): Total count of registered tools reported in unauthenticated startup warnings.
+- `warn` (`(message: string, meta?: Record<string, unknown>) => void`, optional): Custom warning handler invoked when starting unauthenticated.
+- `info` (`(message: string, meta?: Record<string, unknown>) => void`, optional): Custom info handler invoked to log resolved security posture at startup.
+- `cors` (`boolean | HttpCorsOptions`, optional): Whether to enable CORS headers and preflight handling, or explicit CORS options. Defaults to `true` (with wildcard origin warning) on loopback development binds, and defaults to `false` on non-loopback binds unless explicitly enabled or configured with allowed origins.
+- `maxRequestBytes` (`number`, optional; default `1048576` = 1 MiB): Hard cap in bytes on incoming request bodies, enforced before buffering and during chunked streaming (rejects with 413 Payload Too Large).
+- `allowedHosts` (`string[]`, optional): Allowed Host header hostnames for DNS rebinding protection. Malformed or missing Host headers are rejected with 400 Bad Request; unlisted hosts are rejected with 403 Forbidden.
+- `allowedOrigins` (`string[]`, optional): Allowed Origin header hostnames for browser and DNS rebinding protection. Unlisted origins are rejected with 403 Forbidden when protection is enabled.
+- `enableDnsRebindingProtection` (`boolean`, optional; default `false`): Enables strict Host and Origin allowlist validation.
+- `requestTimeoutMs` (`number`, optional; default `15000`): Request timeout in milliseconds applied to the HTTP server and incoming body reads.
+- `handleProcessSignals` (`boolean`, optional; default `true`): Installs SIGINT/SIGTERM handlers and sets standard process exit codes.
+
+`HttpCorsOptions`:
+
+- `enabled` (`boolean`, optional): Explicitly toggles CORS headers and preflight handling.
+- `allowedOrigins` (`string[]`, optional): Exact origins permitted to make cross-origin requests. Wildcard `"*"` is supported for uncredentialed access, but rejected at startup if combined with `allowCredentials: true`. Sandboxed `"null"` origin is rejected unless explicitly listed in `allowedOrigins`.
+- `allowedHeaders` (`string[]`, optional): Extra headers permitted in cross-origin requests, appended to standard defaults (`Content-Type`, `Authorization`, `X-API-Key`, `Accept`, `mcp-session-id`, `last-event-id`) and inbound verifier header names (`verifier.headerNames`).
+- `allowCredentials` (`boolean`, optional; default `false`): Enables `Access-Control-Allow-Credentials: true` when origin matches. Never permitted with wildcard origin `"*"`.
+- `maxAgeSeconds` (`number`, optional; default `600`): Preflight cache duration in seconds (`Access-Control-Max-Age`).
+
+`InboundAuthVerifier`:
+
+```typescript
+export interface InboundAuthVerifier {
+  readonly headerNames?: readonly string[] | undefined;
+  verify(
+    request: InboundAuthRequest,
+  ): Promise<InboundAuthResult | undefined> | InboundAuthResult | undefined;
+}
+```
+
+Built-in verifiers (`createBearerTokenVerifier`, `createApiKeyVerifier`, `createJwtVerifier`, `createCompositeVerifier`) expose their inspected header names (`headerNames`) so CORS `Access-Control-Allow-Headers` can be dynamically computed without drift.
 
 ## `@chainmcp/cli`
 
@@ -1539,7 +1583,8 @@ Exported as the `chainmcp` executable (`dist/bin.js`).
 chainmcp init [--spec <path>] [--blank] [--output <dir>] [--name <name>] [--base-url <url>] [--force]
 chainmcp validate [--config <path>] [--spec <path>] [--strict]
 chainmcp build [--config <path>] [--spec <path>] [--out-dir <dir>] [--check]
-chainmcp serve [--config <path>] [--spec <path>] [--base-url <url>] [--tenant <id>]
+chainmcp serve [--config <path>] [--spec <path>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http] [--base-url <url>] [--tenant <id>]
+chainmcp gateway serve [--config <path>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http]
 chainmcp dev [--config <path>] [--spec <path>] [--base-url <url>] [--tenant <id>]
 chainmcp export [--config <path>] [--spec <path>] [--output <dir>] [--force] [--check]
 ```

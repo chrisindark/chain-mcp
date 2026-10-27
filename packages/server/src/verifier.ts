@@ -14,6 +14,7 @@ export interface InboundAuthRequest {
 }
 
 export interface InboundAuthVerifier {
+  readonly headerNames?: readonly string[] | undefined;
   verify(
     request: InboundAuthRequest,
   ): Promise<InboundAuthResult | undefined> | InboundAuthResult | undefined;
@@ -36,6 +37,48 @@ export interface BearerTokenVerifierOptions {
 }
 
 /**
+ * Validates that a candidate principal has the required non-empty tenant and principal
+ * identifiers, and optional string array scopes. Returns undefined if validation fails.
+ */
+function validatePrincipal(
+  principal: unknown,
+): InboundPrincipalConfig | undefined {
+  if (!principal || typeof principal !== "object" || Array.isArray(principal)) {
+    return undefined;
+  }
+  const candidate = principal as Record<string, unknown>;
+  if (
+    typeof candidate.tenantId !== "string" ||
+    candidate.tenantId.trim().length === 0
+  ) {
+    return undefined;
+  }
+  if (
+    typeof candidate.principalId !== "string" ||
+    candidate.principalId.trim().length === 0
+  ) {
+    return undefined;
+  }
+  let scopes: string[] | undefined;
+  if (candidate.scopes !== undefined) {
+    if (!Array.isArray(candidate.scopes)) {
+      return undefined;
+    }
+    for (const scope of candidate.scopes) {
+      if (typeof scope !== "string") {
+        return undefined;
+      }
+    }
+    scopes = candidate.scopes as string[];
+  }
+  return {
+    tenantId: candidate.tenantId,
+    principalId: candidate.principalId,
+    scopes,
+  };
+}
+
+/**
  * Creates an inbound verifier that parses `Authorization: Bearer <token>`
  * and maps the token to a ToolContext and AuthInfo.
  */
@@ -43,21 +86,23 @@ export function createBearerTokenVerifier(
   options: BearerTokenVerifierOptions,
 ): InboundAuthVerifier {
   return {
+    headerNames: ["Authorization"],
     async verify(request) {
       const authHeader = getHeader(request.headers, "authorization");
-      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      if (typeof authHeader !== "string" || !authHeader.startsWith("Bearer ")) {
         return undefined;
       }
       const token = authHeader.slice(7).trim();
       if (!token) return undefined;
 
-      let matched: InboundPrincipalConfig | undefined;
-      if (options.tokens && token in options.tokens) {
-        matched = options.tokens[token];
+      let matchedRaw: unknown;
+      if (options.tokens && Object.hasOwn(options.tokens, token)) {
+        matchedRaw = options.tokens[token];
       } else if (options.verifyToken) {
-        matched = await options.verifyToken(token);
+        matchedRaw = await options.verifyToken(token);
       }
 
+      const matched = validatePrincipal(matchedRaw);
       if (!matched) return undefined;
 
       const scopes = matched.scopes ?? [];
@@ -103,23 +148,29 @@ export interface ApiKeyVerifierOptions {
 export function createApiKeyVerifier(
   options: ApiKeyVerifierOptions,
 ): InboundAuthVerifier {
-  const headerName = (options.headerName ?? "x-api-key").toLowerCase();
+  const customHeader = options.headerName ?? "X-API-Key";
+  const headerName = customHeader.toLowerCase();
 
   return {
+    headerNames: [customHeader],
     async verify(request) {
       const apiKey = getHeader(request.headers, headerName);
-      if (!apiKey || !apiKey.trim()) {
+      if (typeof apiKey !== "string") {
         return undefined;
       }
       const key = apiKey.trim();
-
-      let matched: InboundPrincipalConfig | undefined;
-      if (options.keys && key in options.keys) {
-        matched = options.keys[key];
-      } else if (options.verifyKey) {
-        matched = await options.verifyKey(key);
+      if (!key) {
+        return undefined;
       }
 
+      let matchedRaw: unknown;
+      if (options.keys && Object.hasOwn(options.keys, key)) {
+        matchedRaw = options.keys[key];
+      } else if (options.verifyKey) {
+        matchedRaw = await options.verifyKey(key);
+      }
+
+      const matched = validatePrincipal(matchedRaw);
       if (!matched) return undefined;
 
       const scopes = matched.scopes ?? [];
@@ -171,6 +222,7 @@ export function createJwtVerifier(
   const tolerance = options.clockToleranceSeconds ?? 30;
 
   return {
+    headerNames: ["Authorization"],
     async verify(request) {
       const authHeader = getHeader(request.headers, "authorization");
       if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -247,7 +299,7 @@ export function createJwtVerifier(
 
       let principal: InboundPrincipalConfig | undefined;
       if (options.mapClaims) {
-        principal = await options.mapClaims(payload);
+        principal = validatePrincipal(await options.mapClaims(payload));
       } else {
         const tenantId =
           typeof payload.tenantId === "string"
@@ -274,7 +326,7 @@ export function createJwtVerifier(
           scopes = payload.scope.split(" ").filter(Boolean);
         }
 
-        principal = { tenantId, principalId, scopes };
+        principal = validatePrincipal({ tenantId, principalId, scopes });
       }
 
       if (!principal) return undefined;
@@ -310,7 +362,19 @@ export function createJwtVerifier(
 export function createCompositeVerifier(
   verifiers: InboundAuthVerifier[],
 ): InboundAuthVerifier {
+  const allHeaders = verifiers.flatMap((v) => v.headerNames ?? []);
+  const seen = new Set<string>();
+  const headerNames: string[] = [];
+  for (const h of allHeaders) {
+    const trimmed = h.trim();
+    if (trimmed && !seen.has(trimmed.toLowerCase())) {
+      seen.add(trimmed.toLowerCase());
+      headerNames.push(trimmed);
+    }
+  }
+
   return {
+    headerNames,
     async verify(request) {
       for (const verifier of verifiers) {
         const result = await verifier.verify(request);

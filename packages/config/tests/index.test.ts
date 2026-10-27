@@ -52,9 +52,20 @@ describe("configuration schema", () => {
         port: 3333,
         requestTimeoutMs: 15_000,
         maxResponseBytes: 1_000_000,
+        maxRequestBytes: 1_048_576,
+        allowedHosts: [],
+        allowedOrigins: [],
+        enableDnsRebindingProtection: false,
+        cors: {
+          allowedOrigins: [],
+          allowedHeaders: [],
+          allowCredentials: false,
+          maxAgeSeconds: 600,
+        },
       },
       security: {
         requireInboundAuth: false,
+        allowUnauthenticatedHttp: false,
         allowedUpstreamHosts: [],
         redactHeaders: ["authorization", "cookie", "x-api-key"],
       },
@@ -96,9 +107,20 @@ describe("configuration schema", () => {
         port: 3333,
         requestTimeoutMs: 15_000,
         maxResponseBytes: 1_000_000,
+        maxRequestBytes: 1_048_576,
+        allowedHosts: [],
+        allowedOrigins: [],
+        enableDnsRebindingProtection: false,
+        cors: {
+          allowedOrigins: [],
+          allowedHeaders: [],
+          allowCredentials: false,
+          maxAgeSeconds: 600,
+        },
       },
       security: {
         requireInboundAuth: false,
+        allowUnauthenticatedHttp: false,
         allowedUpstreamHosts: [],
         redactHeaders: ["authorization", "cookie", "x-api-key"],
       },
@@ -928,6 +950,118 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
       });
 
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe("Server CORS configuration", () => {
+    it("parses valid CORS object configuration", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test-server",
+        server: {
+          cors: {
+            enabled: true,
+            allowedOrigins: [
+              "https://app.example.com",
+              "https://admin.example.com",
+            ],
+            allowedHeaders: ["X-Tenant-Key", "X-Trace-Id"],
+            allowCredentials: true,
+            maxAgeSeconds: 3600,
+          },
+        },
+      });
+
+      expect(config.server.cors).toEqual({
+        enabled: true,
+        allowedOrigins: [
+          "https://app.example.com",
+          "https://admin.example.com",
+        ],
+        allowedHeaders: ["X-Tenant-Key", "X-Trace-Id"],
+        allowCredentials: true,
+        maxAgeSeconds: 3600,
+      });
+    });
+
+    it("parses shorthand cors: false and cors: true", () => {
+      const disabled = parseConfig({
+        version: 1,
+        name: "test-server",
+        server: { cors: false },
+      });
+      expect(disabled.server.cors).toEqual({
+        enabled: false,
+        allowedOrigins: [],
+        allowedHeaders: [],
+        allowCredentials: false,
+        maxAgeSeconds: 600,
+      });
+
+      const enabled = parseConfig({
+        version: 1,
+        name: "test-server",
+        server: { cors: true },
+      });
+      expect(enabled.server.cors).toEqual({
+        enabled: true,
+        allowedOrigins: [],
+        allowedHeaders: [],
+        allowCredentials: false,
+        maxAgeSeconds: 600,
+      });
+    });
+
+    it("allows wildcard origin '*' when allowCredentials is false", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test-server",
+        server: {
+          cors: {
+            allowedOrigins: ["*"],
+            allowCredentials: false,
+          },
+        },
+      });
+      expect(config.server.cors.allowedOrigins).toEqual(["*"]);
+      expect(config.server.cors.allowCredentials).toBe(false);
+    });
+
+    it("rejects wildcard origin '*' when allowCredentials is true", () => {
+      const result = safeParseConfig({
+        version: 1,
+        name: "test-server",
+        server: {
+          cors: {
+            allowedOrigins: ["*"],
+            allowCredentials: true,
+          },
+        },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const errorMsg = result.error.issues[0]?.message;
+        expect(errorMsg).toContain(
+          "Wildcard origin ('*') cannot be used when allowCredentials is true",
+        );
+      }
+    });
+
+    it("allows specific origin when allowCredentials is true", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test-server",
+        server: {
+          cors: {
+            allowedOrigins: ["https://app.example.com"],
+            allowCredentials: true,
+          },
+        },
+      });
+      expect(config.server.cors.allowedOrigins).toEqual([
+        "https://app.example.com",
+      ]);
+      expect(config.server.cors.allowCredentials).toBe(true);
     });
   });
 });

@@ -8,6 +8,7 @@ server:
   requestTimeoutMs: 15000
   maxResponseBytes: 1000000
 security:
+  allowUnauthenticatedHttp: true
   allowedUpstreamHosts:
     - api.customers.internal
     - api.orders.internal
