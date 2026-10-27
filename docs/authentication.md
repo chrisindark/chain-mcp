@@ -25,6 +25,30 @@ const runtime = new InMemoryToolRuntime({
 
 `OperationScopeAuthorizer` verifies that every scope declared in `tool.operation.requiredScopes` is present in `context.principal.scopes`. In multi-tenant runtimes, tenancy boundaries are enforced structurally before the authorizer is called.
 
+### Inbound Verifiers and Principal Shape
+
+Inbound HTTP transports authenticate incoming MCP requests using verifiers (`createBearerTokenVerifier`, `createApiKeyVerifier`, `createJwtVerifier`).
+
+Every authenticated caller is mapped to an `InboundPrincipalConfig`:
+
+- `tenantId` (`string`, required): Non-empty tenant identifier.
+- `principalId` (`string`, required): Non-empty caller identity.
+- `scopes` (`string[]`, optional): Declared permissions granted to this principal (defaults to `[]`).
+
+```ts
+export interface InboundPrincipalConfig {
+  tenantId: string;
+  principalId: string;
+  scopes?: string[] | undefined;
+}
+```
+
+#### Verification and Lookup Invariants
+
+1. **Own-property credential lookup:** Verifier credential maps (`tokens` and `keys`) evaluate credentials using own-property semantics (`Object.hasOwn`). Prototype properties (such as `constructor`, `__proto__`, `toString`, `valueOf`, or `hasOwnProperty`) are never matched.
+2. **Fail-closed principal validation:** Configured token/key records, custom verification callbacks (`verifyToken`, `verifyKey`), and JWT claim mappers (`mapClaims`) are strictly validated against `InboundPrincipalConfig`. If a candidate principal is nullish, non-object, lacks a non-empty `tenantId` or `principalId`, or contains invalid scopes, verification returns `undefined` (unauthenticated). The runtime never fabricates an empty principal.
+3. **Exact credential lookup:** Token and API key lookups are exact matches; credentials are not case-folded. Empty or whitespace-only credentials reject before lookup.
+
 ## 3. Encrypted Secret Storage
 
 The `@chainmcp/auth` package provides an authenticated secret store abstraction:

@@ -62,6 +62,7 @@ Command options:
     --port <number>      HTTP port when transport is http (default: 3333)
     --host <string>      HTTP host when transport is http (default: 127.0.0.1)
     --path <string>      HTTP base endpoint path (default: /mcp)
+    --allow-unauthenticated-http Explicitly allow unauthenticated HTTP on non-loopback hosts
     --base-url <url>     Override upstream base URL
     --tenant <id>        Tenant identifier for context (default: default)
 
@@ -77,6 +78,7 @@ Command options:
     --port <number>      HTTP port when transport is http (default: 3333)
     --host <string>      HTTP host when transport is http (default: 127.0.0.1)
     --path <string>      HTTP base endpoint path (default: /mcp)
+    --allow-unauthenticated-http Explicitly allow unauthenticated HTTP on non-loopback hosts
 
   export:
     --config <path>      Path to chainmcp.config.yaml
@@ -119,6 +121,7 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       force: { type: "boolean", default: false },
       strict: { type: "boolean", default: true },
       check: { type: "boolean", default: false },
+      "allow-unauthenticated-http": { type: "boolean", default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -329,6 +332,13 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
           ...(asString(values.path) !== undefined
             ? { path: asString(values.path) }
             : {}),
+          ...(asBoolean(values["allow-unauthenticated-http"]) !== undefined
+            ? {
+                allowUnauthenticatedHttp: asBoolean(
+                  values["allow-unauthenticated-http"],
+                ),
+              }
+            : {}),
           ...(asString(values["base-url"]) !== undefined
             ? { baseUrl: asString(values["base-url"]) }
             : {}),
@@ -415,6 +425,13 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
               : {}),
             ...(asString(values.path) !== undefined
               ? { path: asString(values.path) }
+              : {}),
+            ...(asBoolean(values["allow-unauthenticated-http"]) !== undefined
+              ? {
+                  allowUnauthenticatedHttp: asBoolean(
+                    values["allow-unauthenticated-http"],
+                  ),
+                }
               : {}),
             ...(io?.stdin !== undefined ? { stdin: io.stdin } : {}),
             ...(io?.stdoutStream !== undefined

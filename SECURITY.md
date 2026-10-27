@@ -39,6 +39,9 @@ The implementation must address:
 - Apply connect, read, and total timeouts.
 - Enforce request and response byte limits.
 - Avoid forwarding inbound credentials to upstream hosts without explicit policy.
+- Enforce hard request body size bounds (`maxRequestBytes`, default 1 MiB) with pre-buffering rejection (`413 Payload Too Large`) and early stream termination to prevent unbounded buffering DoS.
+- Protect inbound HTTP endpoints against DNS rebinding: validate Host headers (rejecting missing/malformed hosts with `400 Bad Request`), enforce Host and Origin allowlists (`allowedHosts`, `allowedOrigins`) with `403 Forbidden`, and never echo untrusted request data in error responses.
+- Enforce HTTP socket and stream timeouts (`requestTimeoutMs`, default 15,000 ms) to mitigate Slowloris attacks.
 
 Current implementation: `@chainmcp/executor` enforces exact host allowlists,
 HTTPS by default, public-address classification for every DNS answer, pinned
@@ -77,12 +80,22 @@ executors and adapters must bound request bodies and caller memory.
 
 - Separate inbound MCP identity from upstream API credentials.
 - Enforce authorization on every tool invocation.
+- Enforce own-property credential lookup (`Object.hasOwn`) for inbound bearer token and API key maps to prevent prototype-chain traversal (such as `constructor` or `__proto__`).
+- Strictly validate inbound principal shapes: require non-empty string `tenantId` and `principalId`, and reject malformed principals or principals without a tenant (failing closed).
+- Require inbound authentication for HTTP servers and gateways bound to non-loopback interfaces; refuse unauthenticated startup on non-loopback binds unless explicitly permitted via `security.allowUnauthenticatedHttp: true`.
+- Fail fast at startup if `requireInboundAuth: true` or `authorizer: "scope"` is configured without a corresponding inbound verifier.
 - Store refresh tokens and API credentials through secure secret providers.
 - Support expiry, revocation, and rotation.
 - Fail closed when identity or authorization cannot be verified. Treat untyped authorization adapter failures as denials and do not expose their details to clients.
 - Express rate-limit denials as explicit decisions and fail closed when a decision is missing, so an adapter outage is not confused with a quota denial.
 
-Current implementation: `@chainmcp/auth` keeps inbound identity
+Current implementation: `@chainmcp/server` verifiers (`createBearerTokenVerifier`,
+`createApiKeyVerifier`) evaluate token and key maps using own-property semantics
+(`Object.hasOwn`) to prevent prototype-chain traversal bypasses. Inbound principals
+returned by configured maps or custom callbacks (`verifyToken`, `verifyKey`, `mapClaims`)
+are strictly validated against `InboundPrincipalConfig`: both `tenantId` and
+`principalId` must be non-empty strings, and any malformed or incomplete principal
+fails closed as unauthenticated. `@chainmcp/auth` keeps inbound identity
 (`OperationScopeAuthorizer` over `ToolContext.principal`) separate from upstream
 credentials, which only `@chainmcp/executor` injects after declared parameters
 are mapped, so caller arguments cannot supply or override `authorization`,

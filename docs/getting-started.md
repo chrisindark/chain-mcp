@@ -176,7 +176,21 @@ Manual tools pass through the **exact same** execution pipeline as OpenAPI compi
 - Response caps and declarative field projections are honored.
 - Unhandled errors are masked safely without leaking secrets or stack traces.
 
-### Local Authoring Loop (`chainmcp dev`)
+### Running over HTTP (`chainmcp serve --transport http`)
+
+ChainMcp can also serve tools over modern Streamable HTTP:
+
+```bash
+chainmcp serve --transport http --port 3333
+```
+
+During local development on loopback (`127.0.0.1` or `localhost`), unauthenticated access is permitted and emits a structured startup warning:
+
+```text
+[SECURITY WARNING] HTTP server listening unauthenticated on http://127.0.0.1:3333/mcp (5 tool(s) exposed). Non-loopback binds and production environments must enforce authentication. Set "security.requireInboundAuth: true" and configure tokens, apiKeys, or jwt in "auth.inbound" to secure this server.
+```
+
+Non-loopback interfaces (e.g. `--host 0.0.0.0` or public IPs) refuse to start without authentication unless `--allow-unauthenticated-http` (or `security.allowUnauthenticatedHttp: true`) is explicitly provided.
 
 Start the local server over stdio for testing with the MCP Inspector or Claude Desktop:
 

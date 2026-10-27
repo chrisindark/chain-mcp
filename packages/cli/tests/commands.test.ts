@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildCommand } from "../src/commands/build.js";
 import { devCommand } from "../src/commands/dev.js";
@@ -395,6 +395,156 @@ security:
       await serverHandle.close();
       await serverHandle.closed;
     });
+
+    it("refuses to bind HTTP server to non-loopback host without authentication", async () => {
+      const targetDir = join(tempDir, "serve-http-fail-closed");
+      await initCommand({
+        spec: specPath,
+        output: targetDir,
+        cwd: tempDir,
+      });
+
+      await expect(
+        serveCommand({
+          cwd: targetDir,
+          transport: "http",
+          host: "0.0.0.0",
+          port: 0,
+        }),
+      ).rejects.toThrow(
+        /Refusing to bind HTTP server to non-loopback host "0\.0\.0\.0" without authentication.*security\.allowUnauthenticatedHttp/,
+      );
+    });
+
+    it("starts HTTP server on non-loopback host when allowUnauthenticatedHttp is true and warns", async () => {
+      const targetDir = join(tempDir, "serve-http-allow-unauth");
+      await initCommand({
+        spec: specPath,
+        output: targetDir,
+        cwd: tempDir,
+      });
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const serverHandle = await serveCommand({
+          cwd: targetDir,
+          transport: "http",
+          host: "0.0.0.0",
+          port: 0,
+          allowUnauthenticatedHttp: true,
+        });
+
+        expect(serverHandle.ok).toBe(true);
+        expect(serverHandle.url).toBeDefined();
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining("[SECURITY WARNING]"),
+        );
+
+        await serverHandle.close();
+        await serverHandle.closed;
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("starts HTTP server on loopback host without auth and warns", async () => {
+      const targetDir = join(tempDir, "serve-http-loopback");
+      await initCommand({
+        spec: specPath,
+        output: targetDir,
+        cwd: tempDir,
+      });
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const serverHandle = await serveCommand({
+          cwd: targetDir,
+          transport: "http",
+          host: "127.0.0.1",
+          port: 0,
+        });
+
+        expect(serverHandle.ok).toBe(true);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining("[SECURITY WARNING]"),
+        );
+
+        await serverHandle.close();
+        await serverHandle.closed;
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("fails fast at startup when requireInboundAuth is true but no verifier is provided", async () => {
+      const targetDir = join(tempDir, "serve-http-no-verifier");
+      await initCommand({
+        spec: specPath,
+        output: targetDir,
+        cwd: tempDir,
+      });
+
+      const configPath = join(targetDir, "chainmcp.config.yaml");
+      const configYaml = `
+version: 1
+name: test-auth-server
+contract:
+  source: ./spec/openapi.yaml
+security:
+  requireInboundAuth: true
+  allowedUpstreamHosts:
+    - api.petstore.test
+auth:
+  inbound:
+    authorizer: none
+`;
+      await writeFile(configPath, configYaml, "utf8");
+
+      await expect(
+        serveCommand({
+          cwd: targetDir,
+          transport: "http",
+          port: 0,
+        }),
+      ).rejects.toThrow(
+        /HTTP inbound authentication is required \("security\.requireInboundAuth: true"\), but no inbound verifier is configured/,
+      );
+    });
+
+    it("fails fast at startup when authorizer is scope but no verifier is provided", async () => {
+      const targetDir = join(tempDir, "serve-http-scope-no-verifier");
+      await initCommand({
+        spec: specPath,
+        output: targetDir,
+        cwd: tempDir,
+      });
+
+      const configPath = join(targetDir, "chainmcp.config.yaml");
+      const configYaml = `
+version: 1
+name: test-auth-server
+contract:
+  source: ./spec/openapi.yaml
+security:
+  requireInboundAuth: true
+  allowedUpstreamHosts:
+    - api.petstore.test
+auth:
+  inbound:
+    authorizer: scope
+`;
+      await writeFile(configPath, configYaml, "utf8");
+
+      await expect(
+        serveCommand({
+          cwd: targetDir,
+          transport: "http",
+          port: 0,
+        }),
+      ).rejects.toThrow(
+        /Inbound authorizer is configured as "scope", but no inbound verifier is configured\. Scope authorization requires an authenticated principal/,
+      );
+    });
   });
 
   describe("devCommand", () => {
@@ -510,6 +660,123 @@ contracts:
 
       await gwHandle.close();
       await gwHandle.closed;
+    });
+
+    it("refuses to bind gateway to non-loopback host without authentication", async () => {
+      const specFile = join(tempDir, "service-gw-fail.yaml");
+      await writeFile(specFile, SAMPLE_SPEC, "utf8");
+
+      const gwConfigFile = join(tempDir, "gateway-fail-closed.config.yaml");
+      const gwConfig = `
+version: 1
+name: test-fail-gw
+server:
+  transport: http
+  port: 3333
+  host: 0.0.0.0
+contracts:
+  - name: pets
+    tenantId: tenant-alpha
+    spec: service-gw-fail.yaml
+    destination:
+      baseUrl: https://api.petstore.test
+      allowedHosts:
+        - api.petstore.test
+`;
+      await writeFile(gwConfigFile, gwConfig, "utf8");
+
+      await expect(
+        gatewayServeCommand({
+          cwd: tempDir,
+          config: "gateway-fail-closed.config.yaml",
+          port: 0,
+        }),
+      ).rejects.toThrow(
+        /Refusing to bind HTTP server to non-loopback host "0\.0\.0\.0" without authentication.*security\.allowUnauthenticatedHttp/,
+      );
+    });
+
+    it("starts gateway on non-loopback host when allowUnauthenticatedHttp is true and warns", async () => {
+      const specFile = join(tempDir, "service-gw-allow.yaml");
+      await writeFile(specFile, SAMPLE_SPEC, "utf8");
+
+      const gwConfigFile = join(tempDir, "gateway-allow-unauth.config.yaml");
+      const gwConfig = `
+version: 1
+name: test-allow-gw
+server:
+  transport: http
+  port: 3333
+  host: 0.0.0.0
+security:
+  allowUnauthenticatedHttp: true
+contracts:
+  - name: pets
+    tenantId: tenant-alpha
+    spec: service-gw-allow.yaml
+    destination:
+      baseUrl: https://api.petstore.test
+      allowedHosts:
+        - api.petstore.test
+`;
+      await writeFile(gwConfigFile, gwConfig, "utf8");
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const gwHandle = await gatewayServeCommand({
+          cwd: tempDir,
+          config: "gateway-allow-unauth.config.yaml",
+          port: 0,
+        });
+
+        expect(gwHandle.ok).toBe(true);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining("[SECURITY WARNING]"),
+        );
+
+        await gwHandle.close();
+        await gwHandle.closed;
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("fails fast when gateway config has requireInboundAuth: true without verifier", async () => {
+      const specFile = join(tempDir, "service-gw-no-verifier.yaml");
+      await writeFile(specFile, SAMPLE_SPEC, "utf8");
+
+      const gwConfigFile = join(tempDir, "gateway-no-verifier.config.yaml");
+      const gwConfig = `
+version: 1
+name: test-no-verifier-gw
+server:
+  transport: http
+  port: 3333
+  host: 127.0.0.1
+security:
+  requireInboundAuth: true
+  allowedUpstreamHosts:
+    - api.petstore.test
+contracts:
+  - name: pets
+    tenantId: tenant-alpha
+    spec: service-gw-no-verifier.yaml
+    destination:
+      baseUrl: https://api.petstore.test
+      allowedHosts:
+        - api.petstore.test
+`;
+      await writeFile(gwConfigFile, gwConfig, "utf8");
+
+      await expect(
+        gatewayServeCommand({
+          cwd: tempDir,
+          config: "gateway-no-verifier.config.yaml",
+          port: 0,
+        }),
+      ).rejects.toThrow(
+        /Inbound authorizer is configured as "scope", but no inbound verifier is configured|HTTP inbound authentication is required/,
+      );
     });
   });
 

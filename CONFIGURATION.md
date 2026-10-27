@@ -24,9 +24,24 @@ server:
   port: 3333
   requestTimeoutMs: 15000
   maxResponseBytes: 1000000
+  maxRequestBytes: 1048576
+  allowedHosts:
+    - localhost
+    - 127.0.0.1
+  allowedOrigins:
+    - https://app.example.com
+  enableDnsRebindingProtection: false
+  cors:
+    enabled: true
+    allowedOrigins:
+      - https://app.example.com
+    allowedHeaders: []
+    allowCredentials: false
+    maxAgeSeconds: 600
 
 security:
   requireInboundAuth: false
+  allowUnauthenticatedHttp: false
   allowedUpstreamHosts:
     - api.example.com
   redactHeaders:
@@ -74,6 +89,9 @@ analytics:
 The implemented `@chainmcp/config` package exports `ChainMcpConfigSchema`, `parseConfig`, `safeParseConfig`, and wiring helpers. The supported sections are `version`, `name`, `contract`, `server`, `security`, `rateLimit`, `auth`, `logging`, `jsonNavigation`, and `analytics`. Unknown keys are rejected with Zod `.strict()`.
 
 - **`contract`:** (Optional) Declares the OpenAPI specification file (`contract.source`) and compilation mode (`contract.strict`). For code-first projects authored with `@chainmcp/authoring`, the `contract` section is omitted.
+- **`server`:** Configures transport (`stdio` or `http`), binding host (`127.0.0.1`), port (`3333`), base path (`/mcp`), `requestTimeoutMs` (default 15,000 ms), `maxResponseBytes` (default 1,000,000), `maxRequestBytes` (default 1,048,576 = 1 MiB), `allowedHosts` for DNS rebinding protection, `allowedOrigins` for browser/CORS origin verification, `enableDnsRebindingProtection`, and `cors` configuration (`enabled`, `allowedOrigins`, `allowedHeaders`, `allowCredentials`, `maxAgeSeconds`). CORS accepts boolean shorthand or explicit object, defaults to off on non-loopback bindings, rejects wildcard origin with credentials at parse time, reflects only exact matches, and sets `Vary: Origin`.
+- **`security.requireInboundAuth`:** (default `false`) Enforces inbound authentication on HTTP requests. When set to `true`, incoming requests must present valid credentials, and an inbound verifier (`auth.inbound.tokens`, `apiKeys`, or `jwt`) must be configured or startup fails fast.
+- **`security.allowUnauthenticatedHttp`:** (default `false`) Explicit override required when binding the HTTP server or dynamic gateway to a non-loopback host (e.g. `0.0.0.0`, external IPs) without authentication. If `false` and inbound authentication is not configured, binding to non-loopback hosts fails fast at startup. Unauthenticated startups on loopback (`127.0.0.1`, `localhost`, `::1`) or with `allowUnauthenticatedHttp: true` emit a prominent security warning.
 - **`security.allowedUpstreamHosts`:** Strictly validated against schemes, ports, paths, queries, credentials, and wildcards. Automatically normalized to lowercase canonical hostnames. Wired directly into executor options via `buildExecutorOptions`.
 - **`rateLimit`:** Configures in-memory or Redis distributed rate limiting with shorthand (`requestsPerMinute`, `concurrency`) or explicit global, tenant, and tool quotas. Wired into runtime options via `createRateLimiterFromConfig`.
 - **`auth`:** Configures inbound authorization (`authorizer: "scope"`) and upstream credential providers (`static`, `env`, `secretStore`, `oauth`). Wired into executor options via `createUpstreamCredentialProviderFromConfig`.

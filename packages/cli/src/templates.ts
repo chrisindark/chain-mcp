@@ -122,6 +122,7 @@ export function renderConfigYaml(options: ConfigYamlOptions): string {
     },
     security: {
       requireInboundAuth: false,
+      allowUnauthenticatedHttp: false,
       allowedUpstreamHosts: [...options.allowedHosts],
     },
     rateLimit: {
@@ -285,6 +286,9 @@ export async function runServer(options?: RunServerOptions) {
 
   if (config.server.transport === "http") {
     const verifier = createInboundVerifier(config.auth.inbound);
+    const requireInboundAuth =
+      config.security.requireInboundAuth ||
+      config.auth.inbound.requireInboundAuth;
     return await serveHttp(
       runtime,
       serverOptions,
@@ -293,7 +297,22 @@ export async function runServer(options?: RunServerOptions) {
         host: config.server.host,
         path: config.server.path,
         verifier,
-        requireAuth: config.auth.inbound.requireInboundAuth,
+        requireAuth: requireInboundAuth,
+        requireInboundAuth,
+        allowUnauthenticatedHttp: config.security.allowUnauthenticatedHttp,
+        authorizer: requireInboundAuth
+          ? config.auth.inbound.authorizer
+          : "none",
+        authorizerType: requireInboundAuth
+          ? config.auth.inbound.authorizer
+          : "none",
+        maxRequestBytes: config.server.maxRequestBytes,
+        allowedHosts: config.server.allowedHosts,
+        allowedOrigins: config.server.allowedOrigins,
+        cors: config.server.cors,
+        enableDnsRebindingProtection:
+          config.server.enableDnsRebindingProtection,
+        requestTimeoutMs: config.server.requestTimeoutMs,
         ...(options?.signal !== undefined ? { signal: options.signal } : {}),
       },
     );
