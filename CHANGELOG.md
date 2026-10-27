@@ -43,6 +43,19 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- **RM-07 remote specification loading unification & SSRF-safe fetch policy:**
+  - Implemented unified `loadSpec` module in `@chainmcp/cli` (`packages/cli/src/spec-loader.ts`) with strict SSRF-safe fetch policy.
+  - Required HTTPS by default for all remote specifications; plain HTTP is restricted exclusively to loopback/private hosts when opted into via `--allow-http` or `security.allowInsecureHttp: true`, and strictly rejected for public endpoints.
+  - Blocked loopback, private, link-local, shared, documentation, and reserved IP ranges for public URLs to protect against SSRF.
+  - Unconditionally blocked cloud metadata IP endpoints (`169.254.169.254`, `100.100.100.200`, `192.0.0.192`).
+  - Pinned resolved IP addresses to connection sockets via the transport `lookup` hook and verified peer addresses on connect to eliminate DNS rebinding and TOCTOU vulnerabilities.
+  - Handled redirects manually with hop-by-hop SSRF re-validation, capped at `maxRedirects` (default 3), and rejected HTTPS-to-HTTP downgrades.
+  - Strictly validated response content-types, accepting only JSON and YAML specifications and rejecting `text/html`.
+  - Streamed response bodies with streaming byte caps (`maxBytes`, default 10 MiB) and abort timeouts (`timeoutMs`, default 10,000ms).
+  - Eliminated duplicated raw `fetch` calls across `init`, `validate`, `build`, `diff`, `dev`, `serve`, and `export`, and enabled URL specification loading for `serve` and `export`.
+  - Added `--json` output support to `chainmcp validate`, exposing `resolvedSource` and `specBytes`.
+  - Re-exported `classifyAddress`, `canonicalizeIp`, `isSameAddress`, `systemHostResolver`, and `AddressClass` from `@chainmcp/executor`.
+
 - **RM-06 upstream base URL scheme, port, and path prefix preservation:**
   - Added `contract.baseUrl` and `BaseUrlSchema` to `@chainmcp/config`, strictly validating absolute `http://` or `https://` URLs, rejecting credentials (`user:pass@`), query parameters, and fragments, and canonically normalizing trailing slashes.
   - Added `security.allowInsecureHttp` (default `false`) across configuration schemas and wiring helpers, requiring explicit opt-in for unencrypted plain HTTP upstreams.

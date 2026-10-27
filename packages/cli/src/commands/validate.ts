@@ -6,6 +6,7 @@ import { compileOpenApi, type CompileDiagnostic } from "@chainmcp/compiler";
 import { parseConfig, type ChainMcpConfig } from "@chainmcp/config";
 import { normalizeAllowedHost } from "@chainmcp/executor";
 
+import { loadSpec } from "../spec-loader.js";
 import type { ValidateOptions, ValidateResult } from "../types.js";
 
 async function fileExists(path: string): Promise<boolean> {
@@ -74,94 +75,74 @@ export async function validateCommand(
 
   // 2. Locate or fetch contract
   const configDir = configPath ? dirname(configPath) : cwd;
+  let candidateSource = options.spec ?? config?.contract?.source;
+
+  if (!candidateSource) {
+    const candidateSpecs = [
+      resolve(cwd, "spec/openapi.yaml"),
+      resolve(cwd, "openapi.yaml"),
+      resolve(cwd, "openapi.json"),
+      resolve(cwd, "spec/openapi.json"),
+    ];
+    for (const cand of candidateSpecs) {
+      if (await fileExists(cand)) {
+        candidateSource = cand;
+        break;
+      }
+    }
+  }
+
+  if (!candidateSource) {
+    return {
+      ok: false,
+      config,
+      configPath,
+      toolCount: 0,
+      toolNames: [],
+      diagnostics: [
+        {
+          severity: "error",
+          code: "DOCUMENT_INVALID",
+          message:
+            "No OpenAPI contract found. Specify --spec <path> or declare contract.source in chainmcp.config.yaml.",
+        },
+      ],
+      error: "Contract specification file not found.",
+    };
+  }
+
   let specPath = "";
   let specContent = "";
+  let resolvedSource = "";
+  let specBytes = 0;
 
-  if (
-    options.spec &&
-    (options.spec.startsWith("http://") || options.spec.startsWith("https://"))
-  ) {
-    try {
-      const res = await fetch(options.spec);
-      if (!res.ok) {
-        return {
-          ok: false,
-          config,
-          configPath,
-          toolCount: 0,
-          toolNames: [],
-          diagnostics: [
-            {
-              severity: "error",
-              code: "DOCUMENT_INVALID",
-              message: `HTTP ${res.status} ${res.statusText} fetching spec from ${options.spec}`,
-            },
-          ],
-          error: `Failed to fetch spec from ${options.spec}`,
-        };
-      }
-      specContent = await res.text();
-      specPath = options.spec;
-    } catch (err) {
-      return {
-        ok: false,
-        config,
-        configPath,
-        toolCount: 0,
-        toolNames: [],
-        diagnostics: [
-          {
-            severity: "error",
-            code: "DOCUMENT_INVALID",
-            message: `Network error: ${err instanceof Error ? err.message : String(err)}`,
-          },
-        ],
-        error: `Could not fetch spec from ${options.spec}`,
-      };
-    }
-  } else {
-    let localSpecPath = options.spec
-      ? resolve(cwd, options.spec)
-      : config?.contract?.source
-        ? resolve(configDir, config.contract.source)
-        : undefined;
-
-    if (!localSpecPath) {
-      const candidateSpecs = [
-        resolve(cwd, "spec/openapi.yaml"),
-        resolve(cwd, "openapi.yaml"),
-        resolve(cwd, "openapi.json"),
-        resolve(cwd, "spec/openapi.json"),
-      ];
-      for (const cand of candidateSpecs) {
-        if (await fileExists(cand)) {
-          localSpecPath = cand;
-          break;
-        }
-      }
-    }
-
-    if (!localSpecPath || !(await fileExists(localSpecPath))) {
-      return {
-        ok: false,
-        config,
-        configPath,
-        toolCount: 0,
-        toolNames: [],
-        diagnostics: [
-          {
-            severity: "error",
-            code: "DOCUMENT_INVALID",
-            message:
-              "No OpenAPI contract found. Specify --spec <path> or declare contract.source in chainmcp.config.yaml.",
-          },
-        ],
-        error: "Contract specification file not found.",
-      };
-    }
-
-    specPath = localSpecPath;
-    specContent = await readFile(specPath, "utf8");
+  try {
+    const loaded = await loadSpec({
+      source: candidateSource,
+      cwd: options.spec ? cwd : configDir,
+      allowHttp:
+        options.allowHttp ?? config?.security?.allowInsecureHttp ?? false,
+    });
+    specPath = loaded.resolvedSource;
+    specContent = loaded.content;
+    resolvedSource = loaded.resolvedSource;
+    specBytes = loaded.bytes;
+  } catch (err) {
+    return {
+      ok: false,
+      config,
+      configPath,
+      toolCount: 0,
+      toolNames: [],
+      diagnostics: [
+        {
+          severity: "error",
+          code: "DOCUMENT_INVALID",
+          message: err instanceof Error ? err.message : String(err),
+        },
+      ],
+      error: `Could not fetch spec from ${candidateSource}`,
+    };
   }
 
   // 3. Compile contract
@@ -251,6 +232,8 @@ export async function validateCommand(
     configPath,
     specPath,
     specContent,
+    resolvedSource,
+    specBytes,
     contractRevision: compiled.contractRevision,
     sourceHash: compiled.sourceHash,
     toolsetHash: compiled.manifest.toolsetHash,

@@ -1,9 +1,10 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { compileOpenApi } from "@chainmcp/compiler";
 
 import { buildProjectManifest, verifyProjectManifest } from "../manifest.js";
+import { loadSpec } from "../spec-loader.js";
 import {
   renderConfigYaml,
   renderDockerfile,
@@ -47,6 +48,7 @@ export async function exportCommand(
   const validation = await validateCommand({
     config: options.config,
     spec: options.spec,
+    allowHttp: options.allowHttp,
     cwd,
   });
 
@@ -79,7 +81,27 @@ export async function exportCommand(
   }
 
   // 3. Read and compile contract
-  const specContent = await readFile(validation.specPath, "utf8");
+  let specContent = validation.specContent;
+  if (!specContent && validation.specPath) {
+    const loaded = await loadSpec({
+      source: validation.specPath,
+      cwd,
+      allowHttp:
+        options.allowHttp ?? validation.config?.security?.allowInsecureHttp,
+    });
+    specContent = loaded.content;
+  }
+
+  if (!specContent) {
+    return {
+      ok: false,
+      outputDir,
+      manifest: {} as ProjectManifest,
+      filesWritten: [],
+      error: "Export failed: Contract content could not be retrieved.",
+    };
+  }
+
   const compiled = compileOpenApi(specContent, {
     strict: validation.config?.contract?.strict ?? true,
   });

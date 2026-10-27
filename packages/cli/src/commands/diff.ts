@@ -10,6 +10,7 @@ import {
 
 import type { DiffOptions, DiffResult, ProjectManifest } from "../types.js";
 import { validateCommand } from "./validate.js";
+import { loadSpec } from "../spec-loader.js";
 
 function normalizeOpenApiVersion(
   version: string | undefined,
@@ -35,6 +36,7 @@ export async function diffCommand(options: DiffOptions): Promise<DiffResult> {
   const validation = await validateCommand({
     config: options.config,
     spec: options.spec,
+    allowHttp: options.allowHttp,
     cwd,
   });
 
@@ -64,62 +66,30 @@ export async function diffCommand(options: DiffOptions): Promise<DiffResult> {
 
   if (options.against) {
     let againstContent = "";
-    const isUrl =
-      options.against.startsWith("http://") ||
-      options.against.startsWith("https://");
-
-    if (isUrl) {
-      try {
-        const res = await fetch(options.against);
-        if (!res.ok) {
-          return {
-            ok: false,
-            contractRevision,
-            sourceHash,
-            toolsetHash,
-            hasChanges: false,
-            hasBreakingChanges: false,
-            addedTools: [],
-            removedTools: [],
-            changedTools: [],
-            unchangedTools: [],
-            error: `Failed to fetch target comparison from ${options.against}: HTTP ${res.status} ${res.statusText}`,
-          };
-        }
-        againstContent = await res.text();
-      } catch (err) {
-        return {
-          ok: false,
-          contractRevision,
-          sourceHash,
-          toolsetHash,
-          hasChanges: false,
-          hasBreakingChanges: false,
-          addedTools: [],
-          removedTools: [],
-          changedTools: [],
-          unchangedTools: [],
-          error: `Network error fetching target comparison from ${options.against}: ${err instanceof Error ? err.message : String(err)}`,
-        };
-      }
-    } else {
-      const againstPath = resolve(cwd, options.against);
-      if (!(await fileExists(againstPath))) {
-        return {
-          ok: false,
-          contractRevision,
-          sourceHash,
-          toolsetHash,
-          hasChanges: false,
-          hasBreakingChanges: false,
-          addedTools: [],
-          removedTools: [],
-          changedTools: [],
-          unchangedTools: [],
-          error: `Target comparison file not found: ${againstPath}`,
-        };
-      }
-      againstContent = await readFile(againstPath, "utf8");
+    try {
+      const loaded = await loadSpec({
+        source: options.against,
+        cwd,
+        allowHttp:
+          options.allowHttp ?? validation.config?.security?.allowInsecureHttp,
+      });
+      againstContent = loaded.content;
+    } catch (err) {
+      return {
+        ok: false,
+        contractRevision,
+        sourceHash,
+        toolsetHash,
+        hasChanges: false,
+        hasBreakingChanges: false,
+        addedTools: [],
+        removedTools: [],
+        changedTools: [],
+        unchangedTools: [],
+        error: `Failed to load comparison target from ${options.against}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
     }
 
     try {

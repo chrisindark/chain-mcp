@@ -1,9 +1,11 @@
-import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import { compileOpenApi } from "@chainmcp/compiler";
 import { normalizeAllowedHost } from "@chainmcp/executor";
+
+import { loadSpec } from "../spec-loader.js";
 
 import {
   renderConfigYaml,
@@ -173,73 +175,60 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   }
 
   // 1. Locate spec file or fetch from URL
+  let candidateSource = options.spec;
+  if (!candidateSource) {
+    const candidates = [
+      resolve(cwd, "openapi.yaml"),
+      resolve(cwd, "openapi.json"),
+      resolve(cwd, "spec/openapi.yaml"),
+      resolve(cwd, "spec/openapi.json"),
+    ];
+    for (const cand of candidates) {
+      if (await fileExists(cand)) {
+        candidateSource = cand;
+        break;
+      }
+    }
+  }
+
+  if (!candidateSource) {
+    return {
+      ok: false,
+      projectName: "",
+      projectDir,
+      specPath: "",
+      configPath: "",
+      toolCount: 0,
+      createdFiles: [],
+      error:
+        "OpenAPI specification file was not found. Please specify --spec <path>.",
+    };
+  }
+
   let candidateSpecPath = "";
   let specContent = "";
 
-  if (
-    options.spec &&
-    (options.spec.startsWith("http://") || options.spec.startsWith("https://"))
-  ) {
-    try {
-      const res = await fetch(options.spec);
-      if (!res.ok) {
-        return {
-          ok: false,
-          projectName: "",
-          projectDir,
-          specPath: options.spec,
-          configPath: "",
-          toolCount: 0,
-          createdFiles: [],
-          error: `Failed to fetch OpenAPI spec from ${options.spec}: HTTP ${res.status} ${res.statusText}`,
-        };
-      }
-      specContent = await res.text();
-      candidateSpecPath = options.spec;
-    } catch (err) {
-      return {
-        ok: false,
-        projectName: "",
-        projectDir,
-        specPath: options.spec,
-        configPath: "",
-        toolCount: 0,
-        createdFiles: [],
-        error: `Network error fetching OpenAPI spec from ${options.spec}: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-  } else {
-    let localPath = options.spec ? resolve(cwd, options.spec) : undefined;
-    if (!localPath) {
-      const candidates = [
-        resolve(cwd, "openapi.yaml"),
-        resolve(cwd, "openapi.json"),
-        resolve(cwd, "spec/openapi.yaml"),
-        resolve(cwd, "spec/openapi.json"),
-      ];
-      for (const cand of candidates) {
-        if (await fileExists(cand)) {
-          localPath = cand;
-          break;
-        }
-      }
-    }
-
-    if (!localPath || !(await fileExists(localPath))) {
-      return {
-        ok: false,
-        projectName: "",
-        projectDir,
-        specPath: "",
-        configPath: "",
-        toolCount: 0,
-        createdFiles: [],
-        error:
-          "OpenAPI specification file was not found. Please specify --spec <path>.",
-      };
-    }
-    candidateSpecPath = localPath;
-    specContent = await readFile(candidateSpecPath, "utf8");
+  try {
+    const loaded = await loadSpec({
+      source: candidateSource,
+      cwd,
+      allowHttp: options.allowHttp ?? false,
+    });
+    candidateSpecPath = loaded.resolvedSource;
+    specContent = loaded.content;
+  } catch (err) {
+    return {
+      ok: false,
+      projectName: "",
+      projectDir,
+      specPath: options.spec ?? "",
+      configPath: "",
+      toolCount: 0,
+      createdFiles: [],
+      error: `Failed to fetch OpenAPI spec from ${candidateSource}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    };
   }
 
   // 2. Compile spec

@@ -15,7 +15,15 @@ export {
   MAX_RESPONSE_HEADER_BYTES,
   createNodeUpstreamTransport,
 } from "./transport.js";
-export { normalizeAllowedHost, normalizeHostname } from "./destination.js";
+export {
+  classifyAddress,
+  canonicalizeIp,
+  isSameAddress,
+  normalizeAllowedHost,
+  normalizeHostname,
+  systemHostResolver,
+  type AddressClass,
+} from "./destination.js";
 export {
   OpenApiToolSource,
   createOpenApiToolSource,

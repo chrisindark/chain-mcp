@@ -13,12 +13,16 @@ export type {
   GatewayServeResult,
   InitOptions,
   InitResult,
+  LoadSpecOptions,
+  LoadedSpec,
   ProjectManifest,
   ServeOptions,
   ServeResult,
   ValidateOptions,
   ValidateResult,
 } from "./types.js";
+
+export { loadSpec } from "./spec-loader.js";
 
 export { runCli } from "./cli.js";
 export { initCommand } from "./commands/init.js";

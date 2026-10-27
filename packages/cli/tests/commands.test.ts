@@ -952,11 +952,24 @@ contracts:
       await new Promise<void>((resolve) => mockServer.close(() => resolve()));
     });
 
-    it("fetches OpenAPI specification from URL in initCommand", async () => {
+    it("rejects plain HTTP specification URL without allowHttp opt-in", async () => {
+      const targetDir = join(tempDir, "url-http-rejected");
+      const result = await initCommand({
+        spec: `${mockUrl}/openapi.yaml`,
+        output: targetDir,
+        cwd: tempDir,
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("Plain HTTP is disabled");
+    });
+
+    it("fetches OpenAPI specification from URL in initCommand with allowHttp", async () => {
       const targetDir = join(tempDir, "url-init-project");
       const result = await initCommand({
         spec: `${mockUrl}/openapi.yaml`,
         output: targetDir,
+        allowHttp: true,
         cwd: tempDir,
       });
 
@@ -969,15 +982,18 @@ contracts:
       expect(copiedSpec).toContain("listPets");
     });
 
-    it("fetches OpenAPI specification from URL in validateCommand", async () => {
+    it("fetches OpenAPI specification from URL in validateCommand with allowHttp", async () => {
       const result = await validateCommand({
         spec: `${mockUrl}/openapi.yaml`,
+        allowHttp: true,
         cwd: tempDir,
       });
 
       expect(result.ok).toBe(true);
       expect(result.toolCount).toBe(1);
       expect(result.toolNames).toContain("listPets");
+      expect(result.resolvedSource).toBe(`${mockUrl}/openapi.yaml`);
+      expect(result.specBytes).toBeGreaterThan(0);
     });
 
     it("diffs contract with no baseline", async () => {
@@ -1037,6 +1053,7 @@ contracts:
       const result = await diffCommand({
         spec: specPath,
         against: `${mockUrl}/modified.yaml`,
+        allowHttp: true,
         cwd: tempDir,
       });
 

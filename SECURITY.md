@@ -55,6 +55,17 @@ does not honor proxy environment variables or decompress responses. These
 controls are covered by unit and local transport tests, not by a production
 security review.
 
+### Remote specification loading (SSRF policy)
+
+The CLI spec loader (`@chainmcp/cli`, `loadSpec`) enforces a strict SSRF-safe fetch policy across all CLI commands (`init`, `validate`, `build`, `diff`, `serve`, `dev`, `export`):
+
+- **HTTPS by default:** Remote specification URLs must use HTTPS. Plain HTTP is disabled by default and restricted exclusively to loopback or private hosts when explicitly opted into via `--allow-http` or `security.allowInsecureHttp: true`. Remote specifications from public hosts must use HTTPS.
+- **SSRF & Address Classification:** Remote hostnames are resolved via DNS and all resolved addresses are verified against address classifications before connecting. Public URLs that resolve to loopback, link-local, private, shared, documentation, or reserved IP ranges are blocked.
+- **Cloud Metadata Blocking:** Cloud metadata IP endpoints (such as `169.254.169.254`, `100.100.100.200`, `192.0.0.192`) are unconditionally blocked.
+- **DNS Pinning & TOCTOU Mitigation:** The resolved address is pinned to the socket via the transport's DNS lookup hook, and peer addresses are verified upon socket connection to prevent DNS rebinding attacks.
+- **Manual Redirect Validation:** Redirects are handled manually with re-validation of each hop against the SSRF policy, capped at `maxRedirects` (default 3), and HTTPS-to-HTTP downgrade is strictly rejected.
+- **Content-Type & Streaming Bounds:** Only JSON and YAML OpenAPI specifications are accepted (`application/json`, `application/yaml`, `text/yaml`, `application/x-yaml`, `text/plain`); `text/html` is explicitly rejected. Payloads are bounded during streaming by `maxBytes` (default 10 MiB) with immediate termination if exceeded, and bounded by `timeoutMs` (default 10,000 ms).
+
 ### Input validation
 
 - Treat tool arguments as untrusted. Enforce the audited JSON Schema subset at

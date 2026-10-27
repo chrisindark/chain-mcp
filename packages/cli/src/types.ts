@@ -5,6 +5,8 @@ import type { ToolDefinition } from "@chainmcp/core";
 
 export const CLI_VERSION = "0.1.0";
 
+export type { LoadSpecOptions, LoadedSpec } from "./spec-loader.js";
+
 /**
  * Portable generation manifest emitted in `chainmcp.manifest.json`.
  * Pinned to compiler and generator versions, with deterministic hashes.
@@ -32,6 +34,7 @@ export interface InitOptions {
   output?: string | undefined;
   name?: string | undefined;
   baseUrl?: string | undefined;
+  allowHttp?: boolean | undefined;
   blank?: boolean | undefined;
   force?: boolean | undefined;
   cwd?: string | undefined;
@@ -51,6 +54,7 @@ export interface InitResult {
 export interface ValidateOptions {
   config?: string | undefined;
   spec?: string | undefined;
+  allowHttp?: boolean | undefined;
   strict?: boolean | undefined;
   cwd?: string | undefined;
 }
@@ -61,6 +65,8 @@ export interface ValidateResult {
   configPath?: string | undefined;
   specPath?: string | undefined;
   specContent?: string | undefined;
+  resolvedSource?: string | undefined;
+  specBytes?: number | undefined;
   contractRevision?: string | undefined;
   sourceHash?: string | undefined;
   toolsetHash?: string | undefined;
@@ -74,6 +80,7 @@ export interface ValidateResult {
 export interface BuildOptions {
   config?: string | undefined;
   spec?: string | undefined;
+  allowHttp?: boolean | undefined;
   outDir?: string | undefined;
   strict?: boolean | undefined;
   check?: boolean | undefined;
@@ -94,6 +101,7 @@ export interface DiffOptions {
   config?: string | undefined;
   spec?: string | undefined;
   against?: string | undefined;
+  allowHttp?: boolean | undefined;
   cwd?: string | undefined;
 }
 
@@ -114,6 +122,7 @@ export interface DiffResult {
 export interface ServeOptions {
   config?: string | undefined;
   spec?: string | undefined;
+  allowHttp?: boolean | undefined;
   transport?: "stdio" | "http" | undefined;
   port?: number | undefined;
   host?: string | undefined;
@@ -162,6 +171,7 @@ export interface GatewayServeResult {
 export interface DevOptions {
   config?: string | undefined;
   spec?: string | undefined;
+  allowHttp?: boolean | undefined;
   baseUrl?: string | undefined;
   cwd?: string | undefined;
   tools?: readonly ToolDefinition[] | undefined;
@@ -184,6 +194,7 @@ export interface DevResult {
 export interface ExportOptions {
   config?: string | undefined;
   spec?: string | undefined;
+  allowHttp?: boolean | undefined;
   output?: string | undefined;
   force?: boolean | undefined;
   check?: boolean | undefined;

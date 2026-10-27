@@ -93,6 +93,23 @@ ChainMcp's `@chainmcp/executor` enforces strict outbound network boundaries:
 - **Cause:** Upstream returned an HTTP 301/302/307/308 redirecting to a different origin, protocol, or port.
 - **Resolution:** ChainMcp follows only same-origin redirects. Reconfigure the upstream service or use the direct target endpoint in the contract.
 
+### Remote Specification Loading Failures
+
+When loading remote OpenAPI specifications via `chainmcp init --spec <url>`, `validate --spec <url>`, or when running `build`, `serve`, `export`, or `diff`:
+
+1. **`Plain HTTP is disabled for remote specifications`**
+   - **Cause:** The contract URL uses plain `http://` without opt-in.
+   - **Resolution:** By default, remote contracts must use `https://`. For local loopback development, pass `--allow-http` on the CLI or set `security.allowInsecureHttp: true` in `chainmcp.config.yaml`. Note that plain HTTP is never permitted for public hosts.
+2. **`Security error: Host resolves to loopback / private / metadata address`**
+   - **Cause:** A public hostname resolved to an internal network address (SSRF / DNS rebinding attempt), or targeted a cloud metadata endpoint (`169.254.169.254`).
+   - **Resolution:** Remote public specifications must resolve to public IP addresses. Cloud metadata endpoints are unconditionally blocked.
+3. **`Unsupported content type 'text/html'`**
+   - **Cause:** The remote URL returned an HTML page (such as a 404 error page, documentation browser, or captive portal) instead of raw OpenAPI JSON or YAML.
+   - **Resolution:** Provide the direct URL to the raw OpenAPI document (`.json` or `.yaml`).
+4. **`Spec size exceeds limit of 10485760 bytes`**
+   - **Cause:** The remote contract exceeds the maximum allowed spec download size (default 10 MiB).
+   - **Resolution:** Prune or modularize the contract, or download the spec locally for validation.
+
 ---
 
 ## 3. Safe Log Inspection

@@ -17,6 +17,7 @@ import { createUpstreamExecutor } from "@chainmcp/executor";
 import { createJsonNavigationTools } from "@chainmcp/json-navigation";
 import { serveStdio } from "@chainmcp/server";
 
+import { loadSpec } from "../spec-loader.js";
 import type { DevOptions, DevResult } from "../types.js";
 
 async function fileExists(path: string): Promise<boolean> {
@@ -83,20 +84,15 @@ export async function devCommand(options: DevOptions): Promise<DevResult> {
   let specContent: string | undefined;
 
   if (rawSpec) {
-    if (rawSpec.startsWith("http://") || rawSpec.startsWith("https://")) {
-      try {
-        const res = await fetch(rawSpec);
-        if (res.ok) {
-          specContent = await res.text();
-        }
-      } catch {
-        // Ignored; handled below if undefined
-      }
-    } else {
-      const localSpecPath = resolve(configDir, rawSpec);
-      if (await fileExists(localSpecPath)) {
-        specContent = await readFile(localSpecPath, "utf8");
-      }
+    try {
+      const loaded = await loadSpec({
+        source: rawSpec,
+        cwd: options.spec ? cwd : configDir,
+        allowHttp: options.allowHttp ?? config.security.allowInsecureHttp,
+      });
+      specContent = loaded.content;
+    } catch {
+      // Ignored; handled below if undefined
     }
   }
 

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { compileOpenApi } from "@chainmcp/compiler";
 
 import { buildProjectManifest, verifyProjectManifest } from "../manifest.js";
+import { loadSpec } from "../spec-loader.js";
 import type { BuildOptions, BuildResult, ProjectManifest } from "../types.js";
 import { validateCommand } from "./validate.js";
 
@@ -29,6 +30,7 @@ export async function buildCommand(
     config: options.config,
     spec: options.spec,
     strict: options.strict,
+    allowHttp: options.allowHttp,
     cwd,
   });
 
@@ -47,18 +49,16 @@ export async function buildCommand(
     };
   }
 
-  // 2. Read spec and compile
+  // 2. Read spec and compile (reuse loaded specContent from validation to avoid re-fetching)
   let specContent = validation.specContent;
   if (!specContent && validation.specPath) {
-    if (
-      validation.specPath.startsWith("http://") ||
-      validation.specPath.startsWith("https://")
-    ) {
-      const res = await fetch(validation.specPath);
-      specContent = await res.text();
-    } else {
-      specContent = await readFile(validation.specPath, "utf8");
-    }
+    const loaded = await loadSpec({
+      source: validation.specPath,
+      cwd,
+      allowHttp:
+        options.allowHttp ?? validation.config?.security?.allowInsecureHttp,
+    });
+    specContent = loaded.content;
   }
 
   if (!specContent) {

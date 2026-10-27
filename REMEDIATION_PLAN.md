@@ -50,8 +50,8 @@ rather than marking it complete.
 | [x]  | RM-03 | Make HTTP inbound auth fail closed                            | P0       | server/cli           | RM-02       |
 | [x]  | RM-04 | Replace origin reflection with configurable CORS allowlist    | P1       | server/transport     | RM-02       |
 | [x]  | RM-05 | Reject or implement silently ignored OpenAPI constructs       | P1       | compiler             | —           |
-| [ ]  | RM-06 | Preserve upstream base URL scheme, port, and path prefix      | P1       | config/executor/cli  | —           |
-| [ ]  | RM-07 | Unify remote spec loading with SSRF-safe fetch policy         | P1       | cli                  | RM-06       |
+| [x]  | RM-06 | Preserve upstream base URL scheme, port, and path prefix      | P1       | config/executor/cli  | —           |
+| [x]  | RM-07 | Unify remote spec loading with SSRF-safe fetch policy         | P1       | cli                  | RM-06       |
 | [ ]  | RM-08 | Support code-first projects in `serve`, `build`, `export`     | P1       | cli                  | RM-07       |
 | [ ]  | RM-09 | Resolve or reject `mutualTLS` and `openIdConnect` schemes     | P1       | executor/compiler    | —           |
 | [ ]  | RM-10 | Bound serialization and add response-schema validation        | P1       | core/executor        | —           |
@@ -656,6 +656,8 @@ Add `packages/cli/tests/spec-loader.test.ts`:
 pnpm --filter @chainmcp/cli test
 pnpm --filter @chainmcp/cli typecheck
 ```
+
+**Status:** Completed on 2026-10-27. Implemented unified `loadSpec` module in `packages/cli/src/spec-loader.ts` with strict SSRF-safe fetch policy. HTTPS is required by default, plain HTTP is restricted to loopback/private hosts when opted in via `--allow-http` or `security.allowInsecureHttp`, and rejected for public hosts. Public hostnames resolving to loopback or private ranges are blocked for SSRF protection; cloud metadata endpoints (`169.254.169.254`) are unconditionally blocked. Resolved DNS addresses are pinned to the socket via `lookup` hook to mitigate DNS rebinding and TOCTOU attacks. Redirects are manually validated per hop, capped at `maxRedirects` (default 3), and HTTPS-to-HTTP downgrades are rejected. Content types are strictly checked, rejecting `text/html`. Responses are streamed with a hard byte cap (`maxBytes`, default 10 MiB) and timeouts (`timeoutMs`, default 10,000ms). Eliminated all raw `fetch` calls across `init`, `validate`, `build`, `diff`, `dev`, `serve`, and `export`, and enabled URL specification loading for `serve` and `export`. Added `--json` flag to `validate` exposing `resolvedSource` and `specBytes`. 13 dedicated unit tests added in `packages/cli/tests/spec-loader.test.ts`; all 67 CLI tests pass, inspector conformance passes, and workspace `pnpm check` passes clean.
 
 ---
 
