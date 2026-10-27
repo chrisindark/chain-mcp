@@ -3,8 +3,10 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import { parse as parseYaml } from "yaml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { buildExecutorOptions, parseConfig } from "@chainmcp/config";
 import { buildCommand } from "../src/commands/build.js";
 import { devCommand } from "../src/commands/dev.js";
 import { diffCommand } from "../src/commands/diff.js";
@@ -13,6 +15,7 @@ import { gatewayServeCommand } from "../src/commands/gateway-serve.js";
 import { initCommand } from "../src/commands/init.js";
 import { serveCommand } from "../src/commands/serve.js";
 import { validateCommand } from "./../src/commands/validate.js";
+import { renderServerTs } from "../src/templates.js";
 
 const SAMPLE_SPEC = `
 openapi: "3.1.0"
@@ -157,6 +160,36 @@ describe("CLI Commands", () => {
       expect(pkgText).toContain("@chainmcp/authoring");
       expect(pkgText).toContain("zod");
     });
+
+    it("preserves upstream base URL scheme, port, and path prefix through init -> config -> executor", async () => {
+      const targetDir = join(tempDir, "http-port-server");
+      const result = await initCommand({
+        spec: specPath,
+        output: targetDir,
+        baseUrl: "http://127.0.0.1:8080/v2/",
+        cwd: tempDir,
+      });
+
+      expect(result.ok).toBe(true);
+
+      const configText = await readFile(
+        join(targetDir, "chainmcp.config.yaml"),
+        "utf8",
+      );
+      expect(configText).toContain("baseUrl: http://127.0.0.1:8080/v2");
+      expect(configText).toContain("allowInsecureHttp: true");
+      expect(configText).toContain("127.0.0.1");
+
+      const config = parseConfig(parseYaml(configText));
+      expect(config.contract?.baseUrl).toBe("http://127.0.0.1:8080/v2");
+      expect(config.security.allowInsecureHttp).toBe(true);
+      expect(config.security.allowedUpstreamHosts).toContain("127.0.0.1");
+
+      const executorOptions = buildExecutorOptions(config);
+      expect(executorOptions.baseUrl).toBe("http://127.0.0.1:8080/v2");
+      expect(executorOptions.allowInsecureHttp).toBe(true);
+      expect(executorOptions.allowedHosts).toContain("127.0.0.1");
+    });
   });
 
   describe("validateCommand", () => {
@@ -236,6 +269,111 @@ security:
             d.message.includes("allowedUpstreamHosts is empty"),
         ),
       ).toBe(true);
+    });
+
+    it("emits a deprecation warning if contract.source is declared without contract.baseUrl", async () => {
+      const configPath = join(tempDir, "legacy-config.yaml");
+      await writeFile(
+        configPath,
+        `
+version: 1
+name: legacy-server
+contract:
+  source: ./openapi.yaml
+security:
+  allowedUpstreamHosts:
+    - api.example.com
+`,
+        "utf8",
+      );
+
+      const result = await validateCommand({
+        config: configPath,
+        spec: specPath,
+        cwd: tempDir,
+      });
+
+      expect(result.ok).toBe(true);
+      const deprecationWarning = result.diagnostics.find(
+        (d) => d.code === "CONFIG_DEPRECATED",
+      );
+      expect(deprecationWarning).toBeDefined();
+      expect(deprecationWarning?.message).toContain(
+        "contract.baseUrl is not configured",
+      );
+    });
+
+    it("emits a warning when contract.baseUrl host was not explicitly declared in security.allowedUpstreamHosts", async () => {
+      const configPath = join(tempDir, "implicit-host-config.yaml");
+      await writeFile(
+        configPath,
+        `
+version: 1
+name: implicit-host-server
+contract:
+  source: ./openapi.yaml
+  baseUrl: https://api.petstore.test/v1
+security:
+  allowedUpstreamHosts:
+    - other.example.com
+`,
+        "utf8",
+      );
+
+      const result = await validateCommand({
+        config: configPath,
+        spec: specPath,
+        cwd: tempDir,
+      });
+
+      expect(result.ok).toBe(true);
+      const autoAddedWarning = result.diagnostics.find(
+        (d) =>
+          d.code === "SECURITY_INVALID" &&
+          d.message.includes("automatically added to allowlist"),
+      );
+      expect(autoAddedWarning).toBeDefined();
+    });
+
+    it("emits an error when contract.baseUrl uses insecure HTTP and security.allowInsecureHttp is false", async () => {
+      const configPath = join(tempDir, "insecure-http-blocked.yaml");
+      await writeFile(
+        configPath,
+        `
+version: 1
+name: insecure-http-blocked
+contract:
+  source: ./openapi.yaml
+  baseUrl: http://127.0.0.1:8080
+security:
+  allowInsecureHttp: false
+  allowedUpstreamHosts:
+    - 127.0.0.1
+`,
+        "utf8",
+      );
+
+      const result = await validateCommand({
+        config: configPath,
+        spec: specPath,
+        cwd: tempDir,
+      });
+
+      expect(result.ok).toBe(false);
+      const insecureHttpError = result.diagnostics.find(
+        (d) =>
+          d.severity === "error" &&
+          d.code === "SECURITY_INVALID" &&
+          d.message.includes("insecure HTTP"),
+      );
+      expect(insecureHttpError).toBeDefined();
+    });
+
+    it("asserts the emitted baseUrl logic in renderServerTs", () => {
+      const serverSource = renderServerTs();
+      expect(serverSource).toContain("options?.baseUrl ??");
+      expect(serverSource).toContain("config.contract?.baseUrl ??");
+      expect(serverSource).not.toContain("api.example.com");
     });
   });
 

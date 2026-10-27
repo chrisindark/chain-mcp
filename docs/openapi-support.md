@@ -100,6 +100,26 @@ and credential injection remain open.
 | Deprecated operation   | Warning or exclusion based on configuration  |
 | `nullable: true` (3.0) | `type` union containing `"null"`             |
 
+## Parameter and construct support matrix
+
+| Construct                | Level / Context                  | Supported value(s)    | Unsupported / Ignored behavior           | Strict mode (`strict: true`)  | Permissive mode (`strict: false`)                    |
+| ------------------------ | -------------------------------- | --------------------- | ---------------------------------------- | ----------------------------- | ---------------------------------------------------- |
+| `servers`                | Root document                    | String URL array      | Resolved / documented                    | Allowed                       | Allowed                                              |
+| `servers`                | Path-item                        | None                  | Overrides base URL                       | `UNSUPPORTED_SERVERS` error   | `UNSUPPORTED_SERVERS` warning                        |
+| `servers`                | Operation                        | None                  | Overrides base URL                       | `UNSUPPORTED_SERVERS` error   | `UNSUPPORTED_SERVERS` warning                        |
+| `callbacks`              | Operation                        | None                  | Inbound webhooks                         | `UNSUPPORTED_CALLBACKS` error | `UNSUPPORTED_CALLBACKS` warning                      |
+| `style`                  | Query parameter                  | `"form"` (default)    | `"deepObject"`, `"spaceDelimited"`, etc. | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
+| `style`                  | Path parameter                   | `"simple"` (default)  | `"matrix"`, `"label"`                    | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
+| `style`                  | Header parameter                 | `"simple"` (default)  | Non-simple styles                        | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
+| `explode`                | Query parameter (`form`)         | `true` (default)      | `false`                                  | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
+| `explode`                | Path/Header parameter (`simple`) | `false` (default)     | `true`                                   | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
+| `allowReserved`          | Query parameter                  | `false` (default)     | `true`                                   | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
+| `allowReserved`          | Path / Header                    | None                  | Not allowed in OpenAPI                   | `PARAMETER_INVALID` error     | `PARAMETER_INVALID` warning                          |
+| `allowEmptyValue`        | Query parameter                  | `false` (default)     | `true`                                   | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning                      |
+| Unknown parameter fields | Parameter object                 | Standard keys & `x-*` | Unrecognized keys                        | `PARAMETER_INVALID` error     | `PARAMETER_INVALID` warning                          |
+
+Warnings generated in permissive mode (`strict: false`) are preserved in `result.manifest.warnings` and on each compiled tool's `warnings` array, surviving into `compiled-tools.json` and `chainmcp.manifest.json`.
+
 ### OpenAPI 3.0 `nullable`
 
 The compiler implements this translation. OpenAPI 3.0 expresses nullability with `nullable: true`, while the runtime validates only the JSON Schema union form (`type: ["string", "null"]`). `auditInputSchema` rejects `nullable` as an unsupported keyword, so an untranslated schema would fail closed at registration with `CONTRACT_INVALID` rather than silently dropping the constraint.

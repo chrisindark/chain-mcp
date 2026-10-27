@@ -32,6 +32,9 @@ export function buildProjectManifest(
       name: t.name,
       hash: t.hash,
     })),
+    ...(compiled.manifest.warnings && compiled.manifest.warnings.length > 0
+      ? { warnings: compiled.manifest.warnings }
+      : {}),
     generatedAt: options?.generatedAt ?? "2026-01-01T00:00:00.000Z",
   };
 }

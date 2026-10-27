@@ -127,6 +127,8 @@ export async function exportCommand(
     name: projectName,
     allowedHosts,
     specRelativePath: "./spec/openapi.yaml",
+    baseUrl: validation.config?.contract?.baseUrl,
+    allowInsecureHttp: validation.config?.security.allowInsecureHttp,
   });
   await writeFile(join(outputDir, "chainmcp.config.yaml"), configYaml, "utf8");
   filesWritten.push("chainmcp.config.yaml");

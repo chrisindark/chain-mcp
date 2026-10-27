@@ -105,16 +105,22 @@ export async function devCommand(options: DevOptions): Promise<DevResult> {
       strict: config.contract?.strict ?? false,
     });
     if (compiled.ok) {
-      const primaryHost =
-        config.security.allowedUpstreamHosts[0] ?? "api.example.com";
-      const baseUrl = options.baseUrl ?? `https://${primaryHost}`;
-      const executorOptions = buildExecutorOptions(config, {
-        baseUrl,
-        contractRevision: compiled.contractRevision,
-      });
-      const executor = createUpstreamExecutor(executorOptions);
-      for (const tool of executor.createTools(compiled.tools)) {
-        runtime.register(tool);
+      const baseUrl =
+        options.baseUrl ??
+        config.contract?.baseUrl ??
+        (config.security.allowedUpstreamHosts[0]
+          ? `https://${config.security.allowedUpstreamHosts[0]}`
+          : undefined);
+
+      if (baseUrl) {
+        const executorOptions = buildExecutorOptions(config, {
+          baseUrl,
+          contractRevision: compiled.contractRevision,
+        });
+        const executor = createUpstreamExecutor(executorOptions);
+        for (const tool of executor.createTools(compiled.tools)) {
+          runtime.register(tool);
+        }
       }
     }
   }

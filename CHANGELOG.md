@@ -43,6 +43,22 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- **RM-06 upstream base URL scheme, port, and path prefix preservation:**
+  - Added `contract.baseUrl` and `BaseUrlSchema` to `@chainmcp/config`, strictly validating absolute `http://` or `https://` URLs, rejecting credentials (`user:pass@`), query parameters, and fragments, and canonically normalizing trailing slashes.
+  - Added `security.allowInsecureHttp` (default `false`) across configuration schemas and wiring helpers, requiring explicit opt-in for unencrypted plain HTTP upstreams.
+  - Auto-derives `contract.baseUrl` host into `security.allowedUpstreamHosts` while preserving explicit extra allowlisted hosts.
+  - Updated `chainmcp init` to capture and record the full normalized base URL (scheme, port, and path prefix) into `contract.baseUrl` and sets `allowInsecureHttp: true` when targeting HTTP endpoints.
+  - Replaced legacy synthesis of `https://${allowedUpstreamHosts[0]}` across `serve`, `dev`, `export`, and `renderServerTs` with proper resolution order (`options.baseUrl` -> `config.contract.baseUrl` -> legacy fallback).
+  - Added `validateCommand` diagnostics: emits warning when `contract.baseUrl` host was not explicitly declared in `security.allowedUpstreamHosts`, emits `CONFIG_DEPRECATED` when `contract.baseUrl` is omitted from contract configurations, and emits an error when insecure HTTP is used without `security.allowInsecureHttp: true`.
+  - Updated `@chainmcp/executor` destination policy to permit loopback destinations (`127.0.0.1`, `::1`) when `allowInsecureHttp: true` is configured, enabling local development and self-hosted gateway targets while preserving public-only SSRF protection for remote traffic.
+
+- **RM-05 OpenAPI ignored constructs rejection & strict parameter validation:** Enforced explicit compile-time diagnostics for accepted-but-ignored OpenAPI constructs to prevent silent contract weakening:
+  - Path-item and operation-level `servers` overrides are rejected in strict mode with `UNSUPPORTED_SERVERS` (or warned in permissive mode `strict: false`), ensuring all operations adhere to the configured upstream `baseUrl`.
+  - Inbound `callbacks` (webhooks) are rejected in strict mode with `UNSUPPORTED_CALLBACKS` (or warned in permissive mode).
+  - Parameter `style`, `explode`, and `allowReserved` are strictly validated: non-default combinations (`style: "deepObject"` or non-form on query, non-simple on path/header, `explode: false` on query, `explode: true` on path/header, `allowReserved: true` on query, or misplaced properties) are rejected with `PARAMETER_UNSUPPORTED` or `PARAMETER_INVALID` in strict mode (or warned and defaulted in permissive mode).
+  - Unknown parameter properties are strictly rejected with `PARAMETER_INVALID` in strict mode (or warned in permissive mode), while OpenAPI extensions (`x-*`) remain accepted.
+  - All warnings in permissive mode survive into `CompileManifest.warnings` and `CompiledOperation.warnings`, persisting into `compiled-tools.json` and `chainmcp.manifest.json`.
+
 - Complete Milestone 10 (Stable release):
   - Add comprehensive load, resilience, and fault-injection test suites in `@chainmcp/core` and `@chainmcp/executor` covering cache/limiter degradation, observability sink isolation, network drops, socket aborts, 5xx errors, DNS resolution failures, and in-flight cooperative cancellations (`AbortSignal`).
   - Publish supported-version matrix and compatibility policy in `docs/supported-versions.md`.

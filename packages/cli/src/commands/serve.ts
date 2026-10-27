@@ -61,9 +61,18 @@ export async function serveCommand(
   }
 
   // 3. Executor and Runtime setup
-  const primaryHost =
-    config.security.allowedUpstreamHosts[0] ?? "api.example.com";
-  const baseUrl = options.baseUrl ?? `https://${primaryHost}`;
+  const baseUrl =
+    options.baseUrl ??
+    config.contract?.baseUrl ??
+    (config.security.allowedUpstreamHosts[0]
+      ? `https://${config.security.allowedUpstreamHosts[0]}`
+      : undefined);
+
+  if (!baseUrl) {
+    throw new Error(
+      "Cannot serve: no baseUrl configured in contract.baseUrl or options, and security.allowedUpstreamHosts is empty.",
+    );
+  }
 
   const executorOptions = buildExecutorOptions(config, {
     baseUrl,

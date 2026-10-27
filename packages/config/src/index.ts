@@ -248,10 +248,62 @@ export type UpstreamProviderConfig = z.infer<
   typeof UpstreamProviderConfigSchema
 >;
 
+/**
+ * Strict schema for upstream base URLs.
+ * Requires absolute http:// or https:// URL.
+ * Rejects credentials, query parameters, and fragments.
+ * Normalizes trailing slashes to produce a canonical base URL.
+ */
+export const BaseUrlSchema = z
+  .string()
+  .min(1)
+  .transform((val, ctx) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(val);
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Invalid base URL: '${val}' is not a valid absolute URL`,
+      });
+      return z.NEVER;
+    }
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Invalid base URL scheme: '${parsed.protocol}'. Only http: and https: are supported.`,
+      });
+      return z.NEVER;
+    }
+
+    if (parsed.username !== "" || parsed.password !== "") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Base URL must not contain credentials (username or password)",
+      });
+      return z.NEVER;
+    }
+
+    if (parsed.search !== "" || parsed.hash !== "") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Base URL must not contain query parameters or fragments",
+      });
+      return z.NEVER;
+    }
+
+    const pathname = parsed.pathname.replace(/\/+$/, "");
+    return `${parsed.origin}${pathname}`;
+  });
+
+export type BaseUrl = z.infer<typeof BaseUrlSchema>;
+
 export const ContractConfigSchema = z
   .object({
     source: z.string().min(1),
     strict: z.boolean().default(true),
+    baseUrl: BaseUrlSchema.optional(),
   })
   .strict();
 
@@ -411,6 +463,7 @@ export const SecurityConfigSchema = z
   .object({
     requireInboundAuth: z.boolean().default(false),
     allowUnauthenticatedHttp: z.boolean().default(false),
+    allowInsecureHttp: z.boolean().default(false),
     allowedUpstreamHosts: z.array(AllowedHostSchema).default([]),
     redactHeaders: z
       .array(z.string().min(1))
@@ -437,7 +490,23 @@ export const ChainMcpConfigSchema = z
     jsonNavigation: JsonNavigationConfigSchema,
     analytics: AnalyticsConfigSchema,
   })
-  .strict();
+  .strict()
+  .transform((cfg) => {
+    if (cfg.contract?.baseUrl) {
+      const parsed = new URL(cfg.contract.baseUrl);
+      const host = normalizeAllowedHost(parsed.hostname);
+      if (!cfg.security.allowedUpstreamHosts.includes(host)) {
+        return {
+          ...cfg,
+          security: {
+            ...cfg.security,
+            allowedUpstreamHosts: [host, ...cfg.security.allowedUpstreamHosts],
+          },
+        };
+      }
+    }
+    return cfg;
+  });
 
 export type ChainMcpConfig = z.infer<typeof ChainMcpConfigSchema>;
 
@@ -453,11 +522,22 @@ export function safeParseConfig(
 
 export const GatewayContractDestinationSchema = z
   .object({
-    baseUrl: z.string().min(1),
-    allowedHosts: z.array(AllowedHostSchema).min(1),
+    baseUrl: BaseUrlSchema,
+    allowedHosts: z.array(AllowedHostSchema).default([]),
     allowInsecureHttp: z.boolean().default(false),
   })
-  .strict();
+  .strict()
+  .transform((dest) => {
+    const parsed = new URL(dest.baseUrl);
+    const host = normalizeAllowedHost(parsed.hostname);
+    if (!dest.allowedHosts.includes(host)) {
+      return {
+        ...dest,
+        allowedHosts: [host, ...dest.allowedHosts],
+      };
+    }
+    return dest;
+  });
 
 export type GatewayContractDestination = z.infer<
   typeof GatewayContractDestinationSchema
@@ -781,16 +861,16 @@ export function createUpstreamCredentialProviderFromConfig(
 }
 
 export interface BuildExecutorOptionsOverrides extends Partial<UpstreamExecutorOptions> {
-  baseUrl: string;
+  baseUrl?: string;
 }
 
 export function buildExecutorOptions(
   config: ChainMcpConfig,
-  overrides: BuildExecutorOptionsOverrides,
+  overrides?: BuildExecutorOptionsOverrides,
   factoryOptions?: CredentialProviderFactoryOptions,
 ): UpstreamExecutorOptions {
   const allowedHosts =
-    overrides.allowedHosts ?? config.security.allowedUpstreamHosts;
+    overrides?.allowedHosts ?? config.security.allowedUpstreamHosts;
 
   if (allowedHosts.length === 0) {
     throw new TypeError(
@@ -798,44 +878,56 @@ export function buildExecutorOptions(
     );
   }
 
+  const baseUrl =
+    overrides?.baseUrl ??
+    config.contract?.baseUrl ??
+    (allowedHosts[0] ? `https://${allowedHosts[0]}` : undefined);
+
+  if (!baseUrl) {
+    throw new TypeError(
+      "Cannot build executor options: no baseUrl provided and neither contract.baseUrl nor security.allowedUpstreamHosts is configured.",
+    );
+  }
+
   const credentialProvider =
-    overrides.credentialProvider ??
+    overrides?.credentialProvider ??
     createUpstreamCredentialProviderFromConfig(
       config.auth.upstream,
       factoryOptions,
     );
 
+  const allowInsecureHttp =
+    overrides?.allowInsecureHttp ?? config.security.allowInsecureHttp;
+
   return {
-    baseUrl: overrides.baseUrl,
+    baseUrl,
     allowedHosts,
-    timeoutMs: overrides.timeoutMs ?? config.server.requestTimeoutMs,
+    timeoutMs: overrides?.timeoutMs ?? config.server.requestTimeoutMs,
     maxResponseBytes:
-      overrides.maxResponseBytes ?? config.server.maxResponseBytes,
+      overrides?.maxResponseBytes ?? config.server.maxResponseBytes,
     ...(credentialProvider !== undefined ? { credentialProvider } : {}),
-    ...(overrides.allowInsecureHttp !== undefined
-      ? { allowInsecureHttp: overrides.allowInsecureHttp }
-      : {}),
-    ...(overrides.resolveHost !== undefined
+    ...(allowInsecureHttp !== undefined ? { allowInsecureHttp } : {}),
+    ...(overrides?.resolveHost !== undefined
       ? { resolveHost: overrides.resolveHost }
       : {}),
-    ...(overrides.transport !== undefined
+    ...(overrides?.transport !== undefined
       ? { transport: overrides.transport }
       : {}),
-    ...(overrides.maxRequestBytes !== undefined
+    ...(overrides?.maxRequestBytes !== undefined
       ? { maxRequestBytes: overrides.maxRequestBytes }
       : {}),
-    ...(overrides.maxRedirects !== undefined
+    ...(overrides?.maxRedirects !== undefined
       ? { maxRedirects: overrides.maxRedirects }
       : {}),
-    ...(overrides.contractRevision !== undefined
+    ...(overrides?.contractRevision !== undefined
       ? { contractRevision: overrides.contractRevision }
       : {}),
-    ...(overrides.defaultReadCacheTtlSeconds !== undefined
+    ...(overrides?.defaultReadCacheTtlSeconds !== undefined
       ? { defaultReadCacheTtlSeconds: overrides.defaultReadCacheTtlSeconds }
       : config.cache.enabled && config.cache.ttlSeconds > 0
         ? { defaultReadCacheTtlSeconds: config.cache.ttlSeconds }
         : {}),
-    ...(overrides.ownerTenantId !== undefined
+    ...(overrides?.ownerTenantId !== undefined
       ? { ownerTenantId: overrides.ownerTenantId }
       : {}),
   };

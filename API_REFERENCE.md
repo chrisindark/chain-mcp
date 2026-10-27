@@ -615,9 +615,46 @@ export interface CompileOptions {
   maxOperations?: number;
 }
 
+export type CompileDiagnosticCode =
+  | "SOURCE_TOO_LARGE"
+  | "SOURCE_PARSE_FAILED"
+  | "DOCUMENT_INVALID"
+  | "OPENAPI_VERSION_UNSUPPORTED"
+  | "PATH_INVALID"
+  | "OPERATION_INVALID"
+  | "OPERATION_LIMIT_EXCEEDED"
+  | "OPERATION_ID_INVALID"
+  | "DEPRECATED_OPERATION"
+  | "TOOL_NAME_NORMALIZED"
+  | "TOOL_NAME_COLLISION"
+  | "DESCRIPTION_TRUNCATED"
+  | "PARAMETER_INVALID"
+  | "PARAMETER_DUPLICATE"
+  | "PARAMETER_UNSUPPORTED"
+  | "REQUEST_BODY_INVALID"
+  | "REQUEST_BODY_UNSUPPORTED"
+  | "RESPONSE_INVALID"
+  | "RESPONSE_UNSUPPORTED"
+  | "REF_INVALID"
+  | "REF_REMOTE_UNSUPPORTED"
+  | "REF_CYCLE"
+  | "REF_DEPTH_EXCEEDED"
+  | "REF_SIBLINGS_UNSUPPORTED"
+  | "SCHEMA_INVALID"
+  | "SCHEMA_COMPOSITION_UNSUPPORTED"
+  | "SCHEMA_UNSUPPORTED"
+  | "SCHEMA_NULLABLE_INVALID"
+  | "SECURITY_INVALID"
+  | "SECURITY_REQUIREMENT_INVALID"
+  | "SECURITY_SCHEME_INVALID"
+  | "UNSUPPORTED_SERVERS"
+  | "UNSUPPORTED_CALLBACKS"
+  | "CONFIG_DEPRECATED"
+  | "INTERNAL_ERROR";
+
 export interface CompileDiagnostic {
   severity: "error" | "warning";
-  code: string;
+  code: CompileDiagnosticCode;
   message: string;
   location?: string;
 }
@@ -694,6 +731,7 @@ export interface CompiledOperation {
   security: readonly SecurityRequirement[];
   authentication: CompiledAuthenticationPolicy;
   sourceLocation: string;
+  warnings?: readonly CompileDiagnostic[];
 }
 
 export interface CompileManifest {
@@ -705,6 +743,7 @@ export interface CompileManifest {
   toolsetHash: string;
   toolCount: number;
   tools: readonly { name: string; hash: string }[];
+  warnings?: readonly CompileDiagnostic[];
 }
 
 export interface CompileResult {
@@ -1308,9 +1347,13 @@ export function safeParseConfig(
   input: unknown,
 ): ReturnType<typeof ChainMcpConfigSchema.safeParse>;
 
+export interface BuildExecutorOptionsOverrides extends Partial<UpstreamExecutorOptions> {
+  baseUrl?: string;
+}
+
 export function buildExecutorOptions(
   config: ChainMcpConfig,
-  overrides: BuildExecutorOptionsOverrides,
+  overrides?: BuildExecutorOptionsOverrides,
   factoryOptions?: CredentialProviderFactoryOptions,
 ): UpstreamExecutorOptions;
 
@@ -1351,18 +1394,18 @@ export function createNavigationLimitsFromConfig(
 
 ### Configuration Sections
 
-- **`server`:** Configures transport (`stdio`), host, port, `requestTimeoutMs` (default 15,000ms), and `maxResponseBytes` (default 1,000,000 bytes).
-- **`security`:** Configures `requireInboundAuth`, `allowedUpstreamHosts`, and `redactHeaders`. Each host in `allowedUpstreamHosts` is strictly validated against schemes, ports, paths, queries, credentials, and wildcards, and normalized to canonical lowercase.
+- **`server`:** Configures transport (`stdio` or `http`), host, port, `requestTimeoutMs` (default 15,000ms), `maxResponseBytes` (default 1,000,000 bytes), `maxRequestBytes` (default 1,048,576 bytes), `allowedHosts`, `allowedOrigins`, `enableDnsRebindingProtection`, and `cors`.
+- **`security`:** Configures `requireInboundAuth`, `allowUnauthenticatedHttp`, `allowInsecureHttp`, `allowedUpstreamHosts`, and `redactHeaders`. Each host in `allowedUpstreamHosts` is strictly validated against schemes, ports, paths, queries, credentials, and wildcards, and normalized to canonical lowercase. `allowInsecureHttp` defaults to `false` and must be enabled to permit `http://` upstream traffic.
 - **`rateLimit`:** Configures in-memory or Redis distributed rate limiting with shorthand (`requestsPerMinute`, `concurrency`) or explicit global, tenant, and tool quotas.
 - **`auth`:** Configures inbound authorization (`authorizer: "scope"`) and upstream credential providers (`static`, `env`, `secretStore`, `oauth`).
 - **`logging`:** Configures structured logger level, destination (`stdout`, `stderr`, `memory`), redaction keys, and body exclusion. Overridable via `CHAINMCP_LOG_LEVEL`.
 - **`jsonNavigation`:** Configures bounds for JSON exploration tools (`maxDepth`, `maxArrayItems`, `maxResultBytes`, `maxVisitedNodes`, `timeoutMs`).
 - **`analytics`:** Configures telemetry retention, arguments/body exclusion, and OpenTelemetry integration.
-- **`contract`:** Optional contract source and strict validation settings.
+- **`contract`:** Configures OpenAPI contract specification file (`source`), strict validation mode (`strict`), and optional target upstream base URL (`baseUrl`). `contract.baseUrl` accepts absolute `http://` or `https://` URLs, preserves port and path prefix, normalizes trailing slashes, and auto-derives its host into `security.allowedUpstreamHosts`.
 
 ### Wiring Helpers
 
-- `buildExecutorOptions(config, overrides)` maps `security.allowedUpstreamHosts` to `allowedHosts`, `server.requestTimeoutMs` to `timeoutMs`, `server.maxResponseBytes` to `maxResponseBytes`, and `auth.upstream` to `credentialProvider`. Fails closed if `allowedUpstreamHosts` is empty.
+- `buildExecutorOptions(config, overrides)` maps `config.contract.baseUrl` (or fallback to `allowedUpstreamHosts[0]`) to `baseUrl`, `security.allowedUpstreamHosts` to `allowedHosts`, `security.allowInsecureHttp` to `allowInsecureHttp`, `server.requestTimeoutMs` to `timeoutMs`, `server.maxResponseBytes` to `maxResponseBytes`, and `auth.upstream` to `credentialProvider`. Fails closed if `allowedUpstreamHosts` is empty or no base URL can be resolved.
 - `buildRuntimeOptions(config, overrides, factoryOptions)` maps `security.requireInboundAuth` / `auth.inbound` to `authorizer`, `config.rateLimit` to `rateLimiter`, `config.logging` to `logger`, `config.analytics` to `metrics`, and `server.requestTimeoutMs` to `defaultTimeoutMs`.
 
 ## Error codes

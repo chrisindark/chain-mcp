@@ -100,6 +100,8 @@ export interface ConfigYamlOptions {
   allowedHosts: readonly string[];
   specRelativePath?: string | undefined;
   blank?: boolean | undefined;
+  baseUrl?: string | undefined;
+  allowInsecureHttp?: boolean | undefined;
 }
 
 export function renderConfigYaml(options: ConfigYamlOptions): string {
@@ -113,6 +115,7 @@ export function renderConfigYaml(options: ConfigYamlOptions): string {
           contract: {
             source: options.specRelativePath ?? "./spec/openapi.yaml",
             strict: true,
+            ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
           },
         }),
     server: {
@@ -123,6 +126,7 @@ export function renderConfigYaml(options: ConfigYamlOptions): string {
     security: {
       requireInboundAuth: false,
       allowUnauthenticatedHttp: false,
+      ...(options.allowInsecureHttp ? { allowInsecureHttp: true } : {}),
       allowedUpstreamHosts: [...options.allowedHosts],
     },
     rateLimit: {
@@ -224,9 +228,19 @@ export async function runServer(options?: RunServerOptions) {
       process.exit(1);
     }
 
-    const primaryHost =
-      config.security.allowedUpstreamHosts[0] ?? "api.example.com";
-    const baseUrl = options?.baseUrl ?? \`https://\${primaryHost}\`;
+    const baseUrl =
+      options?.baseUrl ??
+      config.contract?.baseUrl ??
+      (config.security.allowedUpstreamHosts[0]
+        ? \`https://\${config.security.allowedUpstreamHosts[0]}\`
+        : undefined);
+
+    if (!baseUrl) {
+      console.error(
+        "[ERROR] No baseUrl configured in contract.baseUrl or options, and security.allowedUpstreamHosts is empty.",
+      );
+      process.exit(1);
+    }
 
     const executorOverrides: Parameters<typeof buildExecutorOptions>[1] = {
       baseUrl,
