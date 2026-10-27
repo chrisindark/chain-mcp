@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 
 import { compileOpenApi } from "@chainmcp/compiler";
 import {
@@ -14,6 +13,7 @@ import { createUpstreamExecutor } from "@chainmcp/executor";
 import { createJsonNavigationTools } from "@chainmcp/json-navigation";
 import { createInboundVerifier, serveHttp, serveStdio } from "@chainmcp/server";
 
+import { loadSpec } from "../spec-loader.js";
 import type { ServeOptions, ServeResult } from "../types.js";
 import { validateCommand } from "./validate.js";
 
@@ -25,6 +25,7 @@ export async function serveCommand(
   const validation = await validateCommand({
     config: options.config,
     spec: options.spec,
+    allowHttp: options.allowHttp,
     cwd,
   });
 
@@ -39,7 +40,21 @@ export async function serveCommand(
   }
 
   // 1. Compile contract
-  const specContent = await readFile(validation.specPath, "utf8");
+  let specContent = validation.specContent;
+  if (!specContent && validation.specPath) {
+    const loaded = await loadSpec({
+      source: validation.specPath,
+      cwd,
+      allowHttp:
+        options.allowHttp ?? validation.config?.security?.allowInsecureHttp,
+    });
+    specContent = loaded.content;
+  }
+
+  if (!specContent) {
+    throw new Error("Cannot serve: contract content could not be retrieved.");
+  }
+
   const compiled = compileOpenApi(specContent, {
     strict: validation.config?.contract?.strict ?? true,
   });

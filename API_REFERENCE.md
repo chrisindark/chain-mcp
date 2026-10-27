@@ -1623,13 +1623,14 @@ The `@chainmcp/cli` package implements developer commands and generated server s
 Exported as the `chainmcp` executable (`dist/bin.js`).
 
 ```bash
-chainmcp init [--spec <path>] [--blank] [--output <dir>] [--name <name>] [--base-url <url>] [--force]
-chainmcp validate [--config <path>] [--spec <path>] [--strict]
-chainmcp build [--config <path>] [--spec <path>] [--out-dir <dir>] [--check]
-chainmcp serve [--config <path>] [--spec <path>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http] [--base-url <url>] [--tenant <id>]
+chainmcp init [--spec <path|url>] [--blank] [--output <dir>] [--name <name>] [--base-url <url>] [--allow-http] [--force]
+chainmcp validate [--config <path>] [--spec <path|url>] [--strict] [--json] [--allow-http]
+chainmcp build [--config <path>] [--spec <path|url>] [--out-dir <dir>] [--allow-http] [--check]
+chainmcp diff [--config <path>] [--spec <path|url>] [--against <target>] [--allow-http]
+chainmcp serve [--config <path>] [--spec <path|url>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http] [--allow-http] [--base-url <url>] [--tenant <id>]
 chainmcp gateway serve [--config <path>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http]
-chainmcp dev [--config <path>] [--spec <path>] [--base-url <url>] [--tenant <id>]
-chainmcp export [--config <path>] [--spec <path>] [--output <dir>] [--force] [--check]
+chainmcp dev [--config <path>] [--spec <path|url>] [--base-url <url>] [--allow-http] [--tenant <id>]
+chainmcp export [--config <path>] [--spec <path|url>] [--output <dir>] [--allow-http] [--force] [--check]
 ```
 
 ### Programmatic API
@@ -1642,9 +1643,33 @@ export function validateCommand(
   options: ValidateOptions,
 ): Promise<ValidateResult>;
 export function buildCommand(options: BuildOptions): Promise<BuildResult>;
+export function diffCommand(options: DiffOptions): Promise<DiffResult>;
 export function serveCommand(options: ServeOptions): Promise<ServeResult>;
 export function devCommand(options: DevOptions): Promise<DevResult>;
 export function exportCommand(options: ExportOptions): Promise<ExportResult>;
+
+export function loadSpec(options: LoadSpecOptions): Promise<LoadedSpec>;
+
+export interface LoadSpecOptions {
+  source: string;
+  allowHttp?: boolean | undefined;
+  timeoutMs?: number | undefined;
+  maxBytes?: number | undefined;
+  maxRedirects?: number | undefined;
+  allowPrivateHosts?: boolean | undefined;
+  signal?: AbortSignal | undefined;
+  cwd?: string | undefined;
+  rejectUnauthorized?: boolean | undefined;
+  resolver?: HostResolver | undefined;
+}
+
+export interface LoadedSpec {
+  content: string;
+  sourceKind: "file" | "url";
+  resolvedSource: string;
+  bytes: number;
+  contentType?: string | undefined;
+}
 
 export function buildProjectManifest(
   projectName: string,

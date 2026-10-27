@@ -90,6 +90,28 @@ describe("CLI entry point (runCli)", () => {
     expect(outLogs.some((l) => l.includes("Validation passed"))).toBe(true);
   });
 
+  it("runs validate command via CLI with --json", async () => {
+    const valCode = await runCli(
+      ["validate", "--spec", specPath, "--json"],
+      io,
+    );
+    expect(valCode).toBe(0);
+    const jsonOutput = outLogs.find((l) => {
+      try {
+        const parsed = JSON.parse(l);
+        return parsed && parsed.ok === true;
+      } catch {
+        return false;
+      }
+    });
+    expect(jsonOutput).toBeDefined();
+    const parsed = JSON.parse(jsonOutput!);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.resolvedSource).toBe(specPath);
+    expect(parsed.specBytes).toBeGreaterThan(0);
+    expect(parsed.toolCount).toBe(1);
+  });
+
   it("runs build command via CLI", async () => {
     const projectDir = join(tempDir, "build-proj");
     await runCli(["init", "--spec", specPath, "--output", projectDir], io);

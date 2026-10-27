@@ -43,6 +43,8 @@ Command options:
     --config <path>      Path to chainmcp.config.yaml
     --spec <path>        Path to OpenAPI contract
     --strict             Enforce strict validation mode (default: true)
+    --json               Emit validation result as JSON
+    --allow-http         Permit plain HTTP for loopback/private hosts
 
   build:
     --config <path>      Path to chainmcp.config.yaml
@@ -121,6 +123,8 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       force: { type: "boolean", default: false },
       strict: { type: "boolean", default: true },
       check: { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+      "allow-http": { type: "boolean", default: false },
       "allow-unauthenticated-http": { type: "boolean", default: false },
     },
     allowPositionals: true,
@@ -152,6 +156,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
           : {}),
         ...(asString(values["base-url"]) !== undefined
           ? { baseUrl: asString(values["base-url"]) }
+          : {}),
+        ...(asBoolean(values["allow-http"]) !== undefined
+          ? { allowHttp: asBoolean(values["allow-http"]) }
           : {}),
         ...(asBoolean(values.blank) !== undefined
           ? { blank: asBoolean(values.blank) }
@@ -193,7 +200,15 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
         ...(asBoolean(values.strict) !== undefined
           ? { strict: asBoolean(values.strict) }
           : {}),
+        ...(asBoolean(values["allow-http"]) !== undefined
+          ? { allowHttp: asBoolean(values["allow-http"]) }
+          : {}),
       });
+
+      if (values.json) {
+        log(JSON.stringify(result, null, 2));
+        return result.ok ? 0 : 1;
+      }
 
       for (const diag of result.diagnostics) {
         const prefix = diag.severity === "error" ? "ERROR" : "WARN";
@@ -215,6 +230,12 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       log(`Contract revision: ${result.contractRevision}`);
       log(`Tools compiled: ${result.toolCount}`);
       log(`Toolset hash: ${result.toolsetHash}`);
+      if (result.resolvedSource) {
+        log(`Resolved source: ${result.resolvedSource}`);
+      }
+      if (result.specBytes !== undefined) {
+        log(`Spec size: ${result.specBytes} bytes`);
+      }
       return 0;
     }
 
@@ -234,6 +255,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
           : {}),
         ...(asBoolean(values.check) !== undefined
           ? { check: asBoolean(values.check) }
+          : {}),
+        ...(asBoolean(values["allow-http"]) !== undefined
+          ? { allowHttp: asBoolean(values["allow-http"]) }
           : {}),
       });
 
@@ -263,6 +287,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
           : {}),
         ...(asString(values.against) !== undefined
           ? { against: asString(values.against) }
+          : {}),
+        ...(asBoolean(values["allow-http"]) !== undefined
+          ? { allowHttp: asBoolean(values["allow-http"]) }
           : {}),
       });
 
@@ -332,6 +359,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
           ...(asString(values.path) !== undefined
             ? { path: asString(values.path) }
             : {}),
+          ...(asBoolean(values["allow-http"]) !== undefined
+            ? { allowHttp: asBoolean(values["allow-http"]) }
+            : {}),
           ...(asBoolean(values["allow-unauthenticated-http"]) !== undefined
             ? {
                 allowUnauthenticatedHttp: asBoolean(
@@ -378,6 +408,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
             : {}),
           ...(asString(values.spec) !== undefined
             ? { spec: asString(values.spec) }
+            : {}),
+          ...(asBoolean(values["allow-http"]) !== undefined
+            ? { allowHttp: asBoolean(values["allow-http"]) }
             : {}),
           ...(asString(values["base-url"]) !== undefined
             ? { baseUrl: asString(values["base-url"]) }
@@ -471,6 +504,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
           : {}),
         ...(asString(values.spec) !== undefined
           ? { spec: asString(values.spec) }
+          : {}),
+        ...(asBoolean(values["allow-http"]) !== undefined
+          ? { allowHttp: asBoolean(values["allow-http"]) }
           : {}),
         ...(asString(values.output) !== undefined
           ? { output: asString(values.output) }

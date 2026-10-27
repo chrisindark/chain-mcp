@@ -176,6 +176,23 @@ Manual tools pass through the **exact same** execution pipeline as OpenAPI compi
 - Response caps and declarative field projections are honored.
 - Unhandled errors are masked safely without leaking secrets or stack traces.
 
+### Remote OpenAPI specifications
+
+ChainMcp CLI supports remote specifications via HTTPS URLs with full SSRF protection across all commands:
+
+```bash
+# Initialize a project directly from a remote specification
+chainmcp init --spec https://api.example.com/openapi.yaml --output ./my-server
+
+# Validate a remote specification and inspect tools with JSON output
+chainmcp validate --spec https://api.example.com/openapi.yaml --json
+
+# Build or export a project targeting a remote contract
+chainmcp export --spec https://api.example.com/openapi.yaml --output ./dist-server
+```
+
+Remote specs are validated against strict SSRF guards: HTTPS is required by default, loopback and private IP ranges are blocked, cloud metadata endpoints are unconditionally forbidden, DNS lookups are pinned to sockets, and responses are streamed with size bounds (10 MiB limit). To target a local loopback spec during development, supply `--allow-http` (or configure `security.allowInsecureHttp: true`).
+
 ### Running over HTTP (`chainmcp serve --transport http`)
 
 ChainMcp can also serve tools over modern Streamable HTTP:
