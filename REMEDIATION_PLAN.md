@@ -52,7 +52,7 @@ rather than marking it complete.
 | [x]  | RM-05 | Reject or implement silently ignored OpenAPI constructs       | P1       | compiler             | —           |
 | [x]  | RM-06 | Preserve upstream base URL scheme, port, and path prefix      | P1       | config/executor/cli  | —           |
 | [x]  | RM-07 | Unify remote spec loading with SSRF-safe fetch policy         | P1       | cli                  | RM-06       |
-| [ ]  | RM-08 | Support code-first projects in `serve`, `build`, `export`     | P1       | cli                  | RM-07       |
+| [x]  | RM-08 | Support code-first projects in `serve`, `build`, `export`     | P1       | cli                  | RM-07       |
 | [ ]  | RM-09 | Resolve or reject `mutualTLS` and `openIdConnect` schemes     | P1       | executor/compiler    | —           |
 | [ ]  | RM-10 | Bound serialization and add response-schema validation        | P1       | core/executor        | —           |
 | [ ]  | RM-11 | Support form, multipart, and cookie parameters                | P2       | compiler/executor    | RM-05       |
@@ -724,6 +724,8 @@ So the tool creates a supported project shape that three of its own commands can
 pnpm --filter @chainmcp/cli test
 pnpm --filter @chainmcp/cli typecheck
 ```
+
+**Status:** Completed on 2026-10-28. Updated `validateCommand` to be contract-optional, validating configuration, entrypoint existence (`src/tools.ts`, `src/server.ts`), and discovered tool definitions, returning `contractKind: "code-first"` (or failing explicitly when `--require-contract` is set). Updated `serveCommand` to run code-first projects in-process over both stdio and HTTP transports using the shared `InMemoryToolRuntime`, failing fast if the tool set is empty. Updated `buildCommand` to produce deterministic code-first project manifests (`chainmcp.manifest.json`) and `compiled-tools.json`, supporting reproducibility verification via `--check`. Updated `exportCommand` to export standalone code-first projects, copying `src/`, generating contract-free configs and Dockerfiles, and emitting code-first manifests. Added `--require-contract` flag to CLI and command options. Added 12 dedicated unit tests in `packages/cli/tests/code-first.test.ts` covering validation modes, `--json` output, stdio/http serving, empty tool rejection, export, build, and `--require-contract` enforcement. All 79 CLI tests pass, inspector conformance passes, and monorepo checks pass clean.
 
 ---
 

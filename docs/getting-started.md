@@ -215,6 +215,59 @@ Start the local server over stdio for testing with the MCP Inspector or Claude D
 chainmcp dev
 ```
 
+## Code-First Quickstart
+
+You can author and serve Model Context Protocol servers in TypeScript without requiring an OpenAPI specification:
+
+### 1. Scaffold a blank project
+
+```bash
+chainmcp init --blank --output ./my-code-server
+cd ./my-code-server
+pnpm install
+```
+
+This generates `chainmcp.config.yaml`, `src/server.ts`, and an example tool in `src/tools.ts` using `@chainmcp/authoring` and Zod.
+
+### 2. Define custom tools
+
+In `src/tools.ts`:
+
+```typescript
+import { defineTool } from "@chainmcp/authoring";
+import { z } from "zod";
+
+export const helloTool = defineTool({
+  name: "hello",
+  description: "Says hello to a person",
+  schema: z.object({
+    name: z.string().describe("Person name"),
+  }),
+  execute: async ({ name }) => ({
+    message: `Hello, ${name}!`,
+  }),
+});
+
+export const tools = [helloTool];
+```
+
+### 3. Validate, build, and serve
+
+```bash
+# Validate project configuration and discover code-first tools
+chainmcp validate
+
+# Build deterministic manifest and tool metadata
+chainmcp build
+
+# Serve over stdio or Streamable HTTP
+chainmcp serve
+chainmcp serve --transport http --port 3333
+
+# Export standalone portable server
+chainmcp export --output ./exported-server
+```
+
 Or run the runnable code-first example:
 
 ```bash

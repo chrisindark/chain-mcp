@@ -23,6 +23,14 @@ export type {
 } from "./types.js";
 
 export { loadSpec } from "./spec-loader.js";
+export {
+  loadCodeFirstTools,
+  discoverCodeFirstEntrypoint,
+  extractToolNamesFromSource,
+  type DiscoveredEntrypoint,
+  type LoadCodeFirstToolsOptions,
+  type LoadedCodeFirstTools,
+} from "./code-first-loader.js";
 
 export { runCli } from "./cli.js";
 export { initCommand } from "./commands/init.js";
@@ -35,6 +43,7 @@ export { gatewayServeCommand } from "./commands/gateway-serve.js";
 export { exportCommand } from "./commands/export.js";
 
 export {
+  buildCodeFirstManifest,
   buildProjectManifest,
   sha256,
   verifyProjectManifest,

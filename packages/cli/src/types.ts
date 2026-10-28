@@ -15,9 +15,9 @@ export interface ProjectManifest {
   manifestVersion: 1;
   generatorVersion: string;
   compilerVersion: string;
-  openapiVersion: string;
+  openapiVersion?: string | undefined;
   projectName: string;
-  contractRevision: string;
+  contractRevision?: string | undefined;
   sourceHash: string;
   toolsetHash: string;
   toolCount: number;
@@ -56,11 +56,15 @@ export interface ValidateOptions {
   spec?: string | undefined;
   allowHttp?: boolean | undefined;
   strict?: boolean | undefined;
+  requireContract?: boolean | undefined;
+  tools?: readonly ToolDefinition[] | undefined;
   cwd?: string | undefined;
 }
 
 export interface ValidateResult {
   ok: boolean;
+  contractKind?: "openapi" | "code-first" | undefined;
+  entrypointPath?: string | undefined;
   config?: ChainMcpConfig | undefined;
   configPath?: string | undefined;
   specPath?: string | undefined;
@@ -81,6 +85,8 @@ export interface BuildOptions {
   config?: string | undefined;
   spec?: string | undefined;
   allowHttp?: boolean | undefined;
+  requireContract?: boolean | undefined;
+  tools?: readonly ToolDefinition[] | undefined;
   outDir?: string | undefined;
   strict?: boolean | undefined;
   check?: boolean | undefined;
@@ -123,6 +129,8 @@ export interface ServeOptions {
   config?: string | undefined;
   spec?: string | undefined;
   allowHttp?: boolean | undefined;
+  requireContract?: boolean | undefined;
+  tools?: readonly ToolDefinition[] | undefined;
   transport?: "stdio" | "http" | undefined;
   port?: number | undefined;
   host?: string | undefined;
@@ -195,6 +203,8 @@ export interface ExportOptions {
   config?: string | undefined;
   spec?: string | undefined;
   allowHttp?: boolean | undefined;
+  requireContract?: boolean | undefined;
+  tools?: readonly ToolDefinition[] | undefined;
   output?: string | undefined;
   force?: boolean | undefined;
   check?: boolean | undefined;

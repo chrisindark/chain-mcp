@@ -140,7 +140,11 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     createdFiles.push("src/tools.ts");
 
     // Write Docker and git templates
-    await writeFile(join(projectDir, "Dockerfile"), renderDockerfile(), "utf8");
+    await writeFile(
+      join(projectDir, "Dockerfile"),
+      renderDockerfile({ blank: true }),
+      "utf8",
+    );
     createdFiles.push("Dockerfile");
     await writeFile(
       join(projectDir, ".dockerignore"),

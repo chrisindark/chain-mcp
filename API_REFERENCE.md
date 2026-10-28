@@ -1624,13 +1624,13 @@ Exported as the `chainmcp` executable (`dist/bin.js`).
 
 ```bash
 chainmcp init [--spec <path|url>] [--blank] [--output <dir>] [--name <name>] [--base-url <url>] [--allow-http] [--force]
-chainmcp validate [--config <path>] [--spec <path|url>] [--strict] [--json] [--allow-http]
-chainmcp build [--config <path>] [--spec <path|url>] [--out-dir <dir>] [--allow-http] [--check]
+chainmcp validate [--config <path>] [--spec <path|url>] [--strict] [--json] [--allow-http] [--require-contract]
+chainmcp build [--config <path>] [--spec <path|url>] [--out-dir <dir>] [--allow-http] [--check] [--require-contract]
 chainmcp diff [--config <path>] [--spec <path|url>] [--against <target>] [--allow-http]
-chainmcp serve [--config <path>] [--spec <path|url>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http] [--allow-http] [--base-url <url>] [--tenant <id>]
+chainmcp serve [--config <path>] [--spec <path|url>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http] [--allow-http] [--base-url <url>] [--tenant <id>] [--require-contract]
 chainmcp gateway serve [--config <path>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http]
 chainmcp dev [--config <path>] [--spec <path|url>] [--base-url <url>] [--allow-http] [--tenant <id>]
-chainmcp export [--config <path>] [--spec <path|url>] [--output <dir>] [--allow-http] [--force] [--check]
+chainmcp export [--config <path>] [--spec <path|url>] [--output <dir>] [--allow-http] [--force] [--check] [--require-contract]
 ```
 
 ### Programmatic API
@@ -1677,10 +1677,27 @@ export function buildProjectManifest(
   options?: { generatedAt?: string },
 ): ProjectManifest;
 
+export function buildCodeFirstManifest(
+  projectName: string,
+  tools: readonly ToolDefinition[],
+  options?: { sourceHash?: string; generatedAt?: string },
+): ProjectManifest;
+
 export function verifyProjectManifest(
   existing: ProjectManifest,
   recompiled: ProjectManifest,
 ): ManifestVerificationResult;
+
+export function loadCodeFirstTools(
+  options: LoadCodeFirstToolsOptions,
+): Promise<LoadedCodeFirstTools>;
+
+export function discoverCodeFirstEntrypoint(
+  cwd: string,
+  explicitEntrypoint?: string,
+): Promise<DiscoveredEntrypoint | undefined>;
+
+export function extractToolNamesFromSource(source: string): string[];
 ```
 
 ### Manifest Schema (`chainmcp.manifest.json`)
@@ -1690,9 +1707,9 @@ export interface ProjectManifest {
   manifestVersion: 1;
   generatorVersion: string;
   compilerVersion: string;
-  openapiVersion: string;
+  openapiVersion?: string | undefined;
   projectName: string;
-  contractRevision: string;
+  contractRevision?: string | undefined;
   sourceHash: string;
   toolsetHash: string;
   toolCount: number;
@@ -1700,6 +1717,7 @@ export interface ProjectManifest {
     name: string;
     hash: string;
   }[];
+  warnings?: readonly CompileDiagnostic[];
   generatedAt: string;
 }
 ```

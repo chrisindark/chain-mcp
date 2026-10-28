@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { dirname, resolve } from "node:path";
 
 import { compileOpenApi } from "@chainmcp/compiler";
 import {
@@ -13,6 +14,7 @@ import { createUpstreamExecutor } from "@chainmcp/executor";
 import { createJsonNavigationTools } from "@chainmcp/json-navigation";
 import { createInboundVerifier, serveHttp, serveStdio } from "@chainmcp/server";
 
+import { loadCodeFirstTools } from "../code-first-loader.js";
 import { loadSpec } from "../spec-loader.js";
 import type { ServeOptions, ServeResult } from "../types.js";
 import { validateCommand } from "./validate.js";
@@ -20,16 +22,22 @@ import { validateCommand } from "./validate.js";
 export async function serveCommand(
   options: ServeOptions,
 ): Promise<ServeResult> {
-  const cwd = options.cwd ?? process.cwd();
+  const cwd =
+    options.cwd ??
+    (options.config
+      ? dirname(resolve(process.cwd(), options.config))
+      : process.cwd());
 
   const validation = await validateCommand({
     config: options.config,
     spec: options.spec,
     allowHttp: options.allowHttp,
+    requireContract: options.requireContract,
+    tools: options.tools,
     cwd,
   });
 
-  if (!validation.ok || !validation.specPath) {
+  if (!validation.ok) {
     const errorDetails = validation.diagnostics
       .filter((d) => d.severity === "error")
       .map((d) => `[${d.code}] ${d.message}`)
@@ -39,31 +47,6 @@ export async function serveCommand(
     );
   }
 
-  // 1. Compile contract
-  let specContent = validation.specContent;
-  if (!specContent && validation.specPath) {
-    const loaded = await loadSpec({
-      source: validation.specPath,
-      cwd,
-      allowHttp:
-        options.allowHttp ?? validation.config?.security?.allowInsecureHttp,
-    });
-    specContent = loaded.content;
-  }
-
-  if (!specContent) {
-    throw new Error("Cannot serve: contract content could not be retrieved.");
-  }
-
-  const compiled = compileOpenApi(specContent, {
-    strict: validation.config?.contract?.strict ?? true,
-  });
-
-  if (!compiled.ok) {
-    throw new Error("Cannot serve: contract compilation returned errors.");
-  }
-
-  // 2. Prepare configuration
   let config: ChainMcpConfig = validation.config!;
   if (!config) {
     config = parseConfig({
@@ -75,45 +58,100 @@ export async function serveCommand(
     });
   }
 
-  // 3. Executor and Runtime setup
-  const baseUrl =
-    options.baseUrl ??
-    config.contract?.baseUrl ??
-    (config.security.allowedUpstreamHosts[0]
-      ? `https://${config.security.allowedUpstreamHosts[0]}`
-      : undefined);
-
-  if (!baseUrl) {
-    throw new Error(
-      "Cannot serve: no baseUrl configured in contract.baseUrl or options, and security.allowedUpstreamHosts is empty.",
-    );
-  }
-
-  const executorOptions = buildExecutorOptions(config, {
-    baseUrl,
-    contractRevision: compiled.contractRevision,
-  });
-  const executor = createUpstreamExecutor(executorOptions);
-
   const runtimeOptions = buildRuntimeOptions(config);
   const runtime = new InMemoryToolRuntime(runtimeOptions);
+  let totalToolCount = 0;
 
-  // Register compiled API operations
-  for (const tool of executor.createTools(compiled.tools)) {
-    runtime.register(tool);
-  }
+  if (validation.contractKind === "code-first") {
+    // 1. Load code-first tools
+    const loaded = await loadCodeFirstTools({
+      cwd,
+      injectedTools: options.tools,
+    });
 
-  // Register JSON navigation tools if enabled
-  if (config.jsonNavigation.enabled) {
-    const limits = createNavigationLimitsFromConfig(config.jsonNavigation);
-    const navTools = createJsonNavigationTools(limits);
-    for (const navTool of navTools) {
-      runtime.register(navTool);
+    if (loaded.tools.length === 0) {
+      throw new Error(
+        "Cannot serve code-first project: no tools found. Export a 'tools' array from src/tools.ts or src/server.ts.",
+      );
     }
-  }
 
-  const totalToolCount =
-    compiled.tools.length + (config.jsonNavigation.enabled ? 4 : 0);
+    for (const tool of loaded.tools) {
+      runtime.register(tool);
+    }
+
+    // Register JSON navigation tools if enabled
+    if (config.jsonNavigation.enabled) {
+      const limits = createNavigationLimitsFromConfig(config.jsonNavigation);
+      const navTools = createJsonNavigationTools(limits);
+      for (const navTool of navTools) {
+        runtime.register(navTool);
+      }
+    }
+
+    totalToolCount =
+      loaded.tools.length + (config.jsonNavigation.enabled ? 4 : 0);
+  } else {
+    // 1. Compile contract
+    let specContent = validation.specContent;
+    if (!specContent && validation.specPath) {
+      const loaded = await loadSpec({
+        source: validation.specPath,
+        cwd,
+        allowHttp:
+          options.allowHttp ?? validation.config?.security?.allowInsecureHttp,
+      });
+      specContent = loaded.content;
+    }
+
+    if (!specContent) {
+      throw new Error("Cannot serve: contract content could not be retrieved.");
+    }
+
+    const compiled = compileOpenApi(specContent, {
+      strict: validation.config?.contract?.strict ?? true,
+    });
+
+    if (!compiled.ok) {
+      throw new Error("Cannot serve: contract compilation returned errors.");
+    }
+
+    // 2. Executor and Runtime setup
+    const baseUrl =
+      options.baseUrl ??
+      config.contract?.baseUrl ??
+      (config.security.allowedUpstreamHosts[0]
+        ? `https://${config.security.allowedUpstreamHosts[0]}`
+        : undefined);
+
+    if (!baseUrl) {
+      throw new Error(
+        "Cannot serve: no baseUrl configured in contract.baseUrl or options, and security.allowedUpstreamHosts is empty.",
+      );
+    }
+
+    const executorOptions = buildExecutorOptions(config, {
+      baseUrl,
+      contractRevision: compiled.contractRevision,
+    });
+    const executor = createUpstreamExecutor(executorOptions);
+
+    // Register compiled API operations
+    for (const tool of executor.createTools(compiled.tools)) {
+      runtime.register(tool);
+    }
+
+    // Register JSON navigation tools if enabled
+    if (config.jsonNavigation.enabled) {
+      const limits = createNavigationLimitsFromConfig(config.jsonNavigation);
+      const navTools = createJsonNavigationTools(limits);
+      for (const navTool of navTools) {
+        runtime.register(navTool);
+      }
+    }
+
+    totalToolCount =
+      compiled.tools.length + (config.jsonNavigation.enabled ? 4 : 0);
+  }
 
   const transport = options.transport ?? config.server.transport ?? "stdio";
 

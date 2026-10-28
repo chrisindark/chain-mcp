@@ -293,7 +293,8 @@ compiled tools across input validation, authorization scopes, rate limiting,
 cooperative cancellation/timeouts, output projection, cache partitioning/hits,
 and safe error concealing without leaking internal messages or credentials.
 `@chainmcp/cli` implements `chainmcp init --blank` for contract-free scaffolding
-and `chainmcp dev` for a local authoring loop over stdio.
+and supports code-first projects across `validate`, `serve`, `build`, `export`, and `dev`
+over both stdio and Streamable HTTP transports with reproducible manifests.
 A runnable code-first example is provided in `examples/code-first` with automated
 integration tests over the official MCP SDK client.
 Documentation is updated in `docs/getting-started.md`, `API_REFERENCE.md`,

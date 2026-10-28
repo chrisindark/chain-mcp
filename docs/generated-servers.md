@@ -16,6 +16,27 @@ Generated servers use the shared runtime (`@chainmcp/core`), upstream executor (
 
 ---
 
+## Project Modes: Contract-Driven vs Code-First
+
+ChainMcp projects operate in one of two modes:
+
+1. **Contract-Driven**: Configured with an OpenAPI 3.0 or 3.1 specification (via `--spec` or `contract.source` in `chainmcp.config.yaml`). Operations are compiled into tools and dispatched upstream via the bounded HTTP executor.
+2. **Code-First**: Configured without an OpenAPI specification. Tool implementations are authored directly in TypeScript using `@chainmcp/authoring` (e.g. `src/tools.ts`), passing through the exact same runtime pipeline (authorization, rate limiting, caching, projection, telemetry, JSON navigation).
+
+### Command Capability Matrix
+
+| Command             | Contract-Driven Projects                                                | Code-First Projects                                                       | Strict Contract Flag (`--require-contract`)                    |
+| :------------------ | :---------------------------------------------------------------------- | :------------------------------------------------------------------------ | :------------------------------------------------------------- |
+| `chainmcp init`     | Scaffolds from OpenAPI contract                                         | `--blank` creates code-first scaffold with example tool                   | N/A                                                            |
+| `chainmcp validate` | Compiles OpenAPI and verifies schemas, params, auth, base URL           | Validates config, verifies entrypoint existence, discovers tools          | Fails validation with `DOCUMENT_INVALID` if contract is absent |
+| `chainmcp build`    | Compiles spec; emits `chainmcp.manifest.json` and `compiled-tools.json` | Emits code-first deterministic manifest and compiled tool definitions     | Fails build if contract is absent                              |
+| `chainmcp serve`    | Serves compiled API tools over `stdio` or `http`                        | Discovers code-first tools and serves over `stdio` or `http`              | Fails server startup if contract is absent                     |
+| `chainmcp dev`      | Runs dev server with compiled API tools and file watchers               | Runs dev server with local code-defined tools                             | N/A                                                            |
+| `chainmcp export`   | Exports standalone server with pinned `spec/openapi.yaml`               | Exports standalone server copying `src/`, config, and code-first manifest | Fails export if contract is absent                             |
+| `chainmcp diff`     | Compares OpenAPI contracts or manifests for breaking changes            | Compares contract or manifest hashes                                      | Requires target contracts                                      |
+
+---
+
 ## CLI Commands (`@chainmcp/cli`)
 
 The `@chainmcp/cli` package provides developer commands:
@@ -29,75 +50,70 @@ chainmcp <command> [options]
 Scaffolds a new ChainMcp project or adds configuration to an existing OpenAPI specification.
 
 ```bash
-chainmcp init --spec ./openapi.yaml [--output <dir>] [--name <name>] [--base-url <url>] [--force]
+chainmcp init [--spec <path|url>] [--blank] [--output <dir>] [--name <name>] [--base-url <url>] [--allow-http] [--force]
 ```
 
-- `--spec <path>`: Path to OpenAPI 3.0 or 3.1 contract (YAML or JSON).
+- `--spec <path|url>`: Path or HTTPS URL to OpenAPI contract.
+- `--blank`: Initialize a blank code-first project with example tool in `src/tools.ts`.
 - `--output <dir>`: Target directory (default: current directory `.`).
 - `--name <name>`: Project name (defaults to sanitized contract title).
-- `--base-url <url>`: Upstream API base URL (defaults to spec `servers[0].url`). Preserves scheme, custom port, and path prefix (e.g. `https://api.example.com/v2` or `http://127.0.0.1:8080`). Auto-derives host into `security.allowedUpstreamHosts` and sets `security.allowInsecureHttp: true` if `http://` is used.
+- `--base-url <url>`: Upstream API base URL (defaults to spec `servers[0].url`).
+- `--allow-http`: Permit plain HTTP base URLs and remote specs for private/loopback hosts.
 - `--force`: Overwrite existing files if target directory is not empty.
-
-Emits: `spec/openapi.yaml`, `chainmcp.config.yaml`, `package.json`, `tsconfig.json`, `tsconfig.build.json`, `src/server.ts`, `src/tools.ts`, `Dockerfile`, `.dockerignore`, `.gitignore`, and `README.md`.
-
-#### Base URL Resolution Precedence
-
-In generated servers and runtime commands (`serve`, `dev`, `export`):
-
-1. Runtime CLI option `--base-url <url>`.
-2. Explicit `contract.baseUrl` from `chainmcp.config.yaml`.
-3. Backward compatibility fallback: `https://${security.allowedUpstreamHosts[0]}` (emits deprecation warning `CONFIG_DEPRECATED` during validation).
 
 ### 2. `chainmcp validate`
 
-Validates project configuration and the OpenAPI contract, reporting compile diagnostics.
+Validates project configuration, contract, or code-first entrypoints.
 
 ```bash
-chainmcp validate [--config <path>] [--spec <path>] [--strict]
+chainmcp validate [--config <path>] [--spec <path|url>] [--strict] [--json] [--allow-http] [--require-contract]
 ```
 
 - `--config <path>`: Path to `chainmcp.config.yaml`.
-- `--spec <path>`: Path to OpenAPI contract (overriding config).
+- `--spec <path|url>`: Path or HTTPS URL to OpenAPI contract.
 - `--strict`: Enforces strict validation mode (default: `true`).
-
-Verifies schema constraints, parameter bindings, security schemes, and warns if `security.allowedUpstreamHosts` is empty.
+- `--json`: Emit validation output as structured JSON including `contractKind` (`"openapi"` or `"code-first"`).
+- `--allow-http`: Permit plain HTTP for loopback/private hosts.
+- `--require-contract`: Require an OpenAPI contract and fail if only code-first entrypoints are present.
 
 ### 3. `chainmcp build`
 
-Compiles the contract and produces the generation manifest and precompiled tool definitions.
+Produces the generation manifest and precompiled tool definitions.
 
 ```bash
-chainmcp build [--config <path>] [--spec <path>] [--out-dir <dir>] [--check]
+chainmcp build [--config <path>] [--spec <path|url>] [--out-dir <dir>] [--check] [--allow-http] [--require-contract]
 ```
 
 - `--out-dir <dir>`: Directory for emitted build artifacts (default: `./dist`).
 - `--check`: Verifies reproducibility against an existing `chainmcp.manifest.json`.
+- `--require-contract`: Require an OpenAPI contract and fail if absent.
 
-Emits `chainmcp.manifest.json` and `compiled-tools.json`.
+Emits `chainmcp.manifest.json` and `compiled-tools.json` for both contract-driven and code-first projects.
 
 ### 4. `chainmcp serve`
 
-Runs the MCP server over standard I/O (`stdio`).
+Runs the MCP server over standard I/O (`stdio`) or Streamable HTTP (`http`).
 
 ```bash
-chainmcp serve [--config <path>] [--spec <path>] [--base-url <url>] [--tenant <id>]
+chainmcp serve [--config <path>] [--spec <path|url>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--base-url <url>] [--tenant <id>] [--allow-unauthenticated-http] [--allow-http] [--require-contract]
 ```
 
-- Binds the upstream executor and runtime.
-- Registers compiled API tools and JSON exploration tools (`json_inspect_shape`, `json_select_path`, `json_paginate`, `json_filter`) when enabled.
-- Connects to stdio transport, ready to handle incoming JSON-RPC calls from Claude Desktop, Cursor, or other MCP clients.
+- Supports both contract-driven and code-first projects in-process with identical shared runtime, signal handling, rate limiting, and JSON navigation tools.
+- Supports both `stdio` and `http` transports for contract-driven and code-first projects.
+- `--require-contract`: Require an OpenAPI contract and fail if absent.
 
 ### 5. `chainmcp export`
 
-Exports a clean, portable standalone server project with a pinned contract snapshot.
+Exports a clean, portable standalone server project with a pinned manifest.
 
 ```bash
-chainmcp export [--config <path>] [--spec <path>] [--output <dir>] [--force] [--check]
+chainmcp export [--config <path>] [--spec <path|url>] [--output <dir>] [--force] [--check] [--allow-http] [--require-contract]
 ```
 
-- `--output <dir>`: Target output directory (default: `./generated-server`).
-- `--force`: Overwrite target directory if non-empty.
+- For contract-driven projects: pins `spec/openapi.yaml`, generates server code and manifest.
+- For code-first projects: copies `src/`, generates `chainmcp.config.yaml`, `package.json`, code-first `chainmcp.manifest.json`, and Dockerfile without `spec` references.
 - `--check`: Asserts byte-for-byte reproducibility against recompilation.
+- `--require-contract`: Require an OpenAPI contract and fail if absent.
 
 ---
 
