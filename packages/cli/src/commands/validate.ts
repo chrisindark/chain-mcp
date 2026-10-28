@@ -6,6 +6,7 @@ import { compileOpenApi, type CompileDiagnostic } from "@chainmcp/compiler";
 import { parseConfig, type ChainMcpConfig } from "@chainmcp/config";
 import { normalizeAllowedHost } from "@chainmcp/executor";
 
+import { loadCodeFirstTools } from "../code-first-loader.js";
 import { loadSpec } from "../spec-loader.js";
 import type { ValidateOptions, ValidateResult } from "../types.js";
 
@@ -93,21 +94,74 @@ export async function validateCommand(
   }
 
   if (!candidateSource) {
+    if (options.requireContract) {
+      return {
+        ok: false,
+        contractKind: "openapi",
+        config,
+        configPath,
+        toolCount: 0,
+        toolNames: [],
+        diagnostics: [
+          {
+            severity: "error",
+            code: "DOCUMENT_INVALID",
+            message:
+              "No OpenAPI contract found. Contract is required by --require-contract.",
+          },
+        ],
+        error: "Contract specification file not found.",
+      };
+    }
+
+    // Code-first project validation: validate entrypoint existence and discover tools
+    const searchDir = configPath ? dirname(configPath) : cwd;
+    const loadedCodeFirst = await loadCodeFirstTools({
+      cwd: searchDir,
+      injectedTools: options.tools,
+    });
+
+    if (
+      !loadedCodeFirst.entrypoint &&
+      (!options.tools || options.tools.length === 0)
+    ) {
+      return {
+        ok: false,
+        contractKind: "code-first",
+        config,
+        configPath,
+        toolCount: 0,
+        toolNames: [],
+        diagnostics: [
+          {
+            severity: "error",
+            code: "DOCUMENT_INVALID",
+            message:
+              "No OpenAPI contract found and no code-first entrypoint detected (expected src/server.ts or src/tools.ts). Specify --spec <path> or declare tools in src/tools.ts.",
+          },
+        ],
+        error: "No OpenAPI contract or code-first entrypoint found.",
+      };
+    }
+
+    const toolCount =
+      loadedCodeFirst.tools.length > 0
+        ? loadedCodeFirst.tools.length
+        : loadedCodeFirst.toolNames.length;
+    const toolNames =
+      loadedCodeFirst.tools.length > 0
+        ? loadedCodeFirst.tools.map((t) => t.name)
+        : loadedCodeFirst.toolNames;
+
     return {
-      ok: false,
+      ok: true,
+      contractKind: "code-first",
       config,
       configPath,
-      toolCount: 0,
-      toolNames: [],
-      diagnostics: [
-        {
-          severity: "error",
-          code: "DOCUMENT_INVALID",
-          message:
-            "No OpenAPI contract found. Specify --spec <path> or declare contract.source in chainmcp.config.yaml.",
-        },
-      ],
-      error: "Contract specification file not found.",
+      entrypointPath: loadedCodeFirst.entrypoint?.path,
+      toolCount,
+      toolNames,
+      diagnostics: [],
     };
   }
 
@@ -228,6 +282,7 @@ export async function validateCommand(
 
   return {
     ok: !hasErrors,
+    contractKind: "openapi",
     config,
     configPath,
     specPath,

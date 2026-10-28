@@ -395,7 +395,36 @@ export const tools: readonly ToolDefinition[] = [];
 `;
 }
 
-export function renderDockerfile(): string {
+export function renderDockerfile(options?: {
+  blank?: boolean;
+  codeFirst?: boolean;
+}): string {
+  const isCodeFirst = options?.codeFirst || options?.blank;
+  if (isCodeFirst) {
+    return `# Multi-stage Docker build for ChainMcp generated server (code-first)
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci || npm install
+COPY tsconfig*.json ./
+COPY src ./src
+RUN npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package*.json ./
+RUN npm ci --only=production || npm install --production
+COPY --from=builder /app/dist ./dist
+COPY chainmcp.config.yaml ./
+COPY chainmcp.manifest.json ./
+
+EXPOSE 3333
+
+USER node
+ENTRYPOINT ["node", "dist/server.js"]
+`;
+  }
   return `# Multi-stage Docker build for ChainMcp generated server
 FROM node:20-alpine AS builder
 WORKDIR /app

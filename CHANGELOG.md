@@ -43,6 +43,13 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- **RM-08 code-first project support across `serve`, `build`, and `export`:**
+  - Made `validateCommand` contract-optional. Contract-driven projects compile and validate the OpenAPI specification as before, while contract-free projects validate configuration, check entrypoint existence (`src/tools.ts`, `src/server.ts`), and discover code-first tools, returning `contractKind: "code-first"`.
+  - Added `--require-contract` flag to `validate`, `build`, `serve`, and `export` to enforce contract requirement where desired.
+  - Updated `serveCommand` to run code-first projects in-process over both `stdio` and Streamable HTTP (`http`) transports using the shared `InMemoryToolRuntime`, ensuring consistent signal handling, rate limiting, and JSON navigation, and rejecting empty toolsets with an explicit error.
+  - Updated `buildCommand` to generate deterministic code-first project manifests (`chainmcp.manifest.json`) and `compiled-tools.json`, supporting reproducibility verification via `--check`.
+  - Updated `exportCommand` to export standalone code-first projects, copying source files from `src/`, generating contract-free configs and Dockerfiles, and emitting code-first manifests.
+  - Added `loadCodeFirstTools`, `discoverCodeFirstEntrypoint`, and `buildCodeFirstManifest` to `@chainmcp/cli`.
 - **RM-07 remote specification loading unification & SSRF-safe fetch policy:**
   - Implemented unified `loadSpec` module in `@chainmcp/cli` (`packages/cli/src/spec-loader.ts`) with strict SSRF-safe fetch policy.
   - Required HTTPS by default for all remote specifications; plain HTTP is restricted exclusively to loopback/private hosts when opted into via `--allow-http` or `security.allowInsecureHttp: true`, and strictly rejected for public endpoints.

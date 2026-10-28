@@ -45,12 +45,14 @@ Command options:
     --strict             Enforce strict validation mode (default: true)
     --json               Emit validation result as JSON
     --allow-http         Permit plain HTTP for loopback/private hosts
+    --require-contract   Require an OpenAPI contract specification
 
   build:
     --config <path>      Path to chainmcp.config.yaml
     --spec <path>        Path to OpenAPI contract
     --out-dir <dir>      Output directory for build artifacts (default: ./dist)
     --check              Verify reproducibility against existing manifest
+    --require-contract   Require an OpenAPI contract specification
 
   diff:
     --config <path>      Path to chainmcp.config.yaml
@@ -67,6 +69,7 @@ Command options:
     --allow-unauthenticated-http Explicitly allow unauthenticated HTTP on non-loopback hosts
     --base-url <url>     Override upstream base URL
     --tenant <id>        Tenant identifier for context (default: default)
+    --require-contract   Require an OpenAPI contract specification
 
   dev:
     --config <path>      Path to chainmcp.config.yaml
@@ -88,6 +91,7 @@ Command options:
     --output <dir>       Output directory for generated server (default: ./generated-server)
     --force              Overwrite non-empty target directory
     --check              Verify deterministic reproducibility
+    --require-contract   Require an OpenAPI contract specification
 `;
 
 function asString(val: unknown): string | undefined {
@@ -126,6 +130,7 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       json: { type: "boolean", default: false },
       "allow-http": { type: "boolean", default: false },
       "allow-unauthenticated-http": { type: "boolean", default: false },
+      "require-contract": { type: "boolean", default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -203,6 +208,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
         ...(asBoolean(values["allow-http"]) !== undefined
           ? { allowHttp: asBoolean(values["allow-http"]) }
           : {}),
+        ...(asBoolean(values["require-contract"]) !== undefined
+          ? { requireContract: asBoolean(values["require-contract"]) }
+          : {}),
       });
 
       if (values.json) {
@@ -227,9 +235,18 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       }
 
       log(`Validation passed:`);
-      log(`Contract revision: ${result.contractRevision}`);
-      log(`Tools compiled: ${result.toolCount}`);
-      log(`Toolset hash: ${result.toolsetHash}`);
+      if (result.contractKind === "code-first") {
+        log(`Project mode: code-first`);
+        if (result.entrypointPath) {
+          log(`Entrypoint: ${result.entrypointPath}`);
+        }
+      } else {
+        log(`Contract revision: ${result.contractRevision}`);
+      }
+      log(`Tools: ${result.toolCount}`);
+      if (result.toolsetHash) {
+        log(`Toolset hash: ${result.toolsetHash}`);
+      }
       if (result.resolvedSource) {
         log(`Resolved source: ${result.resolvedSource}`);
       }
@@ -259,6 +276,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
         ...(asBoolean(values["allow-http"]) !== undefined
           ? { allowHttp: asBoolean(values["allow-http"]) }
           : {}),
+        ...(asBoolean(values["require-contract"]) !== undefined
+          ? { requireContract: asBoolean(values["require-contract"]) }
+          : {}),
       });
 
       if (!result.ok) {
@@ -269,7 +289,11 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       log(`Build succeeded:`);
       log(`Output directory: ${result.outDir}`);
       log(`Manifest: ${result.manifestPath}`);
-      log(`Contract revision: ${result.manifest.contractRevision}`);
+      if (result.manifest.contractRevision) {
+        log(`Contract revision: ${result.manifest.contractRevision}`);
+      } else {
+        log(`Project mode: code-first`);
+      }
       log(`Tools: ${result.toolCount}`);
       if (result.verifiedReproducible) {
         log(`Reproducibility: verified (matches existing manifest)`);
@@ -374,6 +398,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
             : {}),
           ...(asString(values.tenant) !== undefined
             ? { tenantId: asString(values.tenant) }
+            : {}),
+          ...(asBoolean(values["require-contract"]) !== undefined
+            ? { requireContract: asBoolean(values["require-contract"]) }
             : {}),
           ...(io?.stdin !== undefined ? { stdin: io.stdin } : {}),
           ...(io?.stdoutStream !== undefined
@@ -517,6 +544,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
         ...(asBoolean(values.check) !== undefined
           ? { check: asBoolean(values.check) }
           : {}),
+        ...(asBoolean(values["require-contract"]) !== undefined
+          ? { requireContract: asBoolean(values["require-contract"]) }
+          : {}),
       });
 
       if (!result.ok) {
@@ -527,7 +557,11 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       log(`Export succeeded:`);
       log(`Exported project to: ${result.outputDir}`);
       log(`Files written: ${result.filesWritten.length}`);
-      log(`Contract revision: ${result.manifest.contractRevision}`);
+      if (result.manifest.contractRevision) {
+        log(`Contract revision: ${result.manifest.contractRevision}`);
+      } else {
+        log(`Project mode: code-first`);
+      }
       log(`Tools compiled: ${result.manifest.toolCount}`);
       if (result.verifiedReproducible) {
         log(`Reproducibility: verified`);

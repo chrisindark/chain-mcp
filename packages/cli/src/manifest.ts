@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { COMPILER_VERSION, type CompileResult } from "@chainmcp/compiler";
+import type { ToolDefinition } from "@chainmcp/core";
 import { CLI_VERSION, type ProjectManifest } from "./types.js";
 
 /**
@@ -39,6 +40,42 @@ export function buildProjectManifest(
   };
 }
 
+/**
+ * Builds a deterministic ProjectManifest for a code-first project from its tool definitions.
+ */
+export function buildCodeFirstManifest(
+  projectName: string,
+  tools: readonly ToolDefinition[],
+  options?: { sourceHash?: string; generatedAt?: string },
+): ProjectManifest {
+  const toolEntries = tools.map((t) => {
+    const canonical = JSON.stringify({
+      name: t.name,
+      description: t.description ?? "",
+      inputSchema: t.inputSchema ?? {},
+    });
+    return {
+      name: t.name,
+      hash: sha256(canonical),
+    };
+  });
+  toolEntries.sort((a, b) => a.name.localeCompare(b.name));
+  const combinedHashes = toolEntries.map((t) => t.hash).join(":");
+  const toolsetHash = sha256(combinedHashes);
+
+  return {
+    manifestVersion: 1,
+    generatorVersion: CLI_VERSION,
+    compilerVersion: COMPILER_VERSION,
+    projectName,
+    sourceHash: options?.sourceHash ?? sha256("code-first"),
+    toolsetHash,
+    toolCount: tools.length,
+    tools: toolEntries,
+    generatedAt: options?.generatedAt ?? "2026-01-01T00:00:00.000Z",
+  };
+}
+
 export interface ManifestVerificationResult {
   match: boolean;
   mismatches: string[];
@@ -56,6 +93,11 @@ export function verifyProjectManifest(
   if (existing.sourceHash !== recompiled.sourceHash) {
     mismatches.push(
       `Source hash mismatch: expected ${existing.sourceHash}, got ${recompiled.sourceHash}`,
+    );
+  }
+  if (existing.openapiVersion !== recompiled.openapiVersion) {
+    mismatches.push(
+      `OpenAPI version mismatch: expected ${existing.openapiVersion}, got ${recompiled.openapiVersion}`,
     );
   }
   if (existing.contractRevision !== recompiled.contractRevision) {
