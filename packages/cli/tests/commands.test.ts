@@ -369,6 +369,64 @@ security:
       expect(insecureHttpError).toBeDefined();
     });
 
+    it("fails validation for unsupported security schemes (openIdConnect) in strict mode and warns in permissive mode", async () => {
+      const specPath = join(tempDir, "openapi-oidc.yaml");
+      await writeFile(
+        specPath,
+        `
+openapi: 3.1.0
+info:
+  title: OIDC API
+  version: 1.0.0
+paths:
+  /auth-test:
+    get:
+      operationId: authTest
+      security:
+        - oidcScheme: []
+      responses:
+        '200':
+          description: OK
+components:
+  securitySchemes:
+    oidcScheme:
+      type: openIdConnect
+      openIdConnectUrl: https://auth.example.com/.well-known/openid-configuration
+`,
+        "utf8",
+      );
+
+      const strictResult = await validateCommand({
+        spec: specPath,
+        cwd: tempDir,
+        strict: true,
+      });
+
+      expect(strictResult.ok).toBe(false);
+      const oidcError = strictResult.diagnostics.find(
+        (d) =>
+          d.severity === "error" &&
+          d.code === "UNSUPPORTED_SECURITY_SCHEME" &&
+          d.message.includes("openIdConnect"),
+      );
+      expect(oidcError).toBeDefined();
+
+      const permissiveResult = await validateCommand({
+        spec: specPath,
+        cwd: tempDir,
+        strict: false,
+      });
+
+      expect(permissiveResult.ok).toBe(true);
+      const oidcWarn = permissiveResult.diagnostics.find(
+        (d) =>
+          d.severity === "warning" &&
+          d.code === "UNSUPPORTED_SECURITY_SCHEME" &&
+          d.message.includes("openIdConnect"),
+      );
+      expect(oidcWarn).toBeDefined();
+    });
+
     it("asserts the emitted baseUrl logic in renderServerTs", () => {
       const serverSource = renderServerTs();
       expect(serverSource).toContain("options?.baseUrl ??");

@@ -43,6 +43,11 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- **RM-09 reject unsupported security schemes `mutualTLS` and `openIdConnect`:**
+  - Added compile-time rejection and warning diagnostics for unsatisfiable OpenAPI security schemes `mutualTLS` and `openIdConnect` via diagnostic code `UNSUPPORTED_SECURITY_SCHEME`.
+  - In strict mode (`strict: true`, default), specs declaring `mutualTLS` or `openIdConnect` fail compilation and `chainmcp validate` with a diagnostic error, preventing runtime credential-resolution failures.
+  - In permissive mode (`strict: false`), compilation succeeds with structured warnings preserved in `CompileManifest.warnings`, surviving into `compiled-tools.json` and `chainmcp.manifest.json`.
+  - Added security scheme support matrix to `docs/openapi-support.md` and detailed satisfiability documentation in `docs/authentication.md`.
 - **RM-08 code-first project support across `serve`, `build`, and `export`:**
   - Made `validateCommand` contract-optional. Contract-driven projects compile and validate the OpenAPI specification as before, while contract-free projects validate configuration, check entrypoint existence (`src/tools.ts`, `src/server.ts`), and discover code-first tools, returning `contractKind: "code-first"`.
   - Added `--require-contract` flag to `validate`, `build`, `serve`, and `export` to enforce contract requirement where desired.

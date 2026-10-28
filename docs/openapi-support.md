@@ -120,6 +120,19 @@ and credential injection remain open.
 
 Warnings generated in permissive mode (`strict: false`) are preserved in `result.manifest.warnings` and on each compiled tool's `warnings` array, surviving into `compiled-tools.json` and `chainmcp.manifest.json`.
 
+## Security scheme support matrix
+
+| Scheme Type     | Context / Subtype                  | Supported by Runtime | Unsupported Behavior                                                 | Strict mode (`strict: true`)        | Permissive mode (`strict: false`)     |
+| --------------- | ---------------------------------- | -------------------- | -------------------------------------------------------------------- | ----------------------------------- | ------------------------------------- |
+| `apiKey`        | `in: header`, `query`, or `cookie` | Yes                  | —                                                                    | Allowed                             | Allowed                               |
+| `http`          | `scheme: bearer` or `basic`        | Yes                  | —                                                                    | Allowed                             | Allowed                               |
+| `oauth2`        | `clientCredentials` flow           | Yes                  | —                                                                    | Allowed                             | Allowed                               |
+| `mutualTLS`     | Client certificates (OpenAPI 3.1)  | No                   | Upstream client certs not supported by executor credential providers | `UNSUPPORTED_SECURITY_SCHEME` error | `UNSUPPORTED_SECURITY_SCHEME` warning |
+| `mutualTLS`     | OpenAPI 3.0                        | No                   | Not in OpenAPI 3.0 specification                                     | `SECURITY_SCHEME_INVALID` error     | `SECURITY_SCHEME_INVALID` error       |
+| `openIdConnect` | OIDC discovery / token resolution  | No                   | OIDC discovery and dynamic token resolution not implemented          | `UNSUPPORTED_SECURITY_SCHEME` error | `UNSUPPORTED_SECURITY_SCHEME` warning |
+
+Warnings generated in permissive mode are preserved in `result.manifest.warnings`, surviving into `compiled-tools.json` and `chainmcp.manifest.json`.
+
 ### OpenAPI 3.0 `nullable`
 
 The compiler implements this translation. OpenAPI 3.0 expresses nullability with `nullable: true`, while the runtime validates only the JSON Schema union form (`type: ["string", "null"]`). `auditInputSchema` rejects `nullable` as an unsupported keyword, so an untranslated schema would fail closed at registration with `CONTRACT_INVALID` rather than silently dropping the constraint.
