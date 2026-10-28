@@ -96,6 +96,18 @@ Upstream credentials implement the `UpstreamCredential` union:
 - `http`: `bearer` or `basic` authentication headers.
 - `oauth2`: bearer tokens with expiration timestamps and scopes.
 
+### Supported and Unsupported Upstream Schemes
+
+The compiler and runtime distinguish between schemes that can be satisfied by upstream credential providers and schemes that cannot:
+
+- **Supported Schemes:**
+  - `apiKey`: Transmitted in `header`, `query`, or `cookie`. Satisfiable via static secrets, environment variables, or encrypted secret store.
+  - `http`: `bearer` or `basic` authentication headers.
+  - `oauth2`: `clientCredentials` grant flow, obtaining and caching tokens with automated expiration management.
+- **Unsupported Schemes:**
+  - `mutualTLS`: Client certificates are not supported by executor credential providers. Compiling a contract declaring `mutualTLS` in strict mode (`strict: true`, default) emits a diagnostic with code `UNSUPPORTED_SECURITY_SCHEME` and fails compilation/validation. In permissive mode (`strict: false`), it emits a warning recorded in `manifest.warnings`.
+  - `openIdConnect`: Dynamic discovery via `openIdConnectUrl` and automated client token exchange are not implemented. Declaring `openIdConnect` in strict mode emits `UNSUPPORTED_SECURITY_SCHEME` and fails compilation/validation. In permissive mode, it emits a warning recorded in `manifest.warnings`. Upstream APIs using OIDC tokens should declare `oauth2` client credentials or `http` bearer schemes instead.
+
 ### Available Providers
 
 1. **`StaticCredentialProvider`:** Injects hardcoded or programmatically derived credentials.

@@ -1418,7 +1418,7 @@ describe("security structures", () => {
     expect(codes(invalid)).toContain("SECURITY_SCHEME_INVALID");
   });
 
-  it("rejects mutualTLS in OpenAPI 3.0 but accepts it in 3.1", () => {
+  it("rejects mutualTLS in OpenAPI 3.0 (invalid) and 3.1 in strict mode, accepts with warning in permissive mode", () => {
     const document = (version: string) =>
       baseDocument(
         { "/x": { get: operation({ security: [{ mtls: [] }] }) } },
@@ -1431,16 +1431,39 @@ describe("security structures", () => {
       );
 
     const result30 = compileDocument(document("3.0.3"));
+    expect(result30.ok).toBe(false);
     expect(codes(result30)).toContain("SECURITY_SCHEME_INVALID");
 
-    const result31 = compileDocument(document("3.1.0"));
-    expect(result31.ok).toBe(true);
-    expect(result31.securitySchemes.mtls).toEqual({
+    const result31Strict = compileDocument(document("3.1.0"));
+    expect(result31Strict.ok).toBe(false);
+    expect(codes(result31Strict)).toContain("UNSUPPORTED_SECURITY_SCHEME");
+    expect(
+      result31Strict.diagnostics.find(
+        (d) => d.code === "UNSUPPORTED_SECURITY_SCHEME",
+      )?.severity,
+    ).toBe("error");
+
+    const result31Permissive = compileDocument(document("3.1.0"), {
+      strict: false,
+    });
+    expect(result31Permissive.ok).toBe(true);
+    expect(codes(result31Permissive)).toContain("UNSUPPORTED_SECURITY_SCHEME");
+    expect(
+      result31Permissive.diagnostics.find(
+        (d) => d.code === "UNSUPPORTED_SECURITY_SCHEME",
+      )?.severity,
+    ).toBe("warning");
+    expect(
+      result31Permissive.manifest.warnings?.some(
+        (w) => w.code === "UNSUPPORTED_SECURITY_SCHEME",
+      ),
+    ).toBe(true);
+    expect(result31Permissive.securitySchemes.mtls).toEqual({
       name: "mtls",
       type: "mutualTLS",
     });
     expect(
-      singleTool(result31).authentication.alternatives[0]?.schemes[0],
+      singleTool(result31Permissive).authentication.alternatives[0]?.schemes[0],
     ).toEqual({ name: "mtls", type: "mutualTLS", scopes: [] });
   });
 
@@ -1563,7 +1586,7 @@ describe("security structures", () => {
     ).toEqual(["write"]);
   });
 
-  it("preserves OpenID Connect scopes without a declared scope catalog", () => {
+  it("preserves OpenID Connect scopes without a declared scope catalog in permissive mode", () => {
     const result = compileDocument(
       baseDocument(
         {
@@ -1583,8 +1606,15 @@ describe("security structures", () => {
           },
         },
       ),
+      { strict: false },
     );
 
+    expect(result.ok).toBe(true);
+    expect(codes(result)).toContain("UNSUPPORTED_SECURITY_SCHEME");
+    expect(
+      result.diagnostics.find((d) => d.code === "UNSUPPORTED_SECURITY_SCHEME")
+        ?.severity,
+    ).toBe("warning");
     expect(
       singleTool(result).authentication.alternatives[0]?.schemes[0],
     ).toEqual({
@@ -2205,5 +2235,179 @@ describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
       expect(typeof d.location).toBe("string");
       expect(d.location?.startsWith("#")).toBe(true);
     }
+  });
+});
+
+describe("RM-09 unsupported security schemes rejection and warning", () => {
+  const oidcDoc = (version = "3.1.0") =>
+    baseDocument(
+      {
+        "/users": {
+          get: operation({
+            operationId: "getUsers",
+            security: [{ oidcAuth: ["read:users"] }],
+          }),
+        },
+      },
+      {
+        components: {
+          securitySchemes: {
+            oidcAuth: {
+              type: "openIdConnect",
+              openIdConnectUrl:
+                "https://auth.example.com/.well-known/openid-configuration",
+            },
+          },
+        },
+      },
+      version,
+    );
+
+  const mtlsDoc = (version = "3.1.0") =>
+    baseDocument(
+      {
+        "/secure": {
+          get: operation({
+            operationId: "getSecure",
+            security: [{ mtlsAuth: [] }],
+          }),
+        },
+      },
+      {
+        components: {
+          securitySchemes: {
+            mtlsAuth: {
+              type: "mutualTLS",
+              description: "Client certificate authentication",
+            },
+          },
+        },
+      },
+      version,
+    );
+
+  it("rejects openIdConnect in strict mode with UNSUPPORTED_SECURITY_SCHEME", () => {
+    const result = compileDocument(oidcDoc());
+    expect(result.ok).toBe(false);
+    const diagnostic = result.diagnostics.find(
+      (d) => d.code === "UNSUPPORTED_SECURITY_SCHEME",
+    );
+    expect(diagnostic).toBeDefined();
+    expect(diagnostic?.severity).toBe("error");
+    expect(diagnostic?.location).toBe("#/components/securitySchemes/oidcAuth");
+    expect(diagnostic?.message).toContain("openIdConnect");
+  });
+
+  it("accepts openIdConnect in permissive mode with warning in manifest", () => {
+    const result = compileDocument(oidcDoc(), { strict: false });
+    expect(result.ok).toBe(true);
+    const diagnostic = result.diagnostics.find(
+      (d) => d.code === "UNSUPPORTED_SECURITY_SCHEME",
+    );
+    expect(diagnostic).toBeDefined();
+    expect(diagnostic?.severity).toBe("warning");
+    expect(diagnostic?.location).toBe("#/components/securitySchemes/oidcAuth");
+    expect(
+      result.manifest.warnings?.some(
+        (w) => w.code === "UNSUPPORTED_SECURITY_SCHEME",
+      ),
+    ).toBe(true);
+    expect(result.securitySchemes.oidcAuth).toEqual({
+      name: "oidcAuth",
+      type: "openIdConnect",
+      openIdConnectUrl:
+        "https://auth.example.com/.well-known/openid-configuration",
+    });
+  });
+
+  it("rejects mutualTLS in OpenAPI 3.1 in strict mode with UNSUPPORTED_SECURITY_SCHEME", () => {
+    const result = compileDocument(mtlsDoc("3.1.0"));
+    expect(result.ok).toBe(false);
+    const diagnostic = result.diagnostics.find(
+      (d) => d.code === "UNSUPPORTED_SECURITY_SCHEME",
+    );
+    expect(diagnostic).toBeDefined();
+    expect(diagnostic?.severity).toBe("error");
+    expect(diagnostic?.location).toBe("#/components/securitySchemes/mtlsAuth");
+    expect(diagnostic?.message).toContain("mutualTLS");
+  });
+
+  it("accepts mutualTLS in permissive mode with warning in manifest", () => {
+    const result = compileDocument(mtlsDoc("3.1.0"), { strict: false });
+    expect(result.ok).toBe(true);
+    const diagnostic = result.diagnostics.find(
+      (d) => d.code === "UNSUPPORTED_SECURITY_SCHEME",
+    );
+    expect(diagnostic).toBeDefined();
+    expect(diagnostic?.severity).toBe("warning");
+    expect(diagnostic?.location).toBe("#/components/securitySchemes/mtlsAuth");
+    expect(
+      result.manifest.warnings?.some(
+        (w) => w.code === "UNSUPPORTED_SECURITY_SCHEME",
+      ),
+    ).toBe(true);
+    expect(result.securitySchemes.mtlsAuth).toEqual({
+      name: "mtlsAuth",
+      type: "mutualTLS",
+      description: "Client certificate authentication",
+    });
+  });
+
+  it("compiles supported schemes (apiKey, http, oauth2) without UNSUPPORTED_SECURITY_SCHEME diagnostics", () => {
+    const doc = baseDocument(
+      {
+        "/pets": {
+          get: operation({
+            operationId: "getPets",
+            security: [
+              { apiKeyHeader: [] },
+              { bearerHttp: [] },
+              { basicHttp: [] },
+              { oauthClient: ["read:pets"] },
+            ],
+          }),
+        },
+      },
+      {
+        components: {
+          securitySchemes: {
+            apiKeyHeader: {
+              type: "apiKey",
+              in: "header",
+              name: "X-API-Key",
+            },
+            bearerHttp: {
+              type: "http",
+              scheme: "bearer",
+              bearerFormat: "JWT",
+            },
+            basicHttp: {
+              type: "http",
+              scheme: "basic",
+            },
+            oauthClient: {
+              type: "oauth2",
+              flows: {
+                clientCredentials: {
+                  tokenUrl: "https://auth.example.com/oauth/token",
+                  scopes: { "read:pets": "Read pets" },
+                },
+              },
+            },
+          },
+        },
+      },
+    );
+
+    const result = compileDocument(doc, { strict: true });
+    expect(result.ok).toBe(true);
+    expect(codes(result)).not.toContain("UNSUPPORTED_SECURITY_SCHEME");
+    expect(result.manifest.warnings).toBeUndefined();
+    expect(Object.keys(result.securitySchemes).sort()).toEqual([
+      "apiKeyHeader",
+      "basicHttp",
+      "bearerHttp",
+      "oauthClient",
+    ]);
   });
 });

@@ -212,7 +212,9 @@ export function compileOpenApi(
     });
   }
 
-  const securitySchemes = parseSecuritySchemes(document, version, diagnostics);
+  const securitySchemes = parseSecuritySchemes(document, version, diagnostics, {
+    strict: settings.strict,
+  });
   let globalSecurity: readonly SecurityRequirement[] = [];
   if (Object.hasOwn(document, "security")) {
     const parsedGlobalSecurity = parseSecurityRequirements(

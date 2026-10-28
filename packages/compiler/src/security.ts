@@ -16,7 +16,9 @@ export function parseSecuritySchemes(
   document: Record<string, unknown>,
   version: OpenApiVersion,
   diagnostics: CompileDiagnostic[],
+  options?: { strict?: boolean },
 ): Readonly<Record<string, CompiledSecurityScheme>> {
+  const strict = options?.strict ?? true;
   const components = document.components;
   if (components === undefined) return {};
   if (!isPlainObject(components)) {
@@ -170,6 +172,13 @@ export function parseSecuritySchemes(
         }
       }
       scheme.flows = raw.flows;
+    } else if (type === "mutualTLS") {
+      diagnostics.push({
+        severity: strict ? "error" : "warning",
+        code: "UNSUPPORTED_SECURITY_SCHEME",
+        message: `Security scheme '${name}' uses unsupported type 'mutualTLS'. Upstream mutualTLS client certificates are not supported by executor credential providers; use apiKey, http, or oauth2, or set strict: false to ignore with a warning`,
+        location,
+      });
     } else if (type === "openIdConnect") {
       if (
         typeof raw.openIdConnectUrl !== "string" ||
@@ -184,6 +193,12 @@ export function parseSecuritySchemes(
         continue;
       }
       scheme.openIdConnectUrl = raw.openIdConnectUrl;
+      diagnostics.push({
+        severity: strict ? "error" : "warning",
+        code: "UNSUPPORTED_SECURITY_SCHEME",
+        message: `Security scheme '${name}' uses unsupported type 'openIdConnect'. OpenID Connect discovery and token resolution are not supported; use oauth2 client credentials, or set strict: false to ignore with a warning`,
+        location,
+      });
     }
 
     schemeEntries.push([name, scheme]);

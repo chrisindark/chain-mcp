@@ -53,7 +53,7 @@ rather than marking it complete.
 | [x]  | RM-06 | Preserve upstream base URL scheme, port, and path prefix      | P1       | config/executor/cli  | —           |
 | [x]  | RM-07 | Unify remote spec loading with SSRF-safe fetch policy         | P1       | cli                  | RM-06       |
 | [x]  | RM-08 | Support code-first projects in `serve`, `build`, `export`     | P1       | cli                  | RM-07       |
-| [ ]  | RM-09 | Resolve or reject `mutualTLS` and `openIdConnect` schemes     | P1       | executor/compiler    | —           |
+| [x]  | RM-09 | Resolve or reject `mutualTLS` and `openIdConnect` schemes     | P1       | executor/compiler    | —           |
 | [ ]  | RM-10 | Bound serialization and add response-schema validation        | P1       | core/executor        | —           |
 | [ ]  | RM-11 | Support form, multipart, and cookie parameters                | P2       | compiler/executor    | RM-05       |
 | [ ]  | RM-12 | Classify non-removal contract changes as breaking in `diff`   | P1       | cli/compiler         | —           |
@@ -781,6 +781,8 @@ Whichever path is chosen, do not leave a scheme compiled-but-unusable.
 pnpm --filter @chainmcp/compiler test
 pnpm --filter @chainmcp/executor test
 ```
+
+**Status:** Completed on 2026-10-28. Implemented Option B compile-time rejection and warning diagnostics for unsatisfiable security schemes `mutualTLS` and `openIdConnect`. Added diagnostic code `UNSUPPORTED_SECURITY_SCHEME`. In strict mode (`strict: true`, default), specs declaring `mutualTLS` or `openIdConnect` schemes are rejected with an error diagnostic, causing compilation and `chainmcp validate` to fail. In permissive mode (`strict: false`), compilation succeeds with a structured warning preserved in `result.manifest.warnings`. Tested across compiler and CLI validate tests (5 new unit tests in compiler, 1 integration test in CLI commands); documentation updated in `API_REFERENCE.md`, `docs/openapi-support.md`, and `docs/authentication.md`. All tests pass cleanly.
 
 ---
 
