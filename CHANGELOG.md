@@ -43,6 +43,13 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- **RM-10 bound serialization and add response-schema validation:**
+  - Implemented streaming bounded JSON serializer `stringifyBounded(value, options)` in `@chainmcp/core` with byte limit (`maxBytes`), depth limit (`maxDepth`), and node limit (`maxNodes`). Traversal halts immediately with `SerializationLimitError` when limits are reached without buffering full string allocations or accessing subsequent properties. Rejects circular structures safely via object identity tracking.
+  - Replaced unbounded `JSON.stringify` with `stringifyBounded` across `@chainmcp/core` (`serializeOutput`, `applyOutputPolicy`, `measureTokens`), `@chainmcp/server` (`toolCallResult`), and `@chainmcp/json-navigation` (`assertResultBytes`).
+  - Added tool invocation input size cap: `InMemoryToolRuntime.callTool` runs `assertInputSize` during validation phase (after authorization) before schema validation runs, rejecting oversized inputs with stable `INPUT_TOO_LARGE` code, limit, and observed byte count.
+  - Implemented upstream response schema validation in `@chainmcp/executor`: matches responses by status code, range (`2XX`), or `default` fallback, and validates against compiled response schemas using `validateJsonSchema`. Configurable via `server.validateResponses` with modes `"off"`, `"warn"` (default; logs warning and audit event with redacted response payload), and `"enforce"` (fails closed with `UPSTREAM_FAILURE` without body leakage).
+  - Extended configuration schema in `@chainmcp/config` with `server.maxToolInputBytes` (default 1,048,576 bytes) and `server.validateResponses` (`off` | `warn` | `enforce`, default `"warn"`).
+  - Documented bounded serialization and response validation in `CONFIGURATION.md`, `ARCHITECTURE.md`, `API_REFERENCE.md`, `docs/troubleshooting.md`, and `ROADMAP.md`.
 - **RM-09 reject unsupported security schemes `mutualTLS` and `openIdConnect`:**
   - Added compile-time rejection and warning diagnostics for unsatisfiable OpenAPI security schemes `mutualTLS` and `openIdConnect` via diagnostic code `UNSUPPORTED_SECURITY_SCHEME`.
   - In strict mode (`strict: true`, default), specs declaring `mutualTLS` or `openIdConnect` fail compilation and `chainmcp validate` with a diagnostic error, preventing runtime credential-resolution failures.

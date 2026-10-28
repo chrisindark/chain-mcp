@@ -10,6 +10,7 @@ import {
   type ToolContext,
   type ToolDefinition,
   type ToolSource,
+  validateJsonSchema,
 } from "../src/index.js";
 
 const context: ToolContext = {
@@ -79,6 +80,52 @@ describe("InMemoryToolRuntime", () => {
       code: "INPUT_INVALID",
     });
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("enforces maxToolInputBytes before schema validation runs", async () => {
+    const execute = vi.fn(async (input: unknown) => input);
+    const runtime = new InMemoryToolRuntime({ maxToolInputBytes: 50 });
+    runtime.register(tool(execute));
+
+    // Input is > 50 bytes and also violates schema (missing required `id`, extra invalid property)
+    const oversizedPayload = { invalidField: "x".repeat(60) };
+
+    await expect(
+      runtime.callTool("lookup_item", oversizedPayload, context),
+    ).rejects.toMatchObject({
+      code: "INPUT_TOO_LARGE",
+      message: expect.stringContaining("exceeds the limit of 50 bytes"),
+      cause: expect.objectContaining({
+        limitBytes: 50,
+      }),
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("accepts input exactly at maxToolInputBytes and rejects at limit + 1", async () => {
+    const execute = vi.fn(async (input: unknown) => input);
+    const runtime = new InMemoryToolRuntime({ maxToolInputBytes: 15 });
+    runtime.register(tool(execute));
+
+    // '{"id":"123456"}' is exactly 15 bytes
+    const exactInput = { id: "123456" };
+    expect(Buffer.byteLength(JSON.stringify(exactInput), "utf8")).toBe(15);
+    const res = await runtime.callTool("lookup_item", exactInput, context);
+    expect(res).toEqual(exactInput);
+    expect(execute).toHaveBeenCalledTimes(1);
+
+    // '{"id":"1234567"}' is 16 bytes (15 + 1)
+    const overInput = { id: "1234567" };
+    expect(Buffer.byteLength(JSON.stringify(overInput), "utf8")).toBe(16);
+    await expect(
+      runtime.callTool("lookup_item", overInput, context),
+    ).rejects.toMatchObject({
+      code: "INPUT_TOO_LARGE",
+      message: expect.stringContaining("exceeds the limit of 15 bytes"),
+      cause: expect.objectContaining({
+        limitBytes: 15,
+      }),
+    });
   });
 
   it("validates array-valued type declarations", async () => {
@@ -1759,5 +1806,69 @@ describe("tenant binding and tenancy modes (ADR 0008)", () => {
       };
       await expect(runtime.registerSource(source)).rejects.toThrow(TypeError);
     });
+  });
+});
+
+describe("validateJsonSchema", () => {
+  it("validates conforming objects and primitives", () => {
+    const schema = {
+      type: "object",
+      required: ["name", "age"],
+      properties: {
+        name: { type: "string" },
+        age: { type: "integer" },
+        tags: { type: "array", items: { type: "string" } },
+      },
+      additionalProperties: false,
+    };
+
+    const validResult = validateJsonSchema(schema, {
+      name: "alice",
+      age: 30,
+      tags: ["admin", "dev"],
+    });
+    expect(validResult.valid).toBe(true);
+    expect(validResult.issues).toHaveLength(0);
+  });
+
+  it("returns issues for missing required properties, wrong types, and unexpected fields", () => {
+    const schema = {
+      type: "object",
+      required: ["name", "age"],
+      properties: {
+        name: { type: "string" },
+        age: { type: "integer" },
+      },
+      additionalProperties: false,
+    };
+
+    const invalidResult = validateJsonSchema(schema, {
+      name: 123,
+      extra: "not allowed",
+    });
+    expect(invalidResult.valid).toBe(false);
+    expect(invalidResult.issues.length).toBeGreaterThanOrEqual(3);
+    expect(
+      invalidResult.issues.some((i) => i.includes("$.age is required")),
+    ).toBe(true);
+    expect(
+      invalidResult.issues.some((i) => i.includes("$.name must be string")),
+    ).toBe(true);
+    expect(
+      invalidResult.issues.some((i) => i.includes("$.extra is not allowed")),
+    ).toBe(true);
+  });
+
+  it("truncates issues when exceeding maxIssues", () => {
+    const schema = {
+      type: "array",
+      items: { type: "string" },
+    };
+
+    const invalidArray = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const result = validateJsonSchema(schema, invalidArray, 3);
+    expect(result.valid).toBe(false);
+    expect(result.issues).toHaveLength(4);
+    expect(result.issues[3]).toBe("further issues omitted after 3");
   });
 });

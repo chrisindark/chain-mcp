@@ -26,6 +26,15 @@ ChainMcp maps internal exceptions to safe, stable error codes exposed across the
   - Inspect the tool's `inputSchema` via `tools/list` and compare with the arguments payload.
   - Check server-side diagnostic logs for the specific Ajv schema path validation message.
 
+### `INPUT_TOO_LARGE`
+
+- **Symptom:** MCP client receives `INPUT_TOO_LARGE: Tool '<name>' input exceeds the limit of <limit> bytes (observed at least <observed> bytes)`.
+- **Causes:**
+  - Inbound tool arguments exceeded `server.maxToolInputBytes` (default 1,048,576 bytes = 1 MiB). This check runs prior to schema validation to protect the runtime against memory exhaustion.
+- **Resolution:**
+  - Reduce the size of the invocation arguments (e.g., paginate arrays or trim input fields).
+  - Increase `server.maxToolInputBytes` in `chainmcp.config.yaml` if large arguments are expected.
+
 ### `AUTH_REQUIRED`
 
 - **Symptom:** `AUTH_REQUIRED: Authentication required`.
@@ -67,10 +76,12 @@ ChainMcp maps internal exceptions to safe, stable error codes exposed across the
   - Upstream service returned an HTTP 4xx or 5xx status code.
   - Upstream returned non-JSON data or a non-UTF8 payload.
   - Upstream closed the TCP connection prematurely.
-  - Upstream response body exceeded `maxResponseBytes` (default 1 MiB).
+  - Upstream response body exceeded `maxResponseBytes` (default 1 MiB; aborted immediately during streaming traversal).
+  - Upstream response violated OpenAPI response schema when `server.validateResponses` is set to `"enforce"`.
 - **Resolution:**
-  - Inspect server diagnostic logs for the upstream HTTP status and response snippet.
-  - If responses regularly exceed 1 MiB, configure `security.maxResponseBytes` up to the supported maximum (10 MiB for executor, 100 MiB for server).
+  - Inspect server diagnostic logs for the upstream HTTP status, response snippet, or schema validation failure path (response bodies are redacted for security).
+  - If responses regularly exceed 1 MiB, configure `server.maxResponseBytes` up to the supported maximum (10 MiB for executor, 100 MiB for server).
+  - If upstream responses legitimately deviate from the OpenAPI schema, adjust `server.validateResponses` to `"warn"` (logs audit warnings without failing) or `"off"`.
 
 ---
 

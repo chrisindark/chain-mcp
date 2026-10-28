@@ -54,6 +54,8 @@ describe("configuration schema", () => {
         requestTimeoutMs: 15_000,
         maxResponseBytes: 1_000_000,
         maxRequestBytes: 1_048_576,
+        maxToolInputBytes: 1_048_576,
+        validateResponses: "warn",
         allowedHosts: [],
         allowedOrigins: [],
         enableDnsRebindingProtection: false,
@@ -109,6 +111,8 @@ describe("configuration schema", () => {
         requestTimeoutMs: 15_000,
         maxResponseBytes: 1_000_000,
         maxRequestBytes: 1_048_576,
+        maxToolInputBytes: 1_048_576,
+        validateResponses: "warn",
         allowedHosts: [],
         allowedOrigins: [],
         enableDnsRebindingProtection: false,
@@ -173,6 +177,35 @@ describe("configuration schema", () => {
     ).toThrow();
     expect(() =>
       parseConfig({ version: 1, name: "catalog", server: { port: 0 } }),
+    ).toThrow();
+  });
+
+  it("parses and validates server.validateResponses and server.maxToolInputBytes", () => {
+    const defaultConfig = parseConfig({ version: 1, name: "catalog" });
+    expect(defaultConfig.server.validateResponses).toBe("warn");
+    expect(defaultConfig.server.maxToolInputBytes).toBe(1_048_576);
+
+    const offConfig = parseConfig({
+      version: 1,
+      name: "catalog",
+      server: { validateResponses: "off", maxToolInputBytes: 4096 },
+    });
+    expect(offConfig.server.validateResponses).toBe("off");
+    expect(offConfig.server.maxToolInputBytes).toBe(4096);
+
+    const enforceConfig = parseConfig({
+      version: 1,
+      name: "catalog",
+      server: { validateResponses: "enforce" },
+    });
+    expect(enforceConfig.server.validateResponses).toBe("enforce");
+
+    expect(() =>
+      parseConfig({
+        version: 1,
+        name: "catalog",
+        server: { validateResponses: "invalid" as unknown as "warn" },
+      }),
     ).toThrow();
   });
 });
@@ -609,6 +642,33 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
     expect(runtimeOpts.defaultTimeoutMs).toBe(12_000);
     expect(runtimeOpts.authorizer).toBeInstanceOf(OperationScopeAuthorizer);
     expect(runtimeOpts.rateLimiter).toBeInstanceOf(InMemoryRateLimiter);
+    expect(runtimeOpts.maxToolInputBytes).toBe(1_048_576);
+    expect(runtimeOpts.maxResponseBytes).toBe(1_000_000);
+  });
+
+  it("buildExecutorOptions and buildRuntimeOptions configure response validation and input size caps", () => {
+    const config = parseConfig({
+      version: 1,
+      name: "test",
+      server: {
+        validateResponses: "enforce",
+        maxToolInputBytes: 50_000,
+        maxResponseBytes: 200_000,
+      },
+      security: {
+        allowedUpstreamHosts: ["api.example.com"],
+      },
+    });
+
+    const execOpts = buildExecutorOptions(config, {
+      baseUrl: "https://api.example.com",
+    });
+    expect(execOpts.validateResponses).toBe("enforce");
+    expect(execOpts.maxResponseBytes).toBe(200_000);
+
+    const runtimeOpts = buildRuntimeOptions(config);
+    expect(runtimeOpts.maxToolInputBytes).toBe(50_000);
+    expect(runtimeOpts.maxResponseBytes).toBe(200_000);
   });
 
   describe("logging configuration and factory", () => {

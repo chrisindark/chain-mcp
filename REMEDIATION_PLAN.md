@@ -790,8 +790,13 @@ pnpm --filter @chainmcp/executor test
 
 - **Priority:** P1
 - **Depends on:** none
-
-### Evidence
+- **Status:** Completed on 2026-10-28.
+  - Implemented streaming bounded JSON serializer `stringifyBounded(value, options)` in `@chainmcp/core` with byte limit (`maxBytes`), depth limit (`maxDepth`), node limit (`maxNodes`), and circular reference tracking via identity set. Aborts immediately upon limit breach with `SerializationLimitError` without constructing full strings or reading subsequent properties (verified with Proxy getter traps).
+  - Integrated bounded serialization across `@chainmcp/core` (`serializeOutput`, `measureTokens`, `applyOutputPolicy`), `@chainmcp/server` (`toolCallResult`), and `@chainmcp/json-navigation` (`assertResultBytes`).
+  - Added input size cap: `InMemoryToolRuntime.callTool` runs `assertInputSize` during validation phase (after authorization) before schema validation runs, rejecting oversized inputs with stable `INPUT_TOO_LARGE` code, limit, and observed byte count.
+  - Implemented response-schema validation in `@chainmcp/executor`: matches responses by exact status code, range (2XX), or fallback ("default"), and validates payload against compiled schema via `validateJsonSchema`. Modes: `"off"`, `"warn"` (default; logs warning and audit event with redacted payload), and `"enforce"` (fails closed with `UPSTREAM_FAILURE` without payload leakage).
+  - Configured in `@chainmcp/config`: added `server.maxToolInputBytes` (default 1,048,576 bytes) and `server.validateResponses` (`off` | `warn` | `enforce`, default `"warn"`).
+  - Comprehensive tests added across `@chainmcp/core`, `@chainmcp/executor`, and `@chainmcp/config`. Documentation synchronized in `CONFIGURATION.md`, `ARCHITECTURE.md`, `API_REFERENCE.md`, `docs/troubleshooting.md`, `ROADMAP.md`, and `CHANGELOG.md`.
 
 `packages/core/src/index.ts:1287-1305`
 

@@ -1,3 +1,5 @@
+import { SerializationLimitError, stringifyBounded } from "@chainmcp/core";
+
 export class JsonNavigationError extends Error {
   constructor(message: string) {
     super(message);
@@ -103,10 +105,16 @@ export class NavigationBudget {
 
   assertResultBytes(value: unknown): void {
     if (value === undefined) return;
-    const serialized = JSON.stringify(value);
-    if (serialized !== undefined) {
-      const bytes = Buffer.byteLength(serialized, "utf8");
-      this.checkBytes(bytes);
+    try {
+      stringifyBounded(value, { maxBytes: this.maxResultBytes });
+    } catch (error) {
+      if (error instanceof SerializationLimitError) {
+        throw new JsonNavigationLimitError(
+          `Result byte size (${error.observedBytes} bytes) exceeded limit of ${this.maxResultBytes} bytes`,
+          "maxResultBytes",
+        );
+      }
+      throw error;
     }
   }
 }

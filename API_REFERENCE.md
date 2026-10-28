@@ -146,9 +146,40 @@ export interface SchemaAuditResult {
 export const MAX_SCHEMA_DEPTH = 32;
 
 export function auditInputSchema(schema: unknown): SchemaAuditResult;
+
+export interface SchemaValidationResult {
+  readonly valid: boolean;
+  readonly issues: readonly string[];
+}
+
+export function validateJsonSchema(
+  schema: JsonSchema,
+  value: unknown,
+  maxIssues?: number,
+): SchemaValidationResult;
+
+export interface BoundedStringifyOptions {
+  maxBytes: number;
+  maxDepth?: number;
+  maxNodes?: number;
+}
+
+export class SerializationLimitError extends Error {
+  readonly limitBytes: number;
+  readonly observedBytes: number;
+}
+
+export function stringifyBounded(
+  value: unknown,
+  options: BoundedStringifyOptions,
+): string;
 ```
 
 `auditInputSchema` does not throw for schema content; it collects every finding with a stable code, JSON-path-like `path`, and message. `InMemoryToolRuntime.register` throws `RuntimeError("CONTRACT_INVALID", diagnostics[0].message)` when the result is unsupported, so runtime and compiler diagnostics share the same messages.
+
+`validateJsonSchema` validates untrusted JSON values against a JSON Schema, returning a list of descriptive structural issues bounded to `maxIssues` (default 20).
+
+`stringifyBounded` streams JSON serialization with depth, node count, and byte limit checks, aborting mid-traversal before full memory allocation if `maxBytes` is reached and rejecting circular references safely.
 
 Compilers must map each diagnostic to a compile diagnostic and refuse to emit tools when any error-level diagnostic remains:
 
@@ -205,7 +236,7 @@ Untyped factory failures fail closed as `AUTH_FORBIDDEN`. A typed
 normal invocation metric; when tenant resolution did not complete, that event
 uses `tenantId: "unknown"`.
 
-`RuntimeError` currently includes `TOOL_NOT_FOUND`, `TOOL_ALREADY_REGISTERED`, `CONFIG_INVALID` (tenant mode, tenant pinning, tenant-binding violations, or malformed runtime cache/tokenizer/projector options), `CONTRACT_INVALID` (registration-time schema, cache-metadata, or output-policy rejection), `INPUT_INVALID`, `AUTH_REQUIRED` (identity missing where it is required, such as a multi-tenant listing), `AUTH_FORBIDDEN`, `RATE_LIMITED`, `OUTPUT_POLICY_VIOLATION`, `OUTPUT_LIMIT_EXCEEDED`, `CANCELLED`, `UPSTREAM_TIMEOUT`, and `UPSTREAM_FAILURE`. The runtime does not implement a concrete authorization or rate-limit policy, so `OperationPolicy.requiredScopes` remains policy data for adapters to enforce.
+`RuntimeError` currently includes `TOOL_NOT_FOUND`, `TOOL_ALREADY_REGISTERED`, `CONFIG_INVALID` (tenant mode, tenant pinning, tenant-binding violations, or malformed runtime cache/tokenizer/projector options), `CONTRACT_INVALID` (registration-time schema, cache-metadata, or output-policy rejection), `INPUT_INVALID`, `INPUT_TOO_LARGE`, `AUTH_REQUIRED` (identity missing where it is required, such as a multi-tenant listing), `AUTH_FORBIDDEN`, `RATE_LIMITED`, `OUTPUT_POLICY_VIOLATION`, `OUTPUT_LIMIT_EXCEEDED`, `CANCELLED`, `UPSTREAM_TIMEOUT`, and `UPSTREAM_FAILURE`. The runtime does not implement a concrete authorization or rate-limit policy, so `OperationPolicy.requiredScopes` remains policy data for adapters to enforce.
 
 Failures are classified by invocation stage:
 
@@ -215,6 +246,7 @@ Failures are classified by invocation stage:
 | Identity resolution | throws anything else                         | `AUTH_FORBIDDEN` with the safe message `Access denied`; cause retained.         |
 | Authorization       | throws `RuntimeError`                        | Preserved, including its code and safe message.                                 |
 | Authorization       | throws anything else                         | `AUTH_FORBIDDEN` with the safe message `Access denied`; cause retained.         |
+| Validation          | input size exceeds `maxToolInputBytes`       | `INPUT_TOO_LARGE` (evaluated before schema validation).                         |
 | Validation          | schema mismatch                              | `INPUT_INVALID`.                                                                |
 | Rate limiting       | returns `{ allowed: false }`                 | `RATE_LIMITED`.                                                                 |
 | Rate limiting       | returns no decision or a malformed one       | `UPSTREAM_FAILURE`; the call is not allowed.                                    |
@@ -816,7 +848,7 @@ Known limitations: response schemas are unvalidated metadata and no output valid
 
 ## `@chainmcp/executor`
 
-`@chainmcp/executor` turns a compiled operation into a runnable `ToolDefinition` with bounded Node HTTP/HTTPS I/O. It is the first upstream execution slice; authentication, credential injection, response-schema validation, retries, and generated-server wiring are not implemented.
+`@chainmcp/executor` turns a compiled operation into a runnable `ToolDefinition` with bounded Node HTTP/HTTPS I/O. Outbound requests are protected by SSRF-guarding destination policies, DNS pinning, header/body caps, and response schema validation.
 
 ```ts
 export interface UpstreamExecutorOptions {
@@ -831,6 +863,11 @@ export interface UpstreamExecutorOptions {
   ownerTenantId?: string;
   resolveHost?: HostResolver;
   transport?: UpstreamTransport;
+  credentialProvider?: UpstreamCredentialProvider;
+  cache?: UpstreamCachePolicy;
+  defaultReadCacheTtlSeconds?: number;
+  validateResponses?: "off" | "warn" | "enforce";
+  logger?: Logger;
 }
 
 export type HostResolver = (hostname: string) => Promise<readonly string[]>;
@@ -937,12 +974,11 @@ for (const tool of executor.createTools(result.tools)) runtime.register(tool);
 
 #### Limitations
 
-- No authentication or credential provider: `CompiledOperation.authentication` is not interpreted.
-- No response schema validation, no retries, no multipart/binary bodies, no OpenAPI `style`/`explode` serialization, no cookie parameters, and no per-operation `servers` resolution.
+- Upstream credential injection supports static, env, secretStore, and OAuth client credentials.
+- Response schema validation validates upstream responses against compiled schemas (modes: `off`, `warn`, `enforce`), redacting response bodies in logs and error diagnostics.
+- No retries, no multipart/binary bodies, no OpenAPI `style`/`explode` serialization, no cookie parameters, and no per-operation `servers` resolution.
 - A custom `UpstreamTransport` is trusted adapter code. The executor rechecks response size and JSON shape, but cannot verify that an injected transport connected to the pinned address.
 - DNS resolution is not cancellable at the OS level; an aborted call stops waiting and aborts the HTTP request, but the resolver promise may settle later.
-- Request-body serialization uses `JSON.stringify` before checking the byte cap, so a very large in-memory body can allocate before rejection. The runtime's input schema may also allow large strings or arrays.
-- `maxResponseBytes`, `maxRequestBytes`, `maxRedirects`, and `timeoutMs` are executor options, not `@chainmcp/config` fields yet.
 
 ### `OpenApiToolSource`
 
@@ -1395,7 +1431,7 @@ export function createNavigationLimitsFromConfig(
 
 ### Configuration Sections
 
-- **`server`:** Configures transport (`stdio` or `http`), host, port, `requestTimeoutMs` (default 15,000ms), `maxResponseBytes` (default 1,000,000 bytes), `maxRequestBytes` (default 1,048,576 bytes), `allowedHosts`, `allowedOrigins`, `enableDnsRebindingProtection`, and `cors`.
+- **`server`:** Configures transport (`stdio` or `http`), host, port, `requestTimeoutMs` (default 15,000ms), `maxResponseBytes` (default 1,000,000 bytes; aborts JSON serialization mid-stream upon breach), `maxRequestBytes` (default 1,048,576 bytes), `maxToolInputBytes` (default 1,048,576 bytes; capped pre-validation), `validateResponses` (`off` | `warn` | `enforce`, default `warn`), `allowedHosts`, `allowedOrigins`, `enableDnsRebindingProtection`, and `cors`.
 - **`security`:** Configures `requireInboundAuth`, `allowUnauthenticatedHttp`, `allowInsecureHttp`, `allowedUpstreamHosts`, and `redactHeaders`. Each host in `allowedUpstreamHosts` is strictly validated against schemes, ports, paths, queries, credentials, and wildcards, and normalized to canonical lowercase. `allowInsecureHttp` defaults to `false` and must be enabled to permit `http://` upstream traffic.
 - **`rateLimit`:** Configures in-memory or Redis distributed rate limiting with shorthand (`requestsPerMinute`, `concurrency`) or explicit global, tenant, and tool quotas.
 - **`auth`:** Configures inbound authorization (`authorizer: "scope"`) and upstream credential providers (`static`, `env`, `secretStore`, `oauth`).
@@ -1406,8 +1442,8 @@ export function createNavigationLimitsFromConfig(
 
 ### Wiring Helpers
 
-- `buildExecutorOptions(config, overrides)` maps `config.contract.baseUrl` (or fallback to `allowedUpstreamHosts[0]`) to `baseUrl`, `security.allowedUpstreamHosts` to `allowedHosts`, `security.allowInsecureHttp` to `allowInsecureHttp`, `server.requestTimeoutMs` to `timeoutMs`, `server.maxResponseBytes` to `maxResponseBytes`, and `auth.upstream` to `credentialProvider`. Fails closed if `allowedUpstreamHosts` is empty or no base URL can be resolved.
-- `buildRuntimeOptions(config, overrides, factoryOptions)` maps `security.requireInboundAuth` / `auth.inbound` to `authorizer`, `config.rateLimit` to `rateLimiter`, `config.logging` to `logger`, `config.analytics` to `metrics`, and `server.requestTimeoutMs` to `defaultTimeoutMs`.
+- `buildExecutorOptions(config, overrides)` maps `config.contract.baseUrl` (or fallback to `allowedUpstreamHosts[0]`) to `baseUrl`, `security.allowedUpstreamHosts` to `allowedHosts`, `security.allowInsecureHttp` to `allowInsecureHttp`, `server.requestTimeoutMs` to `timeoutMs`, `server.maxResponseBytes` to `maxResponseBytes`, `server.validateResponses` to `validateResponses`, `config.logging` to `logger`, and `auth.upstream` to `credentialProvider`. Fails closed if `allowedUpstreamHosts` is empty or no base URL can be resolved.
+- `buildRuntimeOptions(config, overrides, factoryOptions)` maps `security.requireInboundAuth` / `auth.inbound` to `authorizer`, `config.rateLimit` to `rateLimiter`, `config.logging` to `logger`, `config.analytics` to `metrics`, `server.requestTimeoutMs` to `defaultTimeoutMs`, `server.maxToolInputBytes` to `maxToolInputBytes`, and `server.maxResponseBytes` to `maxResponseBytes`.
 
 ## Error codes
 
@@ -1417,6 +1453,7 @@ Public-facing errors use stable codes such as:
 - `CONTRACT_INVALID`
 - `TOOL_NOT_FOUND`
 - `INPUT_INVALID`
+- `INPUT_TOO_LARGE`
 - `AUTH_REQUIRED`
 - `AUTH_FORBIDDEN`
 - `RATE_LIMITED`
@@ -1543,11 +1580,7 @@ factory. Factory failures fail closed: an untyped failure is classified as
 `AUTH_FORBIDDEN`, a typed `RuntimeError` keeps its code, and both produce a
 runtime metrics event with `tenantId: "unknown"` because tenant identity is
 not yet available.
-Tool results are JSON-serialized into a text content block and checked against
-a 1 MB UTF-8 byte limit by default. `maxResponseBytes` may be raised up to
-100 MB; values outside that range are rejected at construction. The check happens after serialization, so
-it does not bound memory used to create the serialized string; bounded result
-production/serialization remains future work. `docs/getting-started.md` shows a
+Tool results are serialized into a text content block using streaming bounded serialization (`stringifyBounded`) capped at a 1 MB UTF-8 byte limit by default (`maxResponseBytes`). Serialization aborts immediately upon exceeding `maxResponseBytes`, recursion depth, or node count limits without buffering the full string or evaluating subsequent properties. `maxResponseBytes` may be configured up to 100 MB; values outside that range are rejected at construction. `docs/getting-started.md` shows a
 compiled stdio server, and `pnpm conformance:inspector` runs the Inspector CLI
 against `tools/list` and `tools/call`. Runtime errors are returned as
 `isError: true` results containing only the stable code and adapter-selected

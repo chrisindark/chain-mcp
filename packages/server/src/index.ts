@@ -3,6 +3,8 @@ import {
   type JsonSchema,
   RuntimeError,
   type RuntimeErrorCode,
+  SerializationLimitError,
+  stringifyBounded,
   type ToolContext,
   type ToolRuntime,
 } from "@chainmcp/core";
@@ -184,17 +186,23 @@ async function toolCallResult(
 ): Promise<SdkToolResult> {
   try {
     const result = await runtime.callTool(name, input, createContext);
-    const text = JSON.stringify(result);
+    let text: string | undefined;
+    try {
+      text = stringifyBounded(result, { maxBytes: maxResponseBytes });
+    } catch (error) {
+      if (error instanceof SerializationLimitError) {
+        throw new RuntimeError(
+          "UPSTREAM_FAILURE",
+          "Tool response exceeds the configured limit",
+          { cause: error },
+        );
+      }
+      throw error;
+    }
     if (text === undefined) {
       throw new RuntimeError(
         "UPSTREAM_FAILURE",
         "Tool returned a non-JSON result",
-      );
-    }
-    if (Buffer.byteLength(text, "utf8") > maxResponseBytes) {
-      throw new RuntimeError(
-        "UPSTREAM_FAILURE",
-        "Tool response exceeds the configured limit",
       );
     }
     return { content: [{ type: "text" as const, text }] };
@@ -312,6 +320,7 @@ function assertServerToolSchema(name: string, inputSchema: JsonSchema): void {
  */
 const SAFE_RUNTIME_ERROR_MESSAGES: Record<RuntimeErrorCode, string> = {
   INPUT_INVALID: "Invalid tool arguments",
+  INPUT_TOO_LARGE: "Tool input exceeded the configured limit",
   AUTH_FORBIDDEN: "Access denied",
   RATE_LIMITED: "Rate limit exceeded",
   OUTPUT_POLICY_VIOLATION: "Tool output was rejected by policy",

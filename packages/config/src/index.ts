@@ -449,6 +449,13 @@ export const ServerConfigSchema = z
       .positive()
       .max(100_000_000)
       .default(1_048_576),
+    maxToolInputBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(100_000_000)
+      .default(1_048_576),
+    validateResponses: z.enum(["off", "warn", "enforce"]).default("warn"),
     allowedHosts: z.array(z.string().min(1)).default([]),
     allowedOrigins: z.array(z.string().min(1)).default([]),
     enableDnsRebindingProtection: z.boolean().default(false),
@@ -905,6 +912,9 @@ export function buildExecutorOptions(
     timeoutMs: overrides?.timeoutMs ?? config.server.requestTimeoutMs,
     maxResponseBytes:
       overrides?.maxResponseBytes ?? config.server.maxResponseBytes,
+    validateResponses:
+      overrides?.validateResponses ?? config.server.validateResponses,
+    ...(overrides?.logger !== undefined ? { logger: overrides.logger } : {}),
     ...(credentialProvider !== undefined ? { credentialProvider } : {}),
     ...(allowInsecureHttp !== undefined ? { allowInsecureHttp } : {}),
     ...(overrides?.resolveHost !== undefined
@@ -1103,5 +1113,9 @@ export function buildRuntimeOptions(
     ...(cache !== undefined ? { cache } : {}),
     ...(tokenizer !== undefined ? { tokenizer } : {}),
     ...(projector !== undefined ? { projector } : {}),
+    maxToolInputBytes:
+      overrides?.maxToolInputBytes ?? config.server.maxToolInputBytes,
+    maxResponseBytes:
+      overrides?.maxResponseBytes ?? config.server.maxResponseBytes,
   };
 }
