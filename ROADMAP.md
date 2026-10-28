@@ -339,7 +339,9 @@ from discovery and execution, emitting structured, redacted audit events
 Per-contract network destination policies and upstream credentials are strictly
 isolated per contract revision.
 Multi-tenant isolation tests demonstrate that callers without context fail with
-`AUTH_REQUIRED`, and cross-tenant requests fail closed as `TOOL_NOT_FOUND`
+`AUTH_REQUIRED`, callers missing tenant context in multi-tenant mode fail closed
+with `TENANT_REQUIRED` (with `tenant_resolution_failed` audit emission and no
+implicit `'default'` fallback), and cross-tenant requests fail closed as `TOOL_NOT_FOUND`
 without leaking other tenants' inventory.
 ADR 0008 is accepted, and ADR 0026 is recorded.
 

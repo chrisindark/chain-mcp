@@ -9,7 +9,7 @@ import {
   parseConfig,
   type ChainMcpConfig,
 } from "@chainmcp/config";
-import { InMemoryToolRuntime } from "@chainmcp/core";
+import { InMemoryToolRuntime, RuntimeError } from "@chainmcp/core";
 import { createUpstreamExecutor } from "@chainmcp/executor";
 import { createJsonNavigationTools } from "@chainmcp/json-navigation";
 import { createInboundVerifier, serveHttp, serveStdio } from "@chainmcp/server";
@@ -58,7 +58,10 @@ export async function serveCommand(
     });
   }
 
-  const runtimeOptions = buildRuntimeOptions(config);
+  const explicitTenant = options.tenantId ?? config.tenant;
+  const runtimeOptions = buildRuntimeOptions(config, {
+    ...(explicitTenant !== undefined ? { tenantId: explicitTenant } : {}),
+  });
   const runtime = new InMemoryToolRuntime(runtimeOptions);
   let totalToolCount = 0;
 
@@ -175,12 +178,21 @@ export async function serveCommand(
         maxResponseBytes: config.server.maxResponseBytes,
         createContext: (request) => {
           const auth = request.authInfo;
+          const authTenant =
+            typeof auth?.extra?.tenantId === "string" &&
+            auth.extra.tenantId.trim().length > 0
+              ? auth.extra.tenantId
+              : undefined;
+          const tenantId = authTenant ?? explicitTenant;
+          if (auth && !tenantId) {
+            throw new RuntimeError(
+              "TENANT_REQUIRED",
+              "Tenant context required: authenticated principal has no tenantId",
+            );
+          }
           return {
             requestId: randomUUID(),
-            tenantId:
-              (auth?.extra?.tenantId as string) ??
-              options.tenantId ??
-              "default",
+            tenantId: tenantId ?? "",
             principal: {
               id: auth?.clientId ?? "mcp-caller",
               scopes: auth?.scopes ?? [],
@@ -233,10 +245,21 @@ export async function serveCommand(
       maxResponseBytes: config.server.maxResponseBytes,
       createContext: (request) => {
         const auth = request.authInfo;
+        const authTenant =
+          typeof auth?.extra?.tenantId === "string" &&
+          auth.extra.tenantId.trim().length > 0
+            ? auth.extra.tenantId
+            : undefined;
+        const tenantId = authTenant ?? explicitTenant;
+        if (auth && !tenantId) {
+          throw new RuntimeError(
+            "TENANT_REQUIRED",
+            "Tenant context required: authenticated principal has no tenantId",
+          );
+        }
         return {
           requestId: randomUUID(),
-          tenantId:
-            (auth?.extra?.tenantId as string) ?? options.tenantId ?? "default",
+          tenantId: tenantId ?? "",
           principal: {
             id: auth?.clientId ?? "mcp-caller",
             scopes: auth?.scopes ?? [],

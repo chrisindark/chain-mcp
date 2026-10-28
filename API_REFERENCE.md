@@ -227,7 +227,7 @@ Duplicate names must fail explicitly. Unknown tool calls must return a stable er
 The runtime is constructed in one of two tenancy modes (`RuntimeOptions.tenantMode`, defaulting to `single-tenant`):
 
 - **Single-tenant** (generated servers and local stdio). Resolution and listing are name-keyed and unfiltered, matching Milestone 2 behavior. An optional `RuntimeOptions.tenantId` pins the deployment tenant: tools without `ownerTenantId` are stamped with it, tools bound to another tenant fail registration with `CONFIG_INVALID`, and calls whose `ToolContext.tenantId` differs from the pin are denied with `AUTH_FORBIDDEN` before adapters run and emit an invocation metric with that outcome. Without a pinned tenant, tenant identity is trusted adapter input with no per-call verification.
-- **Multi-tenant** (dynamic gateway). The runtime must be constructed with an `Authorizer`; constructing it without one fails with `CONFIG_INVALID`. Every tool must declare a non-empty `ownerTenantId` or registration fails with `CONFIG_INVALID`. Tool names may repeat across tenants; a duplicate within one tenant is `TOOL_ALREADY_REGISTERED`. Tool resolution and listing are scoped to the caller's tenant: a cross-tenant call is indistinguishable from an unknown tool and rejected with `TOOL_NOT_FOUND`, so a caller cannot enumerate or probe another tenant's tools. `listTools` without a caller context fails with `AUTH_REQUIRED`. The tenant value that enforces authorization is the same value tools resolve against, so authorization and cache partitioning cannot disagree. Per-call authorization still runs for every resolved invocation because listing is not authorization. See ADR 0008.
+- **Multi-tenant** (dynamic gateway). The runtime must be constructed with an `Authorizer`; constructing it without one fails with `CONFIG_INVALID`. Every tool must declare a non-empty `ownerTenantId` or registration fails with `CONFIG_INVALID`. Tool names may repeat across tenants; a duplicate within one tenant is `TOOL_ALREADY_REGISTERED`. Tool resolution and listing are scoped to the caller's tenant: a cross-tenant call is indistinguishable from an unknown tool and rejected with `TOOL_NOT_FOUND`, so a caller cannot enumerate or probe another tenant's tools. `listTools` without a caller context fails with `AUTH_REQUIRED`; in multi-tenant mode, an empty or missing `tenantId` fails with `TENANT_REQUIRED`. The tenant value that enforces authorization is the same value tools resolve against, so authorization and cache partitioning cannot disagree. Per-call authorization still runs for every resolved invocation because listing is not authorization. See ADR 0008.
 
 The runtime invokes a supplied context factory inside the invocation boundary.
 Untyped factory failures fail closed as `AUTH_FORBIDDEN`. A typed
@@ -236,7 +236,7 @@ Untyped factory failures fail closed as `AUTH_FORBIDDEN`. A typed
 normal invocation metric; when tenant resolution did not complete, that event
 uses `tenantId: "unknown"`.
 
-`RuntimeError` currently includes `TOOL_NOT_FOUND`, `TOOL_ALREADY_REGISTERED`, `CONFIG_INVALID` (tenant mode, tenant pinning, tenant-binding violations, or malformed runtime cache/tokenizer/projector options), `CONTRACT_INVALID` (registration-time schema, cache-metadata, or output-policy rejection), `INPUT_INVALID`, `INPUT_TOO_LARGE`, `AUTH_REQUIRED` (identity missing where it is required, such as a multi-tenant listing), `AUTH_FORBIDDEN`, `RATE_LIMITED`, `OUTPUT_POLICY_VIOLATION`, `OUTPUT_LIMIT_EXCEEDED`, `CANCELLED`, `UPSTREAM_TIMEOUT`, and `UPSTREAM_FAILURE`. The runtime does not implement a concrete authorization or rate-limit policy, so `OperationPolicy.requiredScopes` remains policy data for adapters to enforce.
+`RuntimeError` currently includes `TOOL_NOT_FOUND`, `TOOL_ALREADY_REGISTERED`, `CONFIG_INVALID` (tenant mode, tenant pinning, tenant-binding violations, or malformed runtime cache/tokenizer/projector options), `CONTRACT_INVALID` (registration-time schema, cache-metadata, or output-policy rejection), `INPUT_INVALID`, `INPUT_TOO_LARGE`, `AUTH_REQUIRED` (identity missing where it is required, such as a multi-tenant listing), `AUTH_FORBIDDEN`, `TENANT_REQUIRED` (missing tenant context in multi-tenant mode or unresolvable tenant), `RATE_LIMITED`, `OUTPUT_POLICY_VIOLATION`, `OUTPUT_LIMIT_EXCEEDED`, `CANCELLED`, `UPSTREAM_TIMEOUT`, and `UPSTREAM_FAILURE`. The runtime does not implement a concrete authorization or rate-limit policy, so `OperationPolicy.requiredScopes` remains policy data for adapters to enforce.
 
 Failures are classified by invocation stage:
 
@@ -1732,7 +1732,7 @@ chainmcp validate [--config <path>] [--spec <path|url>] [--strict] [--json] [--a
 chainmcp build [--config <path>] [--spec <path|url>] [--out-dir <dir>] [--allow-http] [--check] [--require-contract]
 chainmcp diff [--config <path>] [--spec <path|url>] [--against <target>] [--fail-on <breaking|breaking+potential|none>] [--fail-on-breaking] [--json] [--allow-http]
 chainmcp serve [--config <path>] [--spec <path|url>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http] [--allow-http] [--base-url <url>] [--tenant <id>] [--require-contract]
-chainmcp gateway serve [--config <path>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http]
+chainmcp gateway serve [--config <path>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http] [--tenant <id>]
 chainmcp dev [--config <path>] [--spec <path|url>] [--base-url <url>] [--allow-http] [--tenant <id>]
 chainmcp export [--config <path>] [--spec <path|url>] [--output <dir>] [--allow-http] [--force] [--check] [--require-contract]
 ```
@@ -1749,6 +1749,9 @@ export function validateCommand(
 export function buildCommand(options: BuildOptions): Promise<BuildResult>;
 export function diffCommand(options: DiffOptions): Promise<DiffResult>;
 export function serveCommand(options: ServeOptions): Promise<ServeResult>;
+export function gatewayServeCommand(
+  options: GatewayServeOptions,
+): Promise<GatewayServeResult>;
 export function devCommand(options: DevOptions): Promise<DevResult>;
 export function exportCommand(options: ExportOptions): Promise<ExportResult>;
 
@@ -1922,7 +1925,8 @@ export type GatewayAuditEventType =
   | "contract_published"
   | "contract_activated"
   | "contract_disabled"
-  | "contract_rolled_back";
+  | "contract_rolled_back"
+  | "tenant_resolution_failed";
 
 export interface GatewayAuditEvent {
   readonly type: GatewayAuditEventType;

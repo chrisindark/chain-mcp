@@ -480,7 +480,10 @@ export class DynamicGateway implements ToolRuntime {
     });
   }
 
-  private async emitAudit(event: GatewayAuditEvent): Promise<void> {
+  /**
+   * Emits a gateway audit event to the configured logger and audit sink.
+   */
+  async emitAudit(event: GatewayAuditEvent): Promise<void> {
     this.options.logger?.audit?.(`Gateway audit: ${event.type}`, {
       ...event,
       category: "audit",

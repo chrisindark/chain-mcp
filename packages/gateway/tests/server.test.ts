@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import type { ToolDefinition } from "@chainmcp/core";
+import { RuntimeError, type ToolDefinition } from "@chainmcp/core";
 import { DynamicGateway } from "../src/gateway.js";
 import { connectGatewayServer } from "../src/server.js";
 
@@ -149,6 +149,192 @@ describe("DynamicGateway MCP Server Integration", () => {
       await client2.close();
       await server1Handle.close();
       await server2Handle.close();
+    }
+  });
+
+  it("fails tool execution with TENANT_REQUIRED when authenticated principal lacks tenantId, and does not execute tool", async () => {
+    let executed = false;
+
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const client = new Client(
+      { name: "test-client", version: "0.1.0" },
+      { capabilities: {} },
+    );
+
+    const auditEvents: unknown[] = [];
+    // Attach audit sink to capture failure event
+    const gatewayWithSink = new DynamicGateway({
+      auditSink: (event) => {
+        auditEvents.push(event);
+      },
+    });
+    gatewayWithSink.onToolsChanged(() => {}); // verify listener works
+    await gatewayWithSink.publishContract({
+      tenantId: "tenant-corp",
+      contractName: "corp-service",
+      tools: [
+        {
+          name: "sensitiveTool",
+          description: "Corp tool",
+          ownerTenantId: "tenant-corp",
+          operation: {},
+          inputSchema: { type: "object" },
+          execute: async () => {
+            executed = true;
+            return { secret: "corp-secret" };
+          },
+        },
+      ],
+      destinationPolicy: {
+        baseUrl: "https://api.test",
+        allowedHosts: ["api.test"],
+      },
+    });
+
+    const serverHandle = await connectGatewayServer(
+      gatewayWithSink,
+      serverTransport,
+      {
+        name: "gateway-server",
+        version: "0.1.0",
+        createContext: (request) => {
+          const auth = request.authInfo as
+            { clientId?: string; extra?: Record<string, unknown> } | undefined;
+          const tenantId = (auth?.extra?.tenantId as string) ?? undefined;
+          if (!tenantId) {
+            void gatewayWithSink.emitAudit({
+              type: "tenant_resolution_failed",
+              timestamp: Date.now(),
+              tenantId: "",
+              contractName: "",
+              revisionId: "",
+              toolCount: 0,
+              details: { clientId: auth?.clientId },
+            });
+            throw new RuntimeError(
+              "TENANT_REQUIRED",
+              "Tenant context required to invoke tools in multi-tenant mode",
+            );
+          }
+          return {
+            requestId: "req-1",
+            tenantId,
+            principal: { id: auth?.clientId ?? "anon", scopes: [] },
+          };
+        },
+      },
+    );
+
+    await client.connect(clientTransport);
+
+    try {
+      const callResult = await client.callTool({
+        name: "sensitiveTool",
+        arguments: {},
+      });
+      expect(callResult.isError).toBe(true);
+      const text = (callResult.content[0] as { type: "text"; text: string })
+        .text;
+      expect(text).toContain("TENANT_REQUIRED");
+      expect(executed).toBe(false);
+      expect(
+        auditEvents.some(
+          (e: unknown) =>
+            (e as { type?: string }).type === "tenant_resolution_failed",
+        ),
+      ).toBe(true);
+    } finally {
+      await client.close();
+      await serverHandle.close();
+    }
+  });
+
+  it("prioritizes authenticated principal tenantId over explicit default tenant", async () => {
+    const gateway = new DynamicGateway();
+
+    await gateway.publishContract({
+      tenantId: "tenant-acme",
+      contractName: "acme-service",
+      tools: [
+        {
+          name: "getAcmeData",
+          description: "Acme data",
+          ownerTenantId: "tenant-acme",
+          operation: {},
+          inputSchema: { type: "object" },
+          execute: async () => ({ tenant: "tenant-acme" }),
+        },
+      ],
+      destinationPolicy: {
+        baseUrl: "https://api.test",
+        allowedHosts: ["api.test"],
+      },
+    });
+
+    await gateway.publishContract({
+      tenantId: "tenant-fallback",
+      contractName: "fallback-service",
+      tools: [
+        {
+          name: "getFallbackData",
+          description: "Fallback data",
+          ownerTenantId: "tenant-fallback",
+          operation: {},
+          inputSchema: { type: "object" },
+          execute: async () => ({ tenant: "tenant-fallback" }),
+        },
+      ],
+      destinationPolicy: {
+        baseUrl: "https://api.test",
+        allowedHosts: ["api.test"],
+      },
+    });
+
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const client = new Client(
+      { name: "test-client", version: "0.1.0" },
+      { capabilities: {} },
+    );
+
+    const explicitDefault = "tenant-fallback";
+    const serverHandle = await connectGatewayServer(gateway, serverTransport, {
+      name: "gateway-server",
+      version: "0.1.0",
+      createContext: () => {
+        // Request has authenticated tenant "tenant-acme"
+        const auth = {
+          extra: { tenantId: "tenant-acme" },
+          clientId: "user-acme",
+        };
+        const authTenant = auth.extra?.tenantId;
+        const tenantId = authTenant ?? explicitDefault;
+        return {
+          requestId: "req-prio",
+          tenantId,
+          principal: { id: auth.clientId, scopes: [] },
+        };
+      },
+    });
+
+    await client.connect(clientTransport);
+
+    try {
+      // Must see Acme tools, not Fallback tools
+      const listRes = await client.listTools();
+      expect(listRes.tools.map((t) => t.name)).toEqual(["getAcmeData"]);
+
+      const callRes = await client.callTool({
+        name: "getAcmeData",
+        arguments: {},
+      });
+      expect(callRes.isError).toBeFalsy();
+      const text = (callRes.content[0] as { type: "text"; text: string }).text;
+      expect(JSON.parse(text)).toEqual({ tenant: "tenant-acme" });
+    } finally {
+      await client.close();
+      await serverHandle.close();
     }
   });
 });

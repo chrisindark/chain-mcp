@@ -433,6 +433,13 @@ components:
       expect(serverSource).toContain("config.contract?.baseUrl ??");
       expect(serverSource).not.toContain("api.example.com");
     });
+
+    it("asserts renderServerTs does not fallback to default tenant", () => {
+      const serverSource = renderServerTs();
+      expect(serverSource).not.toContain('?? "default"');
+      expect(serverSource).not.toContain("?? 'default'");
+      expect(serverSource).toContain("TENANT_REQUIRED");
+    });
   });
 
   describe("buildCommand", () => {
@@ -782,6 +789,7 @@ auth:
       const gwConfig = `
 version: 1
 name: test-dynamic-gw
+tenant: tenant-alpha
 server:
   transport: stdio
 contracts:
@@ -822,6 +830,7 @@ contracts:
       const gwConfig = `
 version: 1
 name: test-http-gw
+tenant: tenant-alpha
 server:
   transport: http
   port: 3333
@@ -866,6 +875,7 @@ contracts:
       const gwConfig = `
 version: 1
 name: test-fail-gw
+tenant: tenant-alpha
 server:
   transport: http
   port: 3333
@@ -900,6 +910,7 @@ contracts:
       const gwConfig = `
 version: 1
 name: test-allow-gw
+tenant: tenant-alpha
 server:
   transport: http
   port: 3333
@@ -945,6 +956,7 @@ contracts:
       const gwConfig = `
 version: 1
 name: test-no-verifier-gw
+tenant: tenant-alpha
 server:
   transport: http
   port: 3333
@@ -973,6 +985,77 @@ contracts:
       ).rejects.toThrow(
         /Inbound authorizer is configured as "scope", but no inbound verifier is configured|HTTP inbound authentication is required/,
       );
+    });
+
+    it("refuses to start gateway mode when no inbound verifier and no explicit tenant are configured", async () => {
+      const specFile = join(tempDir, "service-gw-no-tenant.yaml");
+      await writeFile(specFile, SAMPLE_SPEC, "utf8");
+
+      const gwConfigFile = join(tempDir, "gateway-no-tenant.config.yaml");
+      const gwConfig = `
+version: 1
+name: test-no-tenant-gw
+server:
+  transport: http
+  port: 3333
+  host: 127.0.0.1
+security:
+  allowUnauthenticatedHttp: true
+contracts:
+  - name: pets
+    tenantId: tenant-alpha
+    spec: service-gw-no-tenant.yaml
+    destination:
+      baseUrl: https://api.petstore.test
+      allowedHosts:
+        - api.petstore.test
+`;
+      await writeFile(gwConfigFile, gwConfig, "utf8");
+
+      await expect(
+        gatewayServeCommand({
+          cwd: tempDir,
+          config: "gateway-no-tenant.config.yaml",
+          port: 0,
+        }),
+      ).rejects.toThrow(/Dynamic gateway requires a tenant resolver/);
+    });
+
+    it("starts gateway mode when explicit --tenant is provided via options", async () => {
+      const specFile = join(tempDir, "service-gw-explicit-tenant.yaml");
+      await writeFile(specFile, SAMPLE_SPEC, "utf8");
+
+      const gwConfigFile = join(tempDir, "gateway-explicit-tenant.config.yaml");
+      const gwConfig = `
+version: 1
+name: test-explicit-tenant-gw
+server:
+  transport: http
+  port: 3333
+  host: 127.0.0.1
+security:
+  allowUnauthenticatedHttp: true
+contracts:
+  - name: pets
+    tenantId: tenant-alpha
+    spec: service-gw-explicit-tenant.yaml
+    destination:
+      baseUrl: https://api.petstore.test
+      allowedHosts:
+        - api.petstore.test
+`;
+      await writeFile(gwConfigFile, gwConfig, "utf8");
+
+      const gwHandle = await gatewayServeCommand({
+        cwd: tempDir,
+        config: "gateway-explicit-tenant.config.yaml",
+        port: 0,
+        tenantId: "tenant-alpha",
+      });
+
+      expect(gwHandle.ok).toBe(true);
+      await gwHandle.close();
+      await gwHandle.closed;
     });
   });
 

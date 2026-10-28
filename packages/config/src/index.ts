@@ -491,6 +491,7 @@ export const ChainMcpConfigSchema = z
   .object({
     version: z.literal(1),
     name: z.string().min(1).max(128),
+    tenant: z.string().min(1).optional(),
     contract: ContractConfigSchema.optional(),
     server: ServerConfigSchema,
     security: SecurityConfigSchema,
@@ -596,6 +597,7 @@ export const GatewayConfigSchema = z
   .object({
     version: z.literal(1),
     name: z.string().min(1).max(128).default("chainmcp-gateway"),
+    tenant: z.string().min(1).optional(),
     server: ServerConfigSchema,
     security: SecurityConfigSchema,
     rateLimit: RateLimitConfigSchema,
@@ -1118,7 +1120,9 @@ export function buildRuntimeOptions(
       : {}),
     ...(overrides?.tenantId !== undefined
       ? { tenantId: overrides.tenantId }
-      : {}),
+      : config.tenant !== undefined
+        ? { tenantId: config.tenant }
+        : {}),
     ...(overrides?.now !== undefined ? { now: overrides.now } : {}),
     ...(overrides?.monotonicNow !== undefined
       ? { monotonicNow: overrides.monotonicNow }

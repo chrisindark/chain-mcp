@@ -71,14 +71,14 @@ Command options:
     --path <string>      HTTP base endpoint path (default: /mcp)
     --allow-unauthenticated-http Explicitly allow unauthenticated HTTP on non-loopback hosts
     --base-url <url>     Override upstream base URL
-    --tenant <id>        Tenant identifier for context (default: default)
+    --tenant <id>        Tenant identifier for context (default: unset)
     --require-contract   Require an OpenAPI contract specification
 
   dev:
     --config <path>      Path to chainmcp.config.yaml
     --spec <path>        Path to OpenAPI contract (if contract-driven)
     --base-url <url>     Override upstream base URL
-    --tenant <id>        Tenant identifier for context (default: default)
+    --tenant <id>        Tenant identifier for context (default: unset)
 
   gateway serve:
     --config <path>      Path to gateway.config.yaml (default: ./gateway.config.yaml)
@@ -86,6 +86,7 @@ Command options:
     --port <number>      HTTP port when transport is http (default: 3333)
     --host <string>      HTTP host when transport is http (default: 127.0.0.1)
     --path <string>      HTTP base endpoint path (default: /mcp)
+    --tenant <id>        Tenant identifier for context (default: unset)
     --allow-unauthenticated-http Explicitly allow unauthenticated HTTP on non-loopback hosts
 
   export:
@@ -558,6 +559,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
               : {}),
             ...(asString(values.path) !== undefined
               ? { path: asString(values.path) }
+              : {}),
+            ...(asString(values.tenant) !== undefined
+              ? { tenantId: asString(values.tenant) }
               : {}),
             ...(asBoolean(values["allow-unauthenticated-http"]) !== undefined
               ? {

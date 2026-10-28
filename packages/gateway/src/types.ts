@@ -66,7 +66,8 @@ export type GatewayAuditEventType =
   | "contract_published"
   | "contract_activated"
   | "contract_disabled"
-  | "contract_rolled_back";
+  | "contract_rolled_back"
+  | "tenant_resolution_failed";
 
 export interface GatewayAuditEvent {
   readonly type: GatewayAuditEventType;

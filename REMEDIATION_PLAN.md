@@ -1037,6 +1037,8 @@ pnpm --filter @chainmcp/cli test
 pnpm --filter @chainmcp/gateway test
 ```
 
+**Status (2026-10-28):** Complete. Removed all implicit `"default"` tenant fallbacks across `@chainmcp/cli` (`serve.ts`, `gateway-serve.ts`, `dev.ts`, `templates.ts`) and `@chainmcp/gateway`. Introduced `TENANT_REQUIRED` runtime error code in `@chainmcp/core` and `@chainmcp/server`. Enforced multi-tenant `listTools` and `resolveTool` rejection when tenant ID is empty or whitespace. Added `--tenant <id>` CLI flag and `tenant: string` in `@chainmcp/config` defaulting to unset. Enforced dynamic gateway startup validation requiring inbound verifier (`auth.inbound`) or explicit tenant fallback (`--tenant` / `config.tenant`). Enforced authenticated principal tenant claim precedence over explicit default (`authTenant ?? explicitTenant`). Added `"tenant_resolution_failed"` audit event emission on DynamicGateway. Verified `grep -rn '"default"' packages/cli/src packages/gateway/src` returns zero matches. All tests passing.
+
 ---
 
 ## RM-14 — Wire `ToolTracer` into the runtime and server

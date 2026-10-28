@@ -13,6 +13,7 @@
 ```yaml
 version: 1
 name: catalog-api
+tenant: tenant-alpha # Optional tenant ID (defaults to unset)
 
 contract:
   source: ./openapi.yaml
@@ -93,6 +94,7 @@ analytics:
 
 The implemented `@chainmcp/config` package exports `ChainMcpConfigSchema`, `parseConfig`, `safeParseConfig`, and wiring helpers. The supported sections are `version`, `name`, `contract`, `server`, `security`, `rateLimit`, `auth`, `logging`, `jsonNavigation`, and `analytics`. Unknown keys are rejected with Zod `.strict()`.
 
+- **`tenant`:** (Optional `string`, min length 1; default unset) Declares the tenant ID for the server or gateway deployment. For single-tenant servers, pins the runtime to this tenant ID. For dynamic gateways, provides an explicit fallback tenant for unauthenticated development invocations. If unset and no inbound verifier is present, gateway mode refuses to start. When inbound authentication is active, the authenticated principal's tenant claim takes precedence over this value (`authTenant ?? explicitTenant`).
 - **`contract`:** (Optional) Declares the OpenAPI specification file (`contract.source`), compilation mode (`contract.strict`), and target upstream base URL (`contract.baseUrl`). For code-first projects authored with `@chainmcp/authoring`, the `contract` section is omitted.
   - **`contract.baseUrl`:** Absolute `http://` or `https://` base URL preserving origin, port, and path prefix (e.g., `https://api.example.com/v2` or `http://127.0.0.1:8080`). Credentials (`user:pass@`), query parameters (`?`), and fragments (`#`) are strictly rejected. Trailing slashes are canonically normalized. The host from `baseUrl` is automatically derived and added to `security.allowedUpstreamHosts`.
   - **Migration Note:** Configurations that omit `contract.baseUrl` continue to derive their origin from `https://${security.allowedUpstreamHosts[0]}` for backward compatibility, but emit a `CONFIG_DEPRECATED` warning during `chainmcp validate`. Explicit declaration of `contract.baseUrl` is strongly recommended.

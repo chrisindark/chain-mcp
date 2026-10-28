@@ -21,6 +21,7 @@ import {
   createFieldProjector,
   type MetricsSink,
   type RuntimeCacheOptions,
+  RuntimeError,
 } from "@chainmcp/core";
 import { DynamicGateway } from "@chainmcp/gateway";
 import { createInboundVerifier, serveHttp, serveStdio } from "@chainmcp/server";
@@ -181,6 +182,15 @@ export async function gatewayServeCommand(
     totalToolCount += revision.tools.length;
   }
 
+  const verifier = createInboundVerifier(config.auth.inbound);
+  const explicitTenant = options.tenantId ?? config.tenant;
+
+  if (!verifier && !explicitTenant) {
+    throw new Error(
+      "Dynamic gateway requires a tenant resolver: configure inbound authentication (auth.inbound) or specify an explicit tenant via --tenant <id> (or config tenant).",
+    );
+  }
+
   const transport = options.transport ?? config.server.transport ?? "stdio";
 
   const createContext = (request: { authInfo?: unknown }) => {
@@ -191,13 +201,39 @@ export async function gatewayServeCommand(
           extra?: Record<string, unknown>;
         }
       | undefined;
-    const tenantId =
-      (auth?.extra?.tenantId as string) ?? auth?.clientId ?? "default";
+    const authTenant =
+      typeof auth?.extra?.tenantId === "string" &&
+      auth.extra.tenantId.trim().length > 0
+        ? auth.extra.tenantId
+        : undefined;
+    const tenantId = authTenant ?? explicitTenant;
+    const requestId = randomUUID();
     const principalId = auth?.clientId ?? "mcp-caller";
     const scopes = auth?.scopes ?? [];
 
+    if (!tenantId) {
+      void gateway.emitAudit({
+        type: "tenant_resolution_failed",
+        timestamp: Date.now(),
+        tenantId: "",
+        contractName: "",
+        revisionId: "",
+        toolCount: 0,
+        details: {
+          principalId,
+          requestId,
+          reason:
+            "No tenantId in authenticated credentials and no explicit tenant configured",
+        },
+      });
+      throw new RuntimeError(
+        "TENANT_REQUIRED",
+        "Tenant context required: no tenant identified from authentication or configuration",
+      );
+    }
+
     return {
-      requestId: randomUUID(),
+      requestId,
       tenantId,
       principal: {
         id: principalId,
@@ -211,7 +247,6 @@ export async function gatewayServeCommand(
     const port = options.port ?? config.server.port ?? 3333;
     const host = options.host ?? config.server.host ?? "127.0.0.1";
     const mcpPath = options.path ?? config.server.path ?? "/mcp";
-    const verifier = createInboundVerifier(config.auth.inbound);
     const requireInboundAuth =
       config.security.requireInboundAuth ||
       config.auth.inbound.requireInboundAuth;
