@@ -449,6 +449,12 @@ export const ServerConfigSchema = z
       .positive()
       .max(100_000_000)
       .default(1_048_576),
+    maxMultipartPartBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(100_000_000)
+      .default(1_048_576),
     maxToolInputBytes: z
       .number()
       .int()
@@ -925,7 +931,14 @@ export function buildExecutorOptions(
       : {}),
     ...(overrides?.maxRequestBytes !== undefined
       ? { maxRequestBytes: overrides.maxRequestBytes }
-      : {}),
+      : config.server.maxRequestBytes !== undefined
+        ? { maxRequestBytes: config.server.maxRequestBytes }
+        : {}),
+    ...(overrides?.maxMultipartPartBytes !== undefined
+      ? { maxMultipartPartBytes: overrides.maxMultipartPartBytes }
+      : config.server.maxMultipartPartBytes !== undefined
+        ? { maxMultipartPartBytes: config.server.maxMultipartPartBytes }
+        : {}),
     ...(overrides?.maxRedirects !== undefined
       ? { maxRedirects: overrides.maxRedirects }
       : {}),

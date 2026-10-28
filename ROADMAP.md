@@ -103,13 +103,16 @@ validated and rejected in strict mode (`PARAMETER_UNSUPPORTED`, `PARAMETER_INVAL
 or warned in permissive mode, with warnings preserved in the manifest and tool entries.
 
 `@chainmcp/executor` converts compiled operations into runnable tools. It maps
-path, query, header, and JSON body inputs; enforces an exact host allowlist,
+path, query, header, cookie, and request body inputs (JSON, `application/x-www-form-urlencoded`,
+and `multipart/form-data`); enforces an exact host allowlist,
 HTTPS by default, fixed protocol/port, and same-host redirects; rejects any DNS
 answer in loopback, private, shared, link-local, metadata, multicast,
 documentation, or reserved ranges; pins the resolved address and verifies the
 peer; rejects compressed and oversized responses; and binds `context.signal`
-plus a total timeout to upstream I/O. It does not inject credentials, validate
-response schemas, retry, or resolve per-operation `servers`.
+plus a total timeout to upstream I/O. Form-urlencoded requests support `explode: true/false`,
+multipart requests support file and binary base64 decoding with per-part caps (`maxMultipartPartBytes`),
+and cookie parameters are validated and formatted into `Cookie` headers without overriding
+upstream credentials.
 
 The `examples/petstore` project compiles a contract, binds the executor,
 registers the tools in the shared runtime, and serves them over stdio. The MCP

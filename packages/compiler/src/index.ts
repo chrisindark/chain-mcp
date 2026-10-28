@@ -25,6 +25,7 @@ export type {
   CompiledAuthenticationAlternative,
   CompiledAuthenticationPolicy,
   CompiledAuthenticationScheme,
+  CompiledEncoding,
   CompiledOperation,
   CompiledParameter,
   CompiledRequestBody,
@@ -35,6 +36,7 @@ export type {
   HttpMethod,
   ManifestToolEntry,
   OpenApiVersion,
+  RequestBodyKind,
   SecurityRequirement,
   SecuritySchemeType,
 } from "./types.js";

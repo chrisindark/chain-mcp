@@ -101,14 +101,26 @@ export interface CompiledSecurityScheme {
  */
 export interface CompiledParameter {
   name: string;
-  in: "path" | "query" | "header";
+  in: "path" | "query" | "header" | "cookie";
   required: boolean;
+  style?: string;
+  explode?: boolean;
+}
+
+export type RequestBodyKind = "json" | "form-urlencoded" | "multipart";
+
+export interface CompiledEncoding {
+  contentType?: string;
+  style?: string;
+  explode?: boolean;
 }
 
 /** Request-body binding metadata for the `body` input property. */
 export interface CompiledRequestBody {
   mediaType: string;
   required: boolean;
+  kind?: RequestBodyKind;
+  encodings?: Readonly<Record<string, CompiledEncoding>>;
 }
 
 /**

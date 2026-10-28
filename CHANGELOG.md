@@ -43,6 +43,14 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- **RM-11 support form, multipart, and cookie parameters:**
+  - Extended compiler to support `in: "cookie"` parameters with RFC 6265 token name validation, `style: "form"` enforcement, and optional `explode`.
+  - Added compile-time recognition of `application/x-www-form-urlencoded` and `multipart/form-data` request bodies alongside `application/json` (and `+json`), emitting a discriminated `kind: "json" | "form-urlencoded" | "multipart"` and `encodings` map. Unsupported request body media types are rejected with `REQUEST_BODY_UNSUPPORTED`.
+  - Implemented executor serialization for `cookie` parameters: values are validated against CRLF, control characters, and semicolons to eliminate header/cookie injection vectors, formatted with form style, and injected into the `Cookie` header. Transport-owned and credential cookies take precedence and overwrite matching parameter names.
+  - Implemented executor serialization for `application/x-www-form-urlencoded` request bodies with OpenAPI `style`/`explode` semantics (nested objects with `explode: true` expand to top-level fields, `explode: false` format as comma-separated pairs; arrays expand to repeated keys or comma-separated items).
+  - Implemented executor serialization for `multipart/form-data` request bodies with unique boundary framing, per-part `Content-Disposition`, `Content-Type`, text fields, binary base64 decoding, and JSON object parts. Enforced fail-closed caps per part (`maxMultipartPartBytes`, default 1 MiB) and total request (`maxRequestBytes`, default 1 MiB), and strictly rejected CRLF in part names and filenames.
+  - Added `server.maxMultipartPartBytes` to configuration schema in `@chainmcp/config` and wired into `buildExecutorOptions`.
+  - Added request body media-type matrix and cookie parameter specifications to `docs/openapi-support.md`, `CONFIGURATION.md`, `SECURITY.md`, `API_REFERENCE.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and `REMEDIATION_PLAN.md`.
 - **RM-10 bound serialization and add response-schema validation:**
   - Implemented streaming bounded JSON serializer `stringifyBounded(value, options)` in `@chainmcp/core` with byte limit (`maxBytes`), depth limit (`maxDepth`), and node limit (`maxNodes`). Traversal halts immediately with `SerializationLimitError` when limits are reached without buffering full string allocations or accessing subsequent properties. Rejects circular structures safely via object identity tracking.
   - Replaced unbounded `JSON.stringify` with `stringifyBounded` across `@chainmcp/core` (`serializeOutput`, `applyOutputPolicy`, `measureTokens`), `@chainmcp/server` (`toolCallResult`), and `@chainmcp/json-navigation` (`assertResultBytes`).

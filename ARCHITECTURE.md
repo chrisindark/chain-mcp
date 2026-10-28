@@ -144,10 +144,11 @@ The pipeline is:
    references are rejected and never fetched.
 4. Enumerate operations by sorted path and a fixed method order, so names,
    collisions, diagnostics, and hashes do not depend on source key order.
-5. Build an object-root input schema from path, query, and header parameters
-   plus a JSON body mapped to a `body` property. Operation-level parameters
+5. Build an object-root input schema from path, query, header, and cookie parameters
+   plus a request body mapped to a `body` property. Operation-level parameters
    override path-level parameters by `(name, in)`. Record sorted parameter
-   bindings and request-body media metadata for the executor. Flatten an `allOf`
+   bindings and request-body media metadata (supporting JSON, `application/x-www-form-urlencoded`,
+   and `multipart/form-data` with encoding descriptors) for the executor. Flatten an `allOf`
    of object schemas into one object schema only when properties, `required`,
    and `additionalProperties` can be merged without changing the intersection.
 6. Translate OpenAPI 3.0 `nullable`, `readOnly`, and boolean exclusive-bound
@@ -188,9 +189,13 @@ lint rule enforces that invariant for runtime source.
 `CompiledOperation` it creates a `ToolDefinition` whose `execute`:
 
 1. Builds a URL from the configured base URL and the compiled path, filling path
-   parameters and appending query/header inputs according to the recorded
-   bindings. Inputs that cannot be serialized deterministically are rejected
-   rather than guessed at.
+   parameters, appending query, header, and cookie inputs, and serializing request
+   bodies (JSON, `application/x-www-form-urlencoded`, or `multipart/form-data`)
+   according to recorded bindings. Form bodies support `explode: true/false`, and multipart
+   bodies support part headers, binary base64 decoding, per-part size caps (`maxMultipartPartBytes`),
+   and total body caps (`maxRequestBytes`). Cookie parameters are strictly validated and
+   cannot override credential session cookies. Inputs that cannot be serialized deterministically
+   or contain CRLF/injection material are rejected fail-closed.
 2. Applies an exact destination allowlist, fixed protocol/port, and URL and
    header size limits.
 3. Resolves every hostname, rejects the resolution if any IPv4/IPv6 answer is

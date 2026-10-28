@@ -102,21 +102,23 @@ and credential injection remain open.
 
 ## Parameter and construct support matrix
 
-| Construct                | Level / Context                  | Supported value(s)    | Unsupported / Ignored behavior           | Strict mode (`strict: true`)  | Permissive mode (`strict: false`)                    |
-| ------------------------ | -------------------------------- | --------------------- | ---------------------------------------- | ----------------------------- | ---------------------------------------------------- |
-| `servers`                | Root document                    | String URL array      | Resolved / documented                    | Allowed                       | Allowed                                              |
-| `servers`                | Path-item                        | None                  | Overrides base URL                       | `UNSUPPORTED_SERVERS` error   | `UNSUPPORTED_SERVERS` warning                        |
-| `servers`                | Operation                        | None                  | Overrides base URL                       | `UNSUPPORTED_SERVERS` error   | `UNSUPPORTED_SERVERS` warning                        |
-| `callbacks`              | Operation                        | None                  | Inbound webhooks                         | `UNSUPPORTED_CALLBACKS` error | `UNSUPPORTED_CALLBACKS` warning                      |
-| `style`                  | Query parameter                  | `"form"` (default)    | `"deepObject"`, `"spaceDelimited"`, etc. | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
-| `style`                  | Path parameter                   | `"simple"` (default)  | `"matrix"`, `"label"`                    | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
-| `style`                  | Header parameter                 | `"simple"` (default)  | Non-simple styles                        | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
-| `explode`                | Query parameter (`form`)         | `true` (default)      | `false`                                  | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
-| `explode`                | Path/Header parameter (`simple`) | `false` (default)     | `true`                                   | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
-| `allowReserved`          | Query parameter                  | `false` (default)     | `true`                                   | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
-| `allowReserved`          | Path / Header                    | None                  | Not allowed in OpenAPI                   | `PARAMETER_INVALID` error     | `PARAMETER_INVALID` warning                          |
-| `allowEmptyValue`        | Query parameter                  | `false` (default)     | `true`                                   | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning                      |
-| Unknown parameter fields | Parameter object                 | Standard keys & `x-*` | Unrecognized keys                        | `PARAMETER_INVALID` error     | `PARAMETER_INVALID` warning                          |
+| Construct                | Level / Context                  | Supported value(s)          | Unsupported / Ignored behavior           | Strict mode (`strict: true`)  | Permissive mode (`strict: false`)                    |
+| ------------------------ | -------------------------------- | --------------------------- | ---------------------------------------- | ----------------------------- | ---------------------------------------------------- |
+| `servers`                | Root document                    | String URL array            | Resolved / documented                    | Allowed                       | Allowed                                              |
+| `servers`                | Path-item                        | None                        | Overrides base URL                       | `UNSUPPORTED_SERVERS` error   | `UNSUPPORTED_SERVERS` warning                        |
+| `servers`                | Operation                        | None                        | Overrides base URL                       | `UNSUPPORTED_SERVERS` error   | `UNSUPPORTED_SERVERS` warning                        |
+| `callbacks`              | Operation                        | None                        | Inbound webhooks                         | `UNSUPPORTED_CALLBACKS` error | `UNSUPPORTED_CALLBACKS` warning                      |
+| `style`                  | Query parameter                  | `"form"` (default)          | `"deepObject"`, `"spaceDelimited"`, etc. | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
+| `style`                  | Path parameter                   | `"simple"` (default)        | `"matrix"`, `"label"`                    | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
+| `style`                  | Header parameter                 | `"simple"` (default)        | Non-simple styles                        | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
+| `style`                  | Cookie parameter                 | `"form"` (default)          | Non-form styles                          | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
+| `explode`                | Query parameter (`form`)         | `true` (default)            | `false`                                  | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
+| `explode`                | Cookie parameter (`form`)        | `true` (default) or `false` | None                                     | Allowed                       | Allowed                                              |
+| `explode`                | Path/Header parameter (`simple`) | `false` (default)           | `true`                                   | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
+| `allowReserved`          | Query parameter                  | `false` (default)           | `true`                                   | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning (treated as default) |
+| `allowReserved`          | Path / Header / Cookie           | None                        | Not allowed in OpenAPI                   | `PARAMETER_INVALID` error     | `PARAMETER_INVALID` warning                          |
+| `allowEmptyValue`        | Query parameter                  | `false` (default)           | `true`                                   | `PARAMETER_UNSUPPORTED` error | `PARAMETER_UNSUPPORTED` warning                      |
+| Unknown parameter fields | Parameter object                 | Standard keys & `x-*`       | Unrecognized keys                        | `PARAMETER_INVALID` error     | `PARAMETER_INVALID` warning                          |
 
 Warnings generated in permissive mode (`strict: false`) are preserved in `result.manifest.warnings` and on each compiled tool's `warnings` array, surviving into `compiled-tools.json` and `chainmcp.manifest.json`.
 
@@ -132,6 +134,15 @@ Warnings generated in permissive mode (`strict: false`) are preserved in `result
 | `openIdConnect` | OIDC discovery / token resolution  | No                   | OIDC discovery and dynamic token resolution not implemented          | `UNSUPPORTED_SECURITY_SCHEME` error | `UNSUPPORTED_SECURITY_SCHEME` warning |
 
 Warnings generated in permissive mode are preserved in `result.manifest.warnings`, surviving into `compiled-tools.json` and `chainmcp.manifest.json`.
+
+## Request body media type support matrix
+
+| Media Type                                                     | Kind              | Supported Features                                                                                                                       | Limits & Validation                                                                                                                             | Strict mode                      | Permissive mode                  |
+| -------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | -------------------------------- |
+| `application/json` (and `*/*+json`)                            | `json`            | Structured JSON objects, arrays, and scalars                                                                                             | Total body capped by `maxRequestBytes` (default 1 MiB)                                                                                          | Allowed                          | Allowed                          |
+| `application/x-www-form-urlencoded`                            | `form-urlencoded` | Form encoding, nested objects with `explode: true` (default) or `false`, arrays with `explode: true/false`, percent-encoding             | Total body capped by `maxRequestBytes` (default 1 MiB)                                                                                          | Allowed                          | Allowed                          |
+| `multipart/form-data`                                          | `multipart`       | Multi-part framing with unique boundary, per-part `Content-Disposition`, `Content-Type`, text fields, JSON objects, binary base64 decode | Per-part capped by `maxMultipartPartBytes` (default 1 MiB), total capped by `maxRequestBytes` (default 1 MiB); CRLF in names/filenames rejected | Allowed                          | Allowed                          |
+| Unsupported media types (e.g. `text/plain`, `application/xml`) | None              | None                                                                                                                                     | Rejected at compile time                                                                                                                        | `REQUEST_BODY_UNSUPPORTED` error | `REQUEST_BODY_UNSUPPORTED` error |
 
 ### OpenAPI 3.0 `nullable`
 
@@ -184,12 +195,14 @@ Each operation receives `authentication: { alternatives, allowsAnonymous }` deri
 
 ## Execution
 
-`@chainmcp/executor` maps path, query, header, and JSON body inputs using the
-compiled bindings. Arrays in query parameters are sent as repeated keys; header
-arrays are comma-joined. Scalars are strings, finite numbers, or booleans.
-Objects, arrays of objects, and `null` are rejected because `style`/`explode`
-are not retained. Cookie parameters, reserved credential/transport headers,
-non-JSON request bodies, and non-JSON responses are unsupported.
+`@chainmcp/executor` maps path, query, header, and cookie inputs, as well as
+JSON, form-urlencoded, and multipart request bodies using compiled bindings.
+Query arrays are sent as repeated keys; header arrays are comma-joined. Cookie
+parameters are validated, formatted with `form` style, and injected into the
+`Cookie` header (with transport-owned and credential cookies taking precedence).
+Form-urlencoded bodies support `explode: true` (default) and `false` for objects
+and arrays. Multipart bodies support text, binary base64 decode, and JSON parts
+with part-size caps (`maxMultipartPartBytes`) and total body caps (`maxRequestBytes`).
 
 Outbound controls are mandatory and not configurable per operation:
 

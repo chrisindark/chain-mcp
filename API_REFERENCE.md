@@ -732,13 +732,25 @@ export interface CompiledAuthenticationPolicy {
 
 export interface CompiledParameter {
   name: string;
-  in: "path" | "query" | "header";
+  in: "path" | "query" | "header" | "cookie";
   required: boolean;
+  style?: string;
+  explode?: boolean;
+}
+
+export type RequestBodyKind = "json" | "form-urlencoded" | "multipart";
+
+export interface CompiledEncoding {
+  contentType?: string;
+  style?: string;
+  explode?: boolean;
 }
 
 export interface CompiledRequestBody {
   mediaType: string;
   required: boolean;
+  kind?: RequestBodyKind;
+  encodings?: Readonly<Record<string, CompiledEncoding>>;
 }
 
 export interface CompiledResponse {
@@ -857,6 +869,7 @@ export interface UpstreamExecutorOptions {
   allowInsecureHttp?: boolean;
   maxResponseBytes?: number;
   maxRequestBytes?: number;
+  maxMultipartPartBytes?: number;
   maxRedirects?: number;
   timeoutMs?: number;
   contractRevision?: string;
@@ -921,12 +934,32 @@ export const DEFAULT_MAX_RESPONSE_BYTES: 1_000_000;
 export const MAX_RESPONSE_BYTES_LIMIT: 10_000_000;
 export const DEFAULT_MAX_REQUEST_BYTES: 1_000_000;
 export const MAX_REQUEST_BYTES_LIMIT: 10_000_000;
+export const DEFAULT_MAX_MULTIPART_PART_BYTES: 1_000_000;
 export const DEFAULT_MAX_REDIRECTS: 3;
 export const MAX_REDIRECTS_LIMIT: 5;
 export const DEFAULT_TIMEOUT_MS: 15_000;
 export const MAX_TIMEOUT_MS: 120_000;
 export const MAX_REQUEST_HEADER_BYTES: 16_384;
 export const MAX_RESPONSE_HEADER_BYTES: 16_384;
+
+export function serializeFormUrlEncoded(
+  body: unknown,
+  encodings?: Readonly<Record<string, CompiledEncoding>>,
+  maxRequestBytes?: number,
+): Uint8Array;
+
+export interface SerializedMultipartBody {
+  body: Uint8Array;
+  contentType: string;
+}
+
+export function serializeMultipartFormData(
+  body: unknown,
+  encodings?: Readonly<Record<string, CompiledEncoding>>,
+  maxMultipartPartBytes?: number,
+  maxRequestBytes?: number,
+  boundaryOverride?: string,
+): SerializedMultipartBody;
 ```
 
 Typical use:

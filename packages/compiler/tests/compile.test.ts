@@ -116,6 +116,7 @@ describe("OpenAPI 3.0 compilation", () => {
     expect(createPet?.requestBody).toEqual({
       mediaType: "application/json",
       required: true,
+      kind: "json",
     });
     expect(createPet?.readOnly).toBe(false);
     const body = (createPet?.inputSchema.properties as ObjectMap)
@@ -1219,20 +1220,7 @@ describe("parameters and request bodies", () => {
     expect(result.tools).toHaveLength(0);
   });
 
-  it("rejects cookie, content-encoded, and credential header parameters", () => {
-    const cookie = compileDocument(
-      baseDocument({
-        "/x": {
-          get: operation({
-            parameters: [
-              { name: "session", in: "cookie", schema: { type: "string" } },
-            ],
-          }),
-        },
-      }),
-    );
-    expect(codes(cookie)).toContain("PARAMETER_UNSUPPORTED");
-
+  it("rejects content-encoded and credential header parameters", () => {
     const authorization = compileDocument(
       baseDocument({
         "/x": {
@@ -1382,6 +1370,158 @@ describe("parameters and request bodies", () => {
       }),
     );
     expect(codes(collision)).toContain("PARAMETER_DUPLICATE");
+  });
+
+  it("compiles cookie parameters and enforces RFC 6265 name and style rules", () => {
+    const valid = compileDocument(
+      baseDocument({
+        "/x": {
+          get: operation({
+            parameters: [
+              {
+                name: "session_id",
+                in: "cookie",
+                required: true,
+                schema: { type: "string" },
+                style: "form",
+                explode: true,
+              },
+            ],
+          }),
+        },
+      }),
+    );
+    expect(valid.tools).toHaveLength(1);
+    expect(valid.tools[0]?.parameters).toEqual([
+      {
+        name: "session_id",
+        in: "cookie",
+        required: true,
+        style: "form",
+        explode: true,
+      },
+    ]);
+
+    // Invalid cookie name (contains ';', '=', spaces, etc.)
+    const badName = compileDocument(
+      baseDocument({
+        "/x": {
+          get: operation({
+            parameters: [
+              {
+                name: "bad;cookie=name",
+                in: "cookie",
+                schema: { type: "string" },
+              },
+            ],
+          }),
+        },
+      }),
+    );
+    expect(codes(badName)).toContain("PARAMETER_INVALID");
+
+    // Unsupported style for cookie
+    const badStyle = compileDocument(
+      baseDocument({
+        "/x": {
+          get: operation({
+            parameters: [
+              {
+                name: "session",
+                in: "cookie",
+                schema: { type: "string" },
+                style: "simple",
+              },
+            ],
+          }),
+        },
+      }),
+    );
+    expect(codes(badStyle)).toContain("PARAMETER_UNSUPPORTED");
+  });
+
+  it("compiles form-urlencoded and multipart request bodies with discriminated kind", () => {
+    const formDoc = compileDocument(
+      baseDocument({
+        "/submit-form": {
+          post: operation({
+            requestBody: {
+              required: true,
+              content: {
+                "application/x-www-form-urlencoded": {
+                  schema: {
+                    type: "object",
+                    required: ["username"],
+                    properties: {
+                      username: { type: "string" },
+                      details: { type: "object" },
+                    },
+                  },
+                  encoding: {
+                    details: {
+                      style: "form",
+                      explode: false,
+                    },
+                  },
+                },
+              },
+            },
+          }),
+        },
+      }),
+    );
+    expect(formDoc.tools).toHaveLength(1);
+    expect(formDoc.tools[0]?.requestBody).toEqual({
+      mediaType: "application/x-www-form-urlencoded",
+      required: true,
+      kind: "form-urlencoded",
+      encodings: {
+        details: {
+          style: "form",
+          explode: false,
+        },
+      },
+    });
+
+    const multipartDoc = compileDocument(
+      baseDocument({
+        "/upload": {
+          post: operation({
+            requestBody: {
+              required: true,
+              content: {
+                "multipart/form-data": {
+                  schema: {
+                    type: "object",
+                    required: ["file"],
+                    properties: {
+                      file: { type: "string" },
+                      note: { type: "string" },
+                    },
+                  },
+                  encoding: {
+                    file: {
+                      contentType: "application/octet-stream",
+                    },
+                  },
+                },
+              },
+            },
+          }),
+        },
+      }),
+    );
+    expect(multipartDoc.tools).toHaveLength(1);
+    expect(multipartDoc.tools[0]?.requestBody).toEqual({
+      mediaType: "multipart/form-data",
+      required: true,
+      kind: "multipart",
+      encodings: {
+        file: {
+          contentType: "application/octet-stream",
+        },
+      },
+    });
   });
 });
 
