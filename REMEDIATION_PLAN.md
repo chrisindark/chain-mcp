@@ -56,7 +56,7 @@ rather than marking it complete.
 | [x]  | RM-09 | Resolve or reject `mutualTLS` and `openIdConnect` schemes     | P1       | executor/compiler    | —           |
 | [x]  | RM-10 | Bound serialization and add response-schema validation        | P1       | core/executor        | —           |
 | [x]  | RM-11 | Support form, multipart, and cookie parameters                | P2       | compiler/executor    | RM-05       |
-| [ ]  | RM-12 | Classify non-removal contract changes as breaking in `diff`   | P1       | cli/compiler         | —           |
+| [x]  | RM-12 | Classify non-removal contract changes as breaking in `diff`   | P1       | cli/compiler         | —           |
 | [ ]  | RM-13 | Remove implicit `"default"` tenant fallback                   | P1       | gateway/cli          | RM-01       |
 | [ ]  | RM-14 | Wire `ToolTracer` into runtime and server                     | P2       | core/server/config   | —           |
 | [ ]  | RM-15 | Wire Redis rate limiter through CLI and config                | P1       | config/cli           | —           |
@@ -979,6 +979,8 @@ This makes `chainmcp diff --fail-on-breaking` unsafe as a CI gate: it passes cha
 pnpm --filter @chainmcp/cli test
 pnpm --filter @chainmcp/compiler test
 ```
+
+**Status (2026-10-28):** Complete. Implemented deep recursive schema diffing engine `diffContracts` in `@chainmcp/compiler` with the full breaking-change taxonomy across tools, inputs, constraints, authentication, base URLs, and response schemas. Updated CLI `chainmcp diff` with `--fail-on` (`breaking`, `breaking+potential`, `none`), `--fail-on-breaking`, and `--json` machine-readable output (`schemaVersion: 1`). Added unit tests for every taxonomy row and CLI integration tests for flags and exit codes. Documentation updated in `API_REFERENCE.md`, `docs/migration-and-rollback.md`, and `CHANGELOG.md`. All tests passing.
 
 ---
 

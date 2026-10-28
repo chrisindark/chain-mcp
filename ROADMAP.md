@@ -261,6 +261,9 @@ Deployment documentation is established in `docs/deployment.md`.
 Upstream base URL scheme, port, and path prefix are preserved end-to-end
 through `chainmcp init`, configuration `contract.baseUrl`, `security.allowInsecureHttp`,
 and generated server templates without arbitrary host synthesis.
+`chainmcp diff` implements schema-level comparison via `diffContracts` with the
+RM-12 breaking-change taxonomy (breaking, potentially-breaking, non-breaking),
+`--fail-on <level>`, `--fail-on-breaking`, and machine-readable `--json` output (`schemaVersion: 1`).
 End-to-end integration tests (`end-to-end.test.ts`) demonstrate that an exported
 server compiles with `tsc` and runs independently, discovering and executing both
 OpenAPI-compiled tools and JSON navigation tools over the official MCP SDK

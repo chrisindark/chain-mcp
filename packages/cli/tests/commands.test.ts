@@ -1120,5 +1120,101 @@ contracts:
       expect(result.addedTools).toContain("listPets");
       expect(result.removedTools).toContain("listAllPets");
     });
+
+    it("detects schema-level breaking changes in diffCommand", async () => {
+      const v1Spec = `
+openapi: "3.1.0"
+info:
+  title: Petstore
+  version: "1.0.0"
+servers:
+  - url: https://api.petstore.test
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["available", "pending", "sold"]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                  total:
+                    type: integer
+                required: ["items", "total"]
+`;
+      const v2SpecBreaking = `
+openapi: "3.1.0"
+info:
+  title: Petstore
+  version: "2.0.0"
+servers:
+  - url: https://api.petstore.test
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["available", "sold"]
+        - name: apiKey
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                required: ["items"]
+`;
+
+      const v1Path = join(tempDir, "v1.yaml");
+      const v2Path = join(tempDir, "v2.yaml");
+      await writeFile(v1Path, v1Spec, "utf8");
+      await writeFile(v2Path, v2SpecBreaking, "utf8");
+
+      const result = await diffCommand({
+        spec: v2Path,
+        against: v1Path,
+        cwd: tempDir,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.schemaVersion).toBe(1);
+      expect(result.hasChanges).toBe(true);
+      expect(result.hasBreakingChanges).toBe(true);
+      expect(
+        result.breaking.some((c) => c.code === "INPUT_REQUIRED_ADDED"),
+      ).toBe(true);
+      expect(
+        result.breaking.some((c) => c.code === "INPUT_ENUM_VALUE_REMOVED"),
+      ).toBe(true);
+      expect(
+        result.breaking.some((c) => c.code === "RESPONSE_FIELD_REMOVED"),
+      ).toBe(true);
+      expect(result.summary.breaking).toBeGreaterThanOrEqual(3);
+    });
   });
 });

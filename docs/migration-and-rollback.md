@@ -109,3 +109,96 @@ For containerized deployments generated using `chainmcp export`'s Docker templat
 2. **Instant Rollback:**
    - Revert the container tag in your orchestrator (Kubernetes deployment or Docker Compose) to the previous image tag.
    - Because generated servers are stateless, rollbacks require zero database schema rollbacks or data migration.
+
+---
+
+## 5. Pre-Deployment Contract Diffing & CI/CD Gating (RM-12)
+
+To prevent deploying breaking contract changes to MCP clients and AI agents, use `chainmcp diff` as a pre-commit or CI/CD gate.
+
+### Breaking Change Taxonomy
+
+Contract changes are classified into three deterministic tiers:
+
+- **Breaking (`breaking`):**
+  - Tool removed or renamed (via path + method matching).
+  - New required input property added.
+  - Existing input property removed.
+  - Input property type narrowed or constraints tightened (`minimum` increased, `maximum` decreased, `minLength` increased, `maxLength` decreased, `pattern` added/changed).
+  - Input enum values removed or restricted.
+  - Required field removed from response schema.
+  - Response field type changed incompatibly.
+  - Authentication requirement added to previously unauthenticated tool.
+  - Base URL origin changed.
+- **Potentially Breaking (`potentially-breaking`):**
+  - Existing optional input property became required.
+  - Input property default value changed.
+  - New enum value added to response payload.
+  - Base URL path changed.
+- **Non-Breaking (`non-breaking`):**
+  - New tool added.
+  - New optional input property added.
+  - Required input property became optional.
+  - Input type widened.
+  - New enum value added to input property.
+  - Description changed.
+  - Authentication requirement relaxed to allow anonymous access.
+
+### CI/CD Pipeline Gating
+
+Fail the build if breaking changes are introduced against the production baseline:
+
+```bash
+# Exit code 1 on breaking changes (default behavior)
+chainmcp diff --spec spec/openapi.yaml --against https://api.prod.example.com/openapi.yaml --fail-on breaking
+
+# Stricter gate: fail on both breaking and potentially breaking changes
+chainmcp diff --spec spec/openapi.yaml --against dist/compiled-tools.json --fail-on breaking+potential
+
+# Backward-compatible flag
+chainmcp diff --spec spec/openapi.yaml --against baseline.yaml --fail-on-breaking
+```
+
+### Machine-Readable Output
+
+For automation and PR comments, emit machine-readable JSON:
+
+```bash
+chainmcp diff --spec spec/openapi.yaml --against dist/manifest.json --json --fail-on none
+```
+
+The output conforms to `schemaVersion: 1`:
+
+```json
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "contractRevision": "rev_e72edc74404b7513",
+  "sourceHash": "sha256:7afec59a8fdb28df...",
+  "toolsetHash": "sha256:3d81b5e6d4b20761...",
+  "hasChanges": true,
+  "hasBreakingChanges": true,
+  "hasPotentiallyBreakingChanges": false,
+  "summary": {
+    "breaking": 1,
+    "potentiallyBreaking": 0,
+    "nonBreaking": 0
+  },
+  "addedTools": [],
+  "removedTools": [],
+  "changedTools": ["listPets"],
+  "unchangedTools": ["getPet"],
+  "changes": [
+    {
+      "classification": "breaking",
+      "code": "INPUT_REQUIRED_ADDED",
+      "message": "New required input property 'apiKey' was added to tool 'listPets'",
+      "tool": "listPets",
+      "path": "inputSchema.properties.apiKey"
+    }
+  ],
+  "breaking": [...],
+  "potentiallyBreaking": [],
+  "nonBreaking": []
+}
+```

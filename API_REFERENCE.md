@@ -821,6 +821,11 @@ export function diffManifests(
   changed: readonly string[];
   unchanged: readonly string[];
 };
+
+export function diffContracts(
+  previous: ContractDiffInput,
+  next: ContractDiffInput,
+): ContractDiffResult;
 ```
 
 `compile`/`compileOpenApi` accept one YAML or JSON document (YAML 1.2 core schema, duplicate keys rejected). Compilation is offline and asynchronous only to match the interface: it performs no filesystem or network I/O. Defaults are `strict: true`, `includeDeprecated: false`, `maxSourceBytes: 5 MiB` (hard maximum 25 MiB), `maxRefDepth: 32` (maximum 128), and `maxOperations: 1,000` (maximum 10,000). Invalid option types and exceeded hard maxima throw `TypeError`; document and contract problems are returned as diagnostics.
@@ -855,6 +860,38 @@ Security schemes and raw requirements are preserved, and each operation also rec
 The policy is compiler metadata, not enforcement. `operation.requiredScopes` remains empty because flattening OR alternatives or AND scopes into one list would misrepresent the contract; auth adapters must interpret `authentication`. The current executor does not resolve credentials or enforce this policy.
 
 `sourceHash` hashes the exact source text. `contractRevision` hashes the canonical parsed document plus `COMPILER_VERSION`; semantically equivalent key ordering therefore produces the same revision, while compiler changes produce a new revision. `manifest.tools` records a hash per emitted operation (including parameter bindings, request-body metadata, response metadata, and authentication), `toolsetHash` hashes the compiler version, contract revision, and all tool hashes, and `diffManifests` reports added, removed, changed, and unchanged names between two manifests. No timestamps are included, so the same source and compiler version produce the same manifest.
+
+### Contract Diffing & Breaking Change Taxonomy (`diffContracts`)
+
+`diffContracts(previous, next)` walks compiled operations and JSON schemas recursively, classifying every detected contract difference:
+
+- **Breaking (`"breaking"`):**
+  - Tool removed (`TOOL_REMOVED`).
+  - Tool renamed based on method and path matching (`TOOL_RENAMED`).
+  - New required input property added (`INPUT_REQUIRED_ADDED`).
+  - Input property removed (`INPUT_PROPERTY_REMOVED`).
+  - Input type narrowed (`INPUT_TYPE_NARROWED`).
+  - Input enum values removed or restricted (`INPUT_ENUM_VALUE_REMOVED`).
+  - Input constraints tightened: `minimum` increased, `maximum` decreased, `minLength` increased, `maxLength` decreased, or `pattern` added/changed (`INPUT_CONSTRAINT_TIGHTENED`).
+  - Required response field removed (`RESPONSE_FIELD_REMOVED`).
+  - Response field type changed incompatibly (`RESPONSE_TYPE_CHANGED`).
+  - Authentication requirement added to previously unauthenticated tool (`AUTH_REQUIREMENT_ADDED`).
+  - Base URL origin changed (`BASE_URL_CHANGED`).
+- **Potentially Breaking (`"potentially-breaking"`):**
+  - Existing optional input property became required (`INPUT_BECAME_REQUIRED`).
+  - Input property default value changed (`INPUT_DEFAULT_CHANGED`).
+  - New enum value added to response payload (`RESPONSE_ENUM_VALUE_ADDED`).
+  - Base URL pathname changed (`BASE_URL_PATH_CHANGED`).
+- **Non-Breaking (`"non-breaking"`):**
+  - New tool added (`TOOL_ADDED`).
+  - New optional input property added (`INPUT_OPTIONAL_ADDED`).
+  - Existing required input property became optional (`INPUT_BECAME_OPTIONAL`).
+  - Input type widened (`INPUT_TYPE_WIDENED`).
+  - New enum value added to input property (`INPUT_ENUM_VALUE_ADDED`).
+  - Tool or field description changed (`DESCRIPTION_CHANGED`).
+  - Authentication requirement relaxed to allow anonymous access (`AUTH_REQUIREMENT_RELAXED`).
+
+The output is typed as `ContractDiffResult` (`schemaVersion: 1`), providing `summary: { breaking, potentiallyBreaking, nonBreaking }`, tool list sets (`addedTools`, `removedTools`, `changedTools`, `unchangedTools`), and categorized arrays (`changes`, `breaking`, `potentiallyBreaking`, `nonBreaking`).
 
 Known limitations: response schemas are unvalidated metadata and no output validator is generated; authentication policies are not enforced and no credentials are injected; no remote references; input `oneOf`, `anyOf`, `not`, conditional, dependent, and pattern composition is rejected; `allOf` supports object intersections only; only the listed runtime formats are asserted; `const` is not supported; no YAML merge-key support; and no regeneration command that reads/writes a manifest. The compiler is not wired into the CLI or generated-server flow yet. See `@chainmcp/executor` for the implemented upstream HTTP slice and `docs/getting-started.md` for the runnable example.
 
@@ -1693,7 +1730,7 @@ Exported as the `chainmcp` executable (`dist/bin.js`).
 chainmcp init [--spec <path|url>] [--blank] [--output <dir>] [--name <name>] [--base-url <url>] [--allow-http] [--force]
 chainmcp validate [--config <path>] [--spec <path|url>] [--strict] [--json] [--allow-http] [--require-contract]
 chainmcp build [--config <path>] [--spec <path|url>] [--out-dir <dir>] [--allow-http] [--check] [--require-contract]
-chainmcp diff [--config <path>] [--spec <path|url>] [--against <target>] [--allow-http]
+chainmcp diff [--config <path>] [--spec <path|url>] [--against <target>] [--fail-on <breaking|breaking+potential|none>] [--fail-on-breaking] [--json] [--allow-http]
 chainmcp serve [--config <path>] [--spec <path|url>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http] [--allow-http] [--base-url <url>] [--tenant <id>] [--require-contract]
 chainmcp gateway serve [--config <path>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http]
 chainmcp dev [--config <path>] [--spec <path|url>] [--base-url <url>] [--allow-http] [--tenant <id>]
@@ -1765,6 +1802,44 @@ export function discoverCodeFirstEntrypoint(
 ): Promise<DiscoveredEntrypoint | undefined>;
 
 export function extractToolNamesFromSource(source: string): string[];
+
+export type DiffFailOn = "breaking" | "breaking+potential" | "none";
+
+export interface DiffOptions {
+  config?: string | undefined;
+  spec?: string | undefined;
+  against?: string | undefined;
+  allowHttp?: boolean | undefined;
+  failOn?: DiffFailOn | undefined;
+  failOnBreaking?: boolean | undefined;
+  json?: boolean | undefined;
+  cwd?: string | undefined;
+}
+
+export interface DiffResult {
+  schemaVersion: 1;
+  ok: boolean;
+  contractRevision: string;
+  sourceHash: string;
+  toolsetHash: string;
+  hasChanges: boolean;
+  hasBreakingChanges: boolean;
+  hasPotentiallyBreakingChanges: boolean;
+  summary: {
+    breaking: number;
+    potentiallyBreaking: number;
+    nonBreaking: number;
+  };
+  addedTools: readonly string[];
+  removedTools: readonly string[];
+  changedTools: readonly string[];
+  unchangedTools: readonly string[];
+  changes: readonly ContractChange[];
+  breaking: readonly ContractChange[];
+  potentiallyBreaking: readonly ContractChange[];
+  nonBreaking: readonly ContractChange[];
+  error?: string | undefined;
+}
 ```
 
 ### Manifest Schema (`chainmcp.manifest.json`)

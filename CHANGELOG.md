@@ -43,6 +43,14 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- **RM-12 classify non-removal contract changes as breaking in `diff`:**
+  - Implemented `diffContracts(previous, next)` in `@chainmcp/compiler` with a comprehensive breaking-change taxonomy and recursive JSON schema comparison for tool inputs and response payloads.
+  - Classified breaking changes: tool removal, tool renaming (matched via path and method), new required input parameters, input parameter removal, input parameter type narrowing, input enum value removal or restriction, input constraint tightening (`minimum` increase, `maximum` decrease, `minLength` increase, `maxLength` decrease, `pattern` addition/change), required response field removal, response field type changes, authentication requirements added to previously unauthenticated tools, and server base URL origin changes.
+  - Classified potentially breaking changes: existing optional input parameter becoming required, input property default value changes, new enum values added to response schemas, and server base URL path changes.
+  - Classified non-breaking changes: new tools added, new optional input parameters, required input parameters becoming optional, input type widening, input enum value additions, description changes, and authentication requirements relaxed.
+  - Updated CLI command `chainmcp diff` with `--fail-on <breaking|breaking+potential|none>` (default: `breaking`), backward-compatible alias `--fail-on-breaking`, and `--json` emitting machine-readable output conforming to `schemaVersion: 1` with `{ schemaVersion, hasChanges, hasBreakingChanges, hasPotentiallyBreakingChanges, summary, changes, breaking, potentiallyBreaking, nonBreaking }`.
+  - Added unit test suite covering every taxonomy row in `@chainmcp/compiler` and CLI integration tests for all severity thresholds, JSON formatting, and process exit codes.
+  - Synchronized documentation across `API_REFERENCE.md`, `docs/migration-and-rollback.md`, `ROADMAP.md`, and `REMEDIATION_PLAN.md`.
 - **RM-11 support form, multipart, and cookie parameters:**
   - Extended compiler to support `in: "cookie"` parameters with RFC 6265 token name validation, `style: "form"` enforcement, and optional `explode`.
   - Added compile-time recognition of `application/x-www-form-urlencoded` and `multipart/form-data` request bodies alongside `application/json` (and `+json`), emitting a discriminated `kind: "json" | "form-urlencoded" | "multipart"` and `encodings` map. Unsupported request body media types are rejected with `REQUEST_BODY_UNSUPPORTED`.

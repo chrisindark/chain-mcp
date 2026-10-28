@@ -251,3 +251,12 @@ export interface CompileDiff {
 export interface ContractCompiler {
   compile(source: string, options?: CompileOptions): Promise<CompileResult>;
 }
+
+export type {
+  ContractChange,
+  ContractDiffInput,
+  ContractDiffInputObject,
+  ContractDiffResult,
+  ContractDiffTool,
+  DiffClassification,
+} from "./diff.js";

@@ -295,6 +295,7 @@ export async function validateCommand(
     toolCount: compiled.tools.length,
     toolNames: compiled.tools.map((t) => t.name),
     manifest: compiled.manifest,
+    compiled,
     diagnostics,
     error: hasErrors ? "Validation failed with errors." : undefined,
   };

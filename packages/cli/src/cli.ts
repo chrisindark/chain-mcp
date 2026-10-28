@@ -58,6 +58,9 @@ Command options:
     --config <path>      Path to chainmcp.config.yaml
     --spec <path>        Path to OpenAPI contract
     --against <target>   Baseline OpenAPI contract or manifest.json to compare against
+    --fail-on <level>    Threshold to exit with error: breaking (default), breaking+potential, none
+    --fail-on-breaking   Alias for --fail-on breaking
+    --json               Emit contract diff result as JSON
 
   serve:
     --config <path>      Path to chainmcp.config.yaml
@@ -114,6 +117,8 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       spec: { type: "string" },
       against: { type: "string" },
       config: { type: "string" },
+      "fail-on": { type: "string" },
+      "fail-on-breaking": { type: "boolean", default: false },
       output: { type: "string" },
       name: { type: "string" },
       "base-url": { type: "string" },
@@ -302,6 +307,27 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
     }
 
     case "diff": {
+      const failOnRaw = asString(values["fail-on"]);
+      const failOnBreaking = asBoolean(values["fail-on-breaking"]);
+      let failOn: "breaking" | "breaking+potential" | "none" = "breaking";
+
+      if (failOnRaw) {
+        if (
+          failOnRaw === "breaking" ||
+          failOnRaw === "breaking+potential" ||
+          failOnRaw === "none"
+        ) {
+          failOn = failOnRaw;
+        } else {
+          errLog(
+            `Invalid --fail-on value '${failOnRaw}'. Must be 'breaking', 'breaking+potential', or 'none'.`,
+          );
+          return 1;
+        }
+      } else if (failOnBreaking) {
+        failOn = "breaking";
+      }
+
       const result = await diffCommand({
         ...(asString(values.config) !== undefined
           ? { config: asString(values.config) }
@@ -315,11 +341,29 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
         ...(asBoolean(values["allow-http"]) !== undefined
           ? { allowHttp: asBoolean(values["allow-http"]) }
           : {}),
+        failOn,
+        failOnBreaking,
+        json: asBoolean(values.json),
       });
 
       if (!result.ok) {
         errLog(`Diff error: ${result.error ?? "Failed to diff contracts"}`);
         return 1;
+      }
+
+      let fail = false;
+      if (failOn === "breaking") {
+        fail = result.hasBreakingChanges;
+      } else if (failOn === "breaking+potential") {
+        fail =
+          result.hasBreakingChanges || result.hasPotentiallyBreakingChanges;
+      } else if (failOn === "none") {
+        fail = false;
+      }
+
+      if (values.json) {
+        log(JSON.stringify(result, null, 2));
+        return fail ? 1 : 0;
       }
 
       if (!result.hasChanges) {
@@ -332,28 +376,57 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       log(`Contract diff detected:`);
       log(`Contract revision: ${result.contractRevision}`);
       log(`Toolset hash: ${result.toolsetHash}`);
+      log(
+        `Summary: ${result.summary.breaking} breaking, ${result.summary.potentiallyBreaking} potentially-breaking, ${result.summary.nonBreaking} non-breaking`,
+      );
+
       if (result.addedTools.length > 0) {
-        log(`  Added tools (${result.addedTools.length}):`);
+        log(`\n  Added tools (${result.addedTools.length}):`);
         for (const t of result.addedTools) {
           log(`    + ${t}`);
         }
       }
       if (result.removedTools.length > 0) {
-        log(`  Removed tools (BREAKING) (${result.removedTools.length}):`);
+        log(`\n  Removed tools (BREAKING) (${result.removedTools.length}):`);
         for (const t of result.removedTools) {
           log(`    - ${t}`);
         }
       }
       if (result.changedTools.length > 0) {
-        log(`  Modified tools (${result.changedTools.length}):`);
+        log(`\n  Modified tools (${result.changedTools.length}):`);
         for (const t of result.changedTools) {
           log(`    ~ ${t}`);
         }
       }
-      if (result.hasBreakingChanges) {
-        errLog(
-          `Warning: Breaking changes detected (${result.removedTools.length} tools removed).`,
+
+      if (result.breaking.length > 0) {
+        log(`\n  Breaking changes (${result.breaking.length}):`);
+        for (const c of result.breaking) {
+          log(`    ! [${c.code}] ${c.message}`);
+        }
+      }
+
+      if (result.potentiallyBreaking.length > 0) {
+        log(
+          `\n  Potentially breaking changes (${result.potentiallyBreaking.length}):`,
         );
+        for (const c of result.potentiallyBreaking) {
+          log(`    ? [${c.code}] ${c.message}`);
+        }
+      }
+
+      if (result.nonBreaking.length > 0) {
+        log(`\n  Non-breaking changes (${result.nonBreaking.length}):`);
+        for (const c of result.nonBreaking) {
+          log(`    + [${c.code}] ${c.message}`);
+        }
+      }
+
+      if (fail) {
+        errLog(
+          `\nDiff failed: contract changes exceed allowed threshold (--fail-on ${failOn}).`,
+        );
+        return 1;
       }
       return 0;
     }
