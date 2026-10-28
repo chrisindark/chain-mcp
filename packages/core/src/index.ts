@@ -18,6 +18,7 @@ import {
 } from "./schema.js";
 import { assertFieldSelection } from "./field-projection.js";
 import type { FieldSelection } from "./field-projection.js";
+import { stringifyBounded, SerializationLimitError } from "./bounded-json.js";
 
 export type {
   JsonSchema,
@@ -27,6 +28,11 @@ export type {
 } from "./schema.js";
 export { auditInputSchema, MAX_SCHEMA_DEPTH } from "./schema.js";
 export { CACHE_KEY_VERSION, MAX_CACHE_KEY_INPUT_BYTES } from "./cache-key.js";
+export {
+  stringifyBounded,
+  SerializationLimitError,
+  type BoundedStringifyOptions,
+} from "./bounded-json.js";
 
 export interface Principal {
   id: string;
@@ -313,6 +319,7 @@ export type RuntimeErrorCode =
   | "CONFIG_INVALID"
   | "CONTRACT_INVALID"
   | "INPUT_INVALID"
+  | "INPUT_TOO_LARGE"
   | "AUTH_REQUIRED"
   | "AUTH_FORBIDDEN"
   | "RATE_LIMITED"
@@ -398,6 +405,10 @@ export interface RuntimeOptions {
    * cannot be verified fails the call closed; it never returns the raw result.
    */
   projector?: ResultProjector;
+  /** Maximum allowed tool input arguments size in UTF-8 bytes. Default: 1,048,576 (1 MiB). */
+  maxToolInputBytes?: number;
+  /** Maximum allowed tool output serialization size in UTF-8 bytes. */
+  maxResponseBytes?: number;
 }
 
 export class InMemoryToolRuntime implements ToolRuntime {
@@ -673,6 +684,10 @@ export class InMemoryToolRuntime implements ToolRuntime {
       // tool's schema, which unauthorized callers must not be able to probe.
       await this.options.authorizer?.authorize(tool, context);
       stage = "validation";
+      const maxInputBytes = this.options.maxToolInputBytes ?? 1_048_576;
+      if (input !== undefined && input !== null) {
+        assertInputSize(tool.name, input, maxInputBytes);
+      }
       validateInput(tool.inputSchema, input);
       stage = "rate_limit";
       const decision = this.options.rateLimiter
@@ -954,7 +969,11 @@ export class InMemoryToolRuntime implements ToolRuntime {
         `Output policy for tool '${tool.name}' must return synchronously`,
       );
     }
-    const text = serializeOutput(tool.name, projected);
+    const text = serializeOutput(
+      tool.name,
+      projected,
+      this.options.maxResponseBytes,
+    );
     const tokenizer = this.options.tokenizer;
     if (policy.maxTokens === undefined) {
       // Without a budget, projection is still mandatory. Measurement remains
@@ -1012,7 +1031,11 @@ export class InMemoryToolRuntime implements ToolRuntime {
     const tokenizer = this.options.tokenizer;
     if (tokenizer === undefined) return undefined;
     try {
-      const text = JSON.stringify(value);
+      const maxBytes = this.options.maxResponseBytes;
+      const text =
+        maxBytes !== undefined
+          ? stringifyBounded(value, { maxBytes })
+          : JSON.stringify(value);
       if (text === undefined) return undefined;
       return tryMeasureSerialized(tokenizer, text);
     } catch {
@@ -1284,11 +1307,25 @@ function isThenable(value: unknown): boolean {
   }
 }
 
-function serializeOutput(toolName: string, value: unknown): string {
+function serializeOutput(
+  toolName: string,
+  value: unknown,
+  maxBytes?: number,
+): string {
   let text: string | undefined;
   try {
-    text = JSON.stringify(value);
+    text =
+      maxBytes !== undefined
+        ? stringifyBounded(value, { maxBytes })
+        : JSON.stringify(value);
   } catch (error) {
+    if (error instanceof SerializationLimitError) {
+      throw new RuntimeError(
+        "OUTPUT_LIMIT_EXCEEDED",
+        `Tool '${toolName}' output exceeded the limit of ${maxBytes} bytes (observed at least ${error.observedBytes} bytes)`,
+        { cause: error },
+      );
+    }
     throw new RuntimeError(
       "OUTPUT_POLICY_VIOLATION",
       `Output policy for tool '${toolName}' returned an unserializable result`,
@@ -1302,6 +1339,29 @@ function serializeOutput(toolName: string, value: unknown): string {
     );
   }
   return text;
+}
+
+function assertInputSize(
+  toolName: string,
+  input: unknown,
+  maxBytes: number,
+): void {
+  try {
+    stringifyBounded(input, { maxBytes });
+  } catch (error) {
+    if (error instanceof SerializationLimitError) {
+      throw new RuntimeError(
+        "INPUT_TOO_LARGE",
+        `Tool '${toolName}' input exceeds the limit of ${maxBytes} bytes (observed at least ${error.observedBytes} bytes)`,
+        { cause: error },
+      );
+    }
+    throw new RuntimeError(
+      "INPUT_INVALID",
+      `Tool '${toolName}' input could not be serialized for size validation`,
+      { cause: error },
+    );
+  }
 }
 
 function tryMeasureSerialized(
@@ -1344,20 +1404,37 @@ interface ValidationState {
   truncated: boolean;
 }
 
-function validateInput(schema: JsonSchema, input: unknown): void {
+export interface SchemaValidationResult {
+  readonly valid: boolean;
+  readonly issues: readonly string[];
+}
+
+export function validateJsonSchema(
+  schema: JsonSchema,
+  value: unknown,
+  maxIssues = MAX_VALIDATION_ISSUES,
+): SchemaValidationResult {
   const state: ValidationState = {
     issues: [],
-    maxIssues: MAX_VALIDATION_ISSUES,
+    maxIssues,
     truncated: false,
   };
-  validateValue(schema, input, "$", state, 0);
-  if (state.issues.length === 0) return;
+  validateValue(schema, value, "$", state, 0);
   const issues = state.truncated
     ? [...state.issues, `further issues omitted after ${state.maxIssues}`]
     : state.issues;
+  return {
+    valid: issues.length === 0,
+    issues,
+  };
+}
+
+function validateInput(schema: JsonSchema, input: unknown): void {
+  const result = validateJsonSchema(schema, input);
+  if (result.valid) return;
   throw new RuntimeError(
     "INPUT_INVALID",
-    `Input does not match schema: ${issues.join("; ")}`,
+    `Input does not match schema: ${result.issues.join("; ")}`,
   );
 }
 

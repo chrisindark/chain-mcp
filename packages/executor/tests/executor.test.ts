@@ -1,10 +1,10 @@
-import { InMemoryToolRuntime, RuntimeError } from "@chainmcp/core";
+import { InMemoryToolRuntime, type Logger, RuntimeError } from "@chainmcp/core";
 import type { CompiledOperation } from "@chainmcp/compiler";
 import {
   OAuthClientCredentialsProvider,
   type UpstreamCredentialProvider,
 } from "@chainmcp/auth";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createUpstreamExecutor,
@@ -1553,6 +1553,258 @@ describe("OAuth token acquisition through the outbound policy", () => {
       expect(transport.requests[0]?.url.toString()).toBe(
         "http://127.0.0.1:8080/pets",
       );
+    });
+  });
+});
+
+describe("response schema validation (RM-10)", () => {
+  type LogEntry = {
+    message: string;
+    ctx?: Record<string, unknown> | undefined;
+  };
+
+  const schemaOp = (responses: CompiledOperation["responses"]) =>
+    operation({
+      name: "getUser",
+      method: "get",
+      path: "/user",
+      responses,
+    });
+
+  const userSchema = {
+    type: "object",
+    required: ["id", "username"],
+    properties: {
+      id: { type: "string" },
+      username: { type: "string" },
+      role: { type: "string" },
+    },
+    additionalProperties: false,
+  };
+
+  it("validates and allows conforming upstream response across modes", async () => {
+    for (const mode of ["off", "warn", "enforce"] as const) {
+      const transport = new FakeTransport([
+        jsonResponse({ id: "u-123", username: "alice", role: "admin" }),
+      ]);
+      const executor = createUpstreamExecutor({
+        baseUrl: "https://api.example.com",
+        allowedHosts: ["api.example.com"],
+        resolveHost: async () => ["1.1.1.1"],
+        transport,
+        validateResponses: mode,
+      });
+
+      const runtime = new InMemoryToolRuntime();
+      runtime.register(
+        executor.createTool(
+          schemaOp([{ status: "200", description: "OK", schema: userSchema }]),
+        ),
+      );
+
+      const result = await runtime.callTool("getUser", {}, async () => context);
+      expect(result).toEqual({ id: "u-123", username: "alice", role: "admin" });
+    }
+  });
+
+  it("warns and audits without body leakage when response violates schema in 'warn' mode", async () => {
+    const transport = new FakeTransport([
+      jsonResponse({
+        id: 123,
+        username: "alice",
+        sensitive_internal_key: "SECRET_LEAK_TEST",
+      }),
+    ]);
+    const warnLogs: LogEntry[] = [];
+    const auditLogs: LogEntry[] = [];
+    const logger: Logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: (msg, ctx) => warnLogs.push({ message: msg, ctx }),
+      error: vi.fn(),
+      audit: (msg, ctx) => auditLogs.push({ message: msg, ctx }),
+    };
+
+    const executor = createUpstreamExecutor({
+      baseUrl: "https://api.example.com",
+      allowedHosts: ["api.example.com"],
+      resolveHost: async () => ["1.1.1.1"],
+      transport,
+      validateResponses: "warn",
+      logger,
+    });
+
+    const runtime = new InMemoryToolRuntime();
+    runtime.register(
+      executor.createTool(
+        schemaOp([{ status: "200", description: "OK", schema: userSchema }]),
+      ),
+    );
+
+    const result = await runtime.callTool("getUser", {}, async () => context);
+    // In warn mode, execution succeeds and returns response
+    expect(result).toEqual({
+      id: 123,
+      username: "alice",
+      sensitive_internal_key: "SECRET_LEAK_TEST",
+    });
+
+    expect(warnLogs).toHaveLength(1);
+    expect(warnLogs[0]?.message).toContain("did not match response schema");
+    expect(warnLogs[0]?.ctx?.toolName).toBe("getUser");
+    expect(warnLogs[0]?.ctx?.status).toBe(200);
+    expect(Array.isArray(warnLogs[0]?.ctx?.issues)).toBe(true);
+
+    // Verify secret was NOT leaked in logger warn
+    const warnSerialized = JSON.stringify(warnLogs);
+    expect(warnSerialized).not.toContain("SECRET_LEAK_TEST");
+
+    // Verify audit log
+    expect(auditLogs).toHaveLength(1);
+    expect(auditLogs[0]?.ctx?.toolName).toBe("getUser");
+    expect(auditLogs[0]?.ctx?.status).toBe(200);
+    const auditSerialized = JSON.stringify(auditLogs);
+    expect(auditSerialized).not.toContain("SECRET_LEAK_TEST");
+  });
+
+  it("fails closed in 'enforce' mode when response violates schema, redacting body", async () => {
+    const transport = new FakeTransport([
+      jsonResponse({
+        id: 123,
+        username: "alice",
+        confidential_payload: "TOP_SECRET_98765",
+      }),
+    ]);
+
+    const executor = createUpstreamExecutor({
+      baseUrl: "https://api.example.com",
+      allowedHosts: ["api.example.com"],
+      resolveHost: async () => ["1.1.1.1"],
+      transport,
+      validateResponses: "enforce",
+    });
+
+    const runtime = new InMemoryToolRuntime();
+    runtime.register(
+      executor.createTool(
+        schemaOp([{ status: "200", description: "OK", schema: userSchema }]),
+      ),
+    );
+
+    let caughtError: unknown;
+    try {
+      await runtime.callTool("getUser", {}, async () => context);
+    } catch (err) {
+      caughtError = err;
+    }
+
+    expect(caughtError).toBeInstanceOf(RuntimeError);
+    const rtErr = caughtError as RuntimeError;
+    expect(rtErr.code).toBe("UPSTREAM_FAILURE");
+    expect(rtErr.message).toBe("Upstream response was invalid");
+
+    // Validate that the sensitive body is NOT leaked anywhere in error string
+    const errString = String(rtErr) + " " + String(rtErr.cause);
+    expect(errString).not.toContain("TOP_SECRET_98765");
+    expect(errString).toContain("violated response schema");
+  });
+
+  it("skips validation in 'off' mode and does not warn or error", async () => {
+    const transport = new FakeTransport([
+      jsonResponse({ id: 123, completely_wrong: true }),
+    ]);
+    const warnLogs: LogEntry[] = [];
+    const logger: Logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: (msg, ctx) => warnLogs.push({ message: msg, ctx }),
+      error: vi.fn(),
+    };
+
+    const executor = createUpstreamExecutor({
+      baseUrl: "https://api.example.com",
+      allowedHosts: ["api.example.com"],
+      resolveHost: async () => ["1.1.1.1"],
+      transport,
+      validateResponses: "off",
+      logger,
+    });
+
+    const runtime = new InMemoryToolRuntime();
+    runtime.register(
+      executor.createTool(
+        schemaOp([{ status: "200", description: "OK", schema: userSchema }]),
+      ),
+    );
+
+    const result = await runtime.callTool("getUser", {}, async () => context);
+    expect(result).toEqual({ id: 123, completely_wrong: true });
+    expect(warnLogs).toHaveLength(0);
+  });
+
+  it("matches status codes by 2XX range and default fallback", async () => {
+    // 201 Created matches "2XX"
+    const transport201 = new FakeTransport([
+      jsonResponse({ status: "created", id: "item-1" }, 201),
+    ]);
+    const executor201 = createUpstreamExecutor({
+      baseUrl: "https://api.example.com",
+      allowedHosts: ["api.example.com"],
+      resolveHost: async () => ["1.1.1.1"],
+      transport: transport201,
+      validateResponses: "enforce",
+    });
+
+    const runtime = new InMemoryToolRuntime();
+    runtime.register(
+      executor201.createTool(
+        schemaOp([
+          {
+            status: "2XX",
+            description: "Created",
+            schema: {
+              type: "object",
+              required: ["id"],
+              properties: { id: { type: "string" } },
+            },
+          },
+        ]),
+      ),
+    );
+
+    const res201 = await runtime.callTool("getUser", {}, async () => context);
+    expect(res201).toEqual({ status: "created", id: "item-1" });
+
+    // 201 with invalid schema fails in enforce mode
+    const badTransport = new FakeTransport([jsonResponse({ id: 999 }, 201)]);
+    const badExecutor = createUpstreamExecutor({
+      baseUrl: "https://api.example.com",
+      allowedHosts: ["api.example.com"],
+      resolveHost: async () => ["1.1.1.1"],
+      transport: badTransport,
+      validateResponses: "enforce",
+    });
+    const badRuntime = new InMemoryToolRuntime();
+    badRuntime.register(
+      badExecutor.createTool(
+        schemaOp([
+          {
+            status: "2XX",
+            description: "Created",
+            schema: {
+              type: "object",
+              required: ["id"],
+              properties: { id: { type: "string" } },
+            },
+          },
+        ]),
+      ),
+    );
+    await expect(
+      badRuntime.callTool("getUser", {}, async () => context),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_FAILURE",
+      message: "Upstream response was invalid",
     });
   });
 });

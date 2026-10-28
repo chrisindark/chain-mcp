@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "@chainmcp/core";
+import type { Logger, ToolDefinition } from "@chainmcp/core";
 import type { CompiledOperation } from "@chainmcp/compiler";
 import type { UpstreamCredentialProvider } from "@chainmcp/auth";
 
@@ -90,6 +90,16 @@ export interface UpstreamExecutorOptions {
   transport?: UpstreamTransport;
   /** Optional upstream credential provider to satisfy authentication schemes. */
   credentialProvider?: UpstreamCredentialProvider;
+  /**
+   * Mode for validating upstream JSON responses against compiled OpenAPI response schemas.
+   * - "off": Disable response schema validation.
+   * - "warn": Validate responses and emit warnings and audit logs on mismatch; return payload.
+   * - "enforce": Validate responses and throw an error on mismatch.
+   * Default: "warn".
+   */
+  validateResponses?: "off" | "warn" | "enforce";
+  /** Optional logger for response validation warnings and audit logs. */
+  logger?: Logger;
 }
 
 export interface UpstreamExecutor {

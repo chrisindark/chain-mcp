@@ -1,10 +1,12 @@
 import {
+  type Logger,
   RuntimeError,
   type ToolCachePolicy,
   type ToolContext,
   type ToolDefinition,
+  validateJsonSchema,
 } from "@chainmcp/core";
-import type { CompiledOperation } from "@chainmcp/compiler";
+import type { CompiledOperation, CompiledResponse } from "@chainmcp/compiler";
 import {
   normalizeUpstreamCredential,
   type OAuthTokenFetcher,
@@ -98,6 +100,8 @@ interface NormalizedExecutorOptions {
   maxRequestBytes: number;
   maxRedirects: number;
   timeoutMs: number;
+  validateResponses: "off" | "warn" | "enforce";
+  logger?: Logger;
   defaultReadCacheTtlSeconds?: number;
   contractRevision?: string;
   ownerTenantId?: string;
@@ -263,6 +267,9 @@ async function executeOperation(
         throw new UpstreamStatusError(response.status);
       }
       const result = parseJsonResponse(response);
+      if (settings.validateResponses !== "off") {
+        validateUpstreamResponse(operation, response.status, result, settings);
+      }
       if (stop.signal.aborted) {
         throw stop.signal.reason ?? new Error("Upstream request was aborted");
       }
@@ -396,6 +403,17 @@ function normalizeOptions(
   const resolver = options.resolveHost ?? systemHostResolver;
   const transport = options.transport ?? createNodeUpstreamTransport();
 
+  const validateResponses = options.validateResponses ?? "warn";
+  if (
+    validateResponses !== "off" &&
+    validateResponses !== "warn" &&
+    validateResponses !== "enforce"
+  ) {
+    throw new TypeError(
+      "Executor option 'validateResponses' must be 'off', 'warn', or 'enforce'",
+    );
+  }
+
   return {
     baseUrl,
     policy: {
@@ -407,6 +425,8 @@ function normalizeOptions(
     },
     resolver,
     transport,
+    validateResponses,
+    ...(options.logger !== undefined ? { logger: options.logger } : {}),
     ...(options.credentialProvider === undefined
       ? {}
       : {
@@ -961,6 +981,75 @@ function parseJsonResponse(response: UpstreamTransportResponse): unknown {
     throw new InvalidResponseError("Upstream response is not valid JSON", {
       cause: error,
     });
+  }
+}
+
+function findMatchingResponse(
+  responses: readonly CompiledResponse[] | undefined,
+  status: number,
+): CompiledResponse | undefined {
+  if (!responses || responses.length === 0) return undefined;
+  const statusStr = String(status);
+  // 1. Exact status code match (e.g. "200")
+  const exact = responses.find((r) => r.status === statusStr);
+  if (exact) return exact;
+
+  // 2. Status range match (e.g. "2XX" or "2xx")
+  const prefix = statusStr.charAt(0);
+  const range = responses.find((r) => {
+    const s = r.status.toUpperCase();
+    return s.length === 3 && s.startsWith(prefix) && s.slice(1) === "XX";
+  });
+  if (range) return range;
+
+  // 3. Fallback to "default"
+  return responses.find((r) => r.status.toLowerCase() === "default");
+}
+
+function validateUpstreamResponse(
+  operation: CompiledOperation,
+  status: number,
+  body: unknown,
+  settings: NormalizedExecutorOptions,
+): void {
+  const matchingResponse = findMatchingResponse(operation.responses, status);
+  if (!matchingResponse?.schema) return;
+
+  const validation = validateJsonSchema(matchingResponse.schema, body);
+  if (validation.valid) return;
+
+  const issuesSummary = validation.issues.join("; ");
+  if (settings.validateResponses === "enforce") {
+    // Redact response body in errors: never include raw body in message or error
+    throw new InvalidResponseError(
+      `Upstream response for tool '${operation.name}' (status ${status}) violated response schema: ${issuesSummary}`,
+    );
+  }
+
+  // settings.validateResponses === "warn"
+  if (settings.logger) {
+    try {
+      settings.logger.warn(
+        `Upstream response for tool '${operation.name}' (status ${status}) did not match response schema: ${issuesSummary}`,
+        {
+          toolName: operation.name,
+          status,
+          issues: validation.issues,
+        },
+      );
+      if (typeof settings.logger.audit === "function") {
+        settings.logger.audit(
+          `Upstream response validation warning for tool '${operation.name}'`,
+          {
+            toolName: operation.name,
+            status,
+            issues: validation.issues,
+          },
+        );
+      }
+    } catch {
+      // Logger failures must never alter execution
+    }
   }
 }
 

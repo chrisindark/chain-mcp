@@ -212,10 +212,13 @@ material counts as unresolved so the call fails closed. OAuth token acquisition
 is itself an outbound call: the executor hands the provider a token fetcher built
 from its own resolver and transport, so the token request inherits the host
 allowlist, public-address classification, DNS pinning, peer verification,
-redirect refusal, and response cap rather than using the platform fetch. The
-executor does not validate response schemas, retry requests, or honor proxy
-environment variables. A custom transport is trusted adapter code; the default
-Node transport is the component that pins DNS and verifies the peer.
+redirect refusal, and response cap rather than using the platform fetch.
+The executor validates upstream JSON responses against compiled OpenAPI response schemas
+according to the configured `validateResponses` mode (`off`, `warn`, `enforce`),
+redacting response bodies from logs and error diagnostics to prevent payload leakage.
+The executor does not retry requests or honor proxy environment variables. A custom
+transport is trusted adapter code; the default Node transport is the component that pins
+DNS and verifies the peer.
 
 ### End-to-end example
 
@@ -425,6 +428,13 @@ The following remain required before token accounting is complete:
 - A shared serialization path so measurement and the transport do not serialize
   the same result separately.
 
+### Bounded serialization and input size caps
+
+To prevent resource exhaustion from adversarial payloads or unbounded memory allocation:
+
+- **Streaming bounded serialization (`stringifyBounded`):** Output serialization traverses objects and arrays with explicit caps on recursion depth (`maxDepth`), visited nodes (`maxNodes`), and UTF-8 byte length (`maxBytes`, configured via `server.maxResponseBytes`). Traversal aborts immediately upon exceeding limits with `SerializationLimitError` without constructing or buffering the full serialized representation or reading subsequent object properties. Circular references are detected via an identity set.
+- **Input size enforcement:** Tool invocation arguments are checked against `server.maxToolInputBytes` (default 1,048,576 bytes) prior to schema validation. Inputs exceeding the threshold are rejected immediately with `INPUT_TOO_LARGE`, ensuring oversized inputs cannot consume resources during schema parsing.
+
 Token counts are metadata; adapters receive the serialized result, so they must
 run in-process or in a trusted boundary and must not forward payload text.
 
@@ -448,6 +458,7 @@ Use stable internal error codes, including:
 - `CONTRACT_INVALID`
 - `TOOL_NOT_FOUND`
 - `INPUT_INVALID`
+- `INPUT_TOO_LARGE`
 - `AUTH_REQUIRED`
 - `AUTH_FORBIDDEN`
 - `RATE_LIMITED`
