@@ -215,6 +215,50 @@ export interface MetricsSink {
   record(event: RuntimeEvent): void | Promise<void>;
 }
 
+export interface ToolSpan {
+  spanContext?(): {
+    readonly traceId?: string | undefined;
+    readonly spanId?: string | undefined;
+    readonly traceFlags?: number | undefined;
+  };
+  setAttribute?(key: string, value: string | number | boolean): void;
+  setAttributes?(attributes: Record<string, string | number | boolean>): void;
+  recordException?(error: Error): void;
+  setStatus?(status: { code: number; message?: string }): void;
+  end?(): void;
+}
+
+export interface ToolTracer {
+  startToolSpan(
+    toolName: string,
+    context: ToolContext,
+    contractRevision?: string | undefined,
+  ): ToolSpan | unknown;
+  endToolSpan(
+    span: ToolSpan | unknown,
+    details?: {
+      error?: unknown;
+      cacheOutcome?: string | undefined;
+      outcome?: "success" | "error" | "rate_limited" | "cancelled" | undefined;
+      durationMs?: number | undefined;
+      cached?: boolean | undefined;
+    },
+  ): void;
+  startChildSpan?(
+    name: string,
+    attributes?: Record<string, string | number | boolean> | undefined,
+  ): ToolSpan | unknown;
+  endSpan?(
+    span: ToolSpan | unknown,
+    details?: {
+      error?: unknown;
+      outcome?: "success" | "error" | "rate_limited" | "cancelled" | undefined;
+      durationMs?: number | undefined;
+    },
+  ): void;
+  withSpan?<T>(span: ToolSpan | unknown, fn: () => Promise<T> | T): Promise<T>;
+}
+
 export type LogLevel = "debug" | "info" | "warn" | "error" | "silent";
 
 export interface LogCorrelationContext {
@@ -356,6 +400,12 @@ export interface RuntimeOptions {
   authorizer?: Authorizer;
   rateLimiter?: RateLimiter;
   metrics?: MetricsSink;
+  /**
+   * Injectable OpenTelemetry tracer adapter. Emits correlated spans across tool
+   * invocation stages, nested operations, and error paths without leaking
+   * arguments or response bodies.
+   */
+  tracer?: ToolTracer;
   /**
    * Injectable structured logger. Emits correlated diagnostic and audit records
    * across tool invocation stages. Failures in logger invocation are isolated
@@ -665,6 +715,8 @@ export class InMemoryToolRuntime implements ToolRuntime {
     let rateLimitDenied = false;
     let rateLimitAcquired = false;
     let toolRevision: string | undefined;
+    let caughtError: unknown;
+    let span: unknown;
     // Unknown and cross-tenant tools are the same observable miss in
     // multi-tenant mode and emit no metrics event, so metrics timing cannot
     // be used to enumerate another tenant's tools.
@@ -674,125 +726,235 @@ export class InMemoryToolRuntime implements ToolRuntime {
         typeof contextOrFactory === "function"
           ? await contextOrFactory()
           : contextOrFactory;
+      const activeContext = context;
       stage = "authorization";
-      const tool = this.resolveTool(name, context, () => {
+      const tool = this.resolveTool(name, activeContext, () => {
         unresolved = true;
       });
       toolRevision = tool.contractRevision;
-      if (
-        this.tenantMode === "single-tenant" &&
-        this.pinnedTenantId !== undefined &&
-        context.tenantId !== this.pinnedTenantId
-      ) {
-        // A pinned single-tenant deployment serves exactly one tenant; any
-        // other caller identity is a policy denial, not a lookup miss.
-        throw new RuntimeError("AUTH_FORBIDDEN", "Access denied");
-      }
-      // Authorization must precede validation: validation errors reveal the
-      // tool's schema, which unauthorized callers must not be able to probe.
-      await this.options.authorizer?.authorize(tool, context);
-      stage = "validation";
-      const maxInputBytes = this.options.maxToolInputBytes ?? 1_048_576;
-      if (input !== undefined && input !== null) {
-        assertInputSize(tool.name, input, maxInputBytes);
-      }
-      validateInput(tool.inputSchema, input);
-      stage = "rate_limit";
-      const decision = this.options.rateLimiter
-        ? await this.options.rateLimiter.check(context, name)
-        : undefined;
-      if (this.options.rateLimiter) {
-        if (
-          decision === undefined ||
-          decision === null ||
-          typeof decision.allowed !== "boolean"
-        ) {
-          throw new RuntimeError(
-            "UPSTREAM_FAILURE",
-            `Rate limiter for tool '${name}' returned an invalid decision`,
+      if (this.options.tracer && !unresolved && activeContext) {
+        try {
+          span = this.options.tracer.startToolSpan(
+            name,
+            activeContext,
+            toolRevision,
           );
+        } catch {
+          // Tracer failures must not alter tool execution
         }
-        if (!decision.allowed) {
-          rateLimitDenied = true;
-          const retryAfterSeconds =
-            typeof decision.retryAfterSeconds === "number" &&
-            Number.isFinite(decision.retryAfterSeconds) &&
-            decision.retryAfterSeconds >= 0
-              ? Math.ceil(decision.retryAfterSeconds)
-              : undefined;
-          throw new RuntimeError("RATE_LIMITED", "Rate limit exceeded", {
-            ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
-          });
-        }
-        rateLimitAcquired = true;
       }
-      stage = "cache";
-      const cache = this.options.cache;
-      let cacheKey: string | undefined;
-      if (cache !== undefined && tool.cache !== undefined) {
-        cacheKey =
-          tool.contractRevision !== undefined
-            ? tryCreateCacheKey(
-                cache,
-                tool,
-                tool.contractRevision,
-                input,
-                context,
-              )
-            : undefined;
-        if (cacheKey === undefined) {
-          cacheOutcome = "bypass";
-        } else {
-          const lookup = await readCached(cache.store, cacheKey);
-          if (lookup.status === "hit") {
-            cacheOutcome = "hit";
-            if (context.signal?.aborted) {
-              throw new RuntimeError(
-                "CANCELLED",
-                `Tool '${name}' was cancelled`,
-                { cause: context.signal.reason },
-              );
-            }
-            tokenUsage = this.measureTokens(lookup.value);
-            return lookup.value;
+
+      const runStages = async () => {
+        if (
+          this.tenantMode === "single-tenant" &&
+          this.pinnedTenantId !== undefined &&
+          activeContext.tenantId !== this.pinnedTenantId
+        ) {
+          // A pinned single-tenant deployment serves exactly one tenant; any
+          // other caller identity is a policy denial, not a lookup miss.
+          throw new RuntimeError("AUTH_FORBIDDEN", "Access denied");
+        }
+        // Authorization must precede validation: validation errors reveal the
+        // tool's schema, which unauthorized callers must not be able to probe.
+        await this.options.authorizer?.authorize(tool, activeContext);
+        stage = "validation";
+        const maxInputBytes = this.options.maxToolInputBytes ?? 1_048_576;
+        if (input !== undefined && input !== null) {
+          assertInputSize(tool.name, input, maxInputBytes);
+        }
+        validateInput(tool.inputSchema, input);
+        stage = "rate_limit";
+        const decision = this.options.rateLimiter
+          ? await this.options.rateLimiter.check(activeContext, name)
+          : undefined;
+        if (this.options.rateLimiter) {
+          if (
+            decision === undefined ||
+            decision === null ||
+            typeof decision.allowed !== "boolean"
+          ) {
+            throw new RuntimeError(
+              "UPSTREAM_FAILURE",
+              `Rate limiter for tool '${name}' returned an invalid decision`,
+            );
           }
-          cacheOutcome = lookup.status;
+          if (!decision.allowed) {
+            rateLimitDenied = true;
+            const retryAfterSeconds =
+              typeof decision.retryAfterSeconds === "number" &&
+              Number.isFinite(decision.retryAfterSeconds) &&
+              decision.retryAfterSeconds >= 0
+                ? Math.ceil(decision.retryAfterSeconds)
+                : undefined;
+            throw new RuntimeError("RATE_LIMITED", "Rate limit exceeded", {
+              ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+            });
+          }
+          rateLimitAcquired = true;
         }
+        stage = "cache";
+        const cache = this.options.cache;
+        let cacheKey: string | undefined;
+        if (cache !== undefined && tool.cache !== undefined) {
+          cacheKey =
+            tool.contractRevision !== undefined
+              ? tryCreateCacheKey(
+                  cache,
+                  tool,
+                  tool.contractRevision,
+                  input,
+                  activeContext,
+                )
+              : undefined;
+          if (cacheKey === undefined) {
+            cacheOutcome = "bypass";
+          } else {
+            let cacheSpan: unknown;
+            try {
+              cacheSpan = this.options.tracer?.startChildSpan?.("cache.read", {
+                "tool.name": name,
+                "tenant.id": activeContext.tenantId,
+              });
+            } catch {
+              // ignore
+            }
+            try {
+              const lookup = await readCached(cache.store, cacheKey);
+              if (lookup.status === "hit") {
+                cacheOutcome = "hit";
+                if (activeContext.signal?.aborted) {
+                  throw new RuntimeError(
+                    "CANCELLED",
+                    `Tool '${name}' was cancelled`,
+                    { cause: activeContext.signal.reason },
+                  );
+                }
+                tokenUsage = this.measureTokens(lookup.value);
+                return lookup.value;
+              }
+              cacheOutcome = lookup.status;
+            } finally {
+              if (cacheSpan) {
+                try {
+                  this.options.tracer?.endSpan?.(cacheSpan);
+                } catch {
+                  // ignore
+                }
+              }
+            }
+          }
+        }
+        stage = "execution";
+        let execSpan: unknown;
+        try {
+          execSpan = this.options.tracer?.startChildSpan?.("upstream.call", {
+            "tool.name": name,
+            "tenant.id": activeContext.tenantId,
+          });
+        } catch {
+          // ignore
+        }
+        let result: unknown;
+        try {
+          result = await executeWithTimeout(
+            tool,
+            input,
+            activeContext,
+            this.options.defaultTimeoutMs ?? 15_000,
+          );
+        } catch (err) {
+          if (execSpan) {
+            try {
+              this.options.tracer?.endSpan?.(execSpan, { error: err });
+            } catch {
+              // ignore
+            }
+          }
+          throw err;
+        }
+        if (execSpan) {
+          try {
+            this.options.tracer?.endSpan?.(execSpan);
+          } catch {
+            // ignore
+          }
+        }
+        // Output policy runs before the cache write and before measurement so
+        // that neither a cached entry nor telemetry ever contains a result that
+        // failed projection or exceeded its budget.
+        stage = "projection";
+        let projSpan: unknown;
+        try {
+          projSpan = this.options.tracer?.startChildSpan?.("projection", {
+            "tool.name": name,
+            "tenant.id": activeContext.tenantId,
+          });
+        } catch {
+          // ignore
+        }
+        let output: ReturnType<typeof this.applyOutputPolicy>;
+        try {
+          output = this.applyOutputPolicy(tool, result, activeContext);
+        } finally {
+          if (projSpan) {
+            try {
+              this.options.tracer?.endSpan?.(projSpan);
+            } catch {
+              // ignore
+            }
+          }
+        }
+        if (
+          cache !== undefined &&
+          cacheKey !== undefined &&
+          tool.cache !== undefined &&
+          output.result !== undefined
+        ) {
+          let cacheWriteSpan: unknown;
+          try {
+            cacheWriteSpan = this.options.tracer?.startChildSpan?.(
+              "cache.write",
+              {
+                "tool.name": name,
+                "tenant.id": activeContext.tenantId,
+              },
+            );
+          } catch {
+            // ignore
+          }
+          try {
+            await writeCached(
+              cache.store,
+              cacheKey,
+              output.result,
+              tool.cache.ttlSeconds,
+            );
+          } finally {
+            if (cacheWriteSpan) {
+              try {
+                this.options.tracer?.endSpan?.(cacheWriteSpan);
+              } catch {
+                // ignore
+              }
+            }
+          }
+        }
+        // A budgeted tool already counted its projected result for enforcement;
+        // reuse that count. Otherwise measurement is best-effort and runs after
+        // the write, matching the non-projected path.
+        tokenUsage =
+          tool.output !== undefined && tool.output.maxTokens !== undefined
+            ? output.tokenUsage
+            : this.measureTokens(output.result);
+        return output.result;
+      };
+
+      if (this.options.tracer?.withSpan && span) {
+        return await this.options.tracer.withSpan(span, runStages);
       }
-      stage = "execution";
-      const result = await executeWithTimeout(
-        tool,
-        input,
-        context,
-        this.options.defaultTimeoutMs ?? 15_000,
-      );
-      // Output policy runs before the cache write and before measurement so
-      // that neither a cached entry nor telemetry ever contains a result that
-      // failed projection or exceeded its budget.
-      stage = "projection";
-      const output = this.applyOutputPolicy(tool, result, context);
-      if (
-        cache !== undefined &&
-        cacheKey !== undefined &&
-        tool.cache !== undefined &&
-        output.result !== undefined
-      ) {
-        await writeCached(
-          cache.store,
-          cacheKey,
-          output.result,
-          tool.cache.ttlSeconds,
-        );
-      }
-      // A budgeted tool already counted its projected result for enforcement;
-      // reuse that count. Otherwise measurement is best-effort and runs after
-      // the write, matching the non-projected path.
-      tokenUsage =
-        tool.output !== undefined && tool.output.maxTokens !== undefined
-          ? output.tokenUsage
-          : this.measureTokens(output.result);
-      return output.result;
+      return await runStages();
     } catch (error) {
+      caughtError = error;
       const failure = classifyFailure(name, stage, error, rateLimitDenied);
       outcome = failure.outcome;
       errorCode = failure.error.code;
@@ -881,6 +1043,26 @@ export class InMemoryToolRuntime implements ToolRuntime {
           );
         } catch {
           // Telemetry failures must not change the tool result.
+        }
+      }
+      if (this.options.tracer && span) {
+        const durationMs = Math.max(0, this.monotonicNow() - startedAt);
+        const traceOutcome: "success" | "error" | "cancelled" =
+          errorCode === "CANCELLED" || context?.signal?.aborted
+            ? "cancelled"
+            : outcome === "success"
+              ? "success"
+              : "error";
+        try {
+          this.options.tracer.endToolSpan(span, {
+            error: caughtError,
+            outcome: traceOutcome,
+            durationMs,
+            cacheOutcome,
+            cached: cacheOutcome === "hit",
+          });
+        } catch {
+          // Tracing failures must not alter tool results.
         }
       }
     }

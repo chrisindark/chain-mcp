@@ -55,6 +55,13 @@ Invocations automatically attach correlation fields to log records:
 
 ## 4. OpenTelemetry Integration
 
+OpenTelemetry support is partitioned into metrics aggregation and distributed tracing spans.
+
+### Metrics vs Tracing
+
+- **Metrics (`OpenTelemetryMetricsSink`):** Aggregates high-throughput quantitative indicators (counters, histograms) partitioned by safe low-cardinality labels without allocating per-request traces.
+- **Distributed Tracing (`ToolTracer`):** Captures end-to-end execution timing and lifecycle status per tool call, propagating trace contexts to downstream stages and child operations.
+
 ### Metrics (`OpenTelemetryMetricsSink`)
 
 Implements `MetricsSink` from `@chainmcp/core` using `@opentelemetry/api`:
@@ -66,7 +73,52 @@ Implements `MetricsSink` from `@chainmcp/core` using `@opentelemetry/api`:
 
 ### Tracing (`ToolTracer`)
 
-Creates `chainmcp.tool_call` spans with tenant, principal, request ID, and tool attributes. Automatically marks span errors on failures and excludes payload bodies and credentials.
+`ToolTracer` implements `ToolTracer` from `@chainmcp/core` using `@opentelemetry/api`:
+
+#### Span Hierarchy & Context Propagation
+
+- **Root Tool Span:** Named `tool.<name>` (e.g. `tool.getPets`).
+- **Child Spans:** Executed inside `tracer.withSpan(toolSpan, ...)` context:
+  - `cache.read`: Cache lookup attempt.
+  - `upstream.call`: Tool adapter/upstream HTTP invocation.
+  - `projection`: Output filtering and field selection.
+  - `cache.write`: Cache storage operation.
+- Because child spans run within the tool span context, they automatically inherit the parent span's `traceId` and establish proper parent-child distributed trace graphs.
+
+#### Span Attributes
+
+Spans contain safe correlation attributes:
+
+- `tool.name`: Name of the executed tool.
+- `mcp.tool_name`: Matching MCP tool name.
+- `tenant.id`: Owning tenant ID.
+- `principal.id`: Caller principal identifier.
+- `mcp.request_id`: Unique request correlation ID.
+- `contract.revision`: Contract revision hash/ID (when present).
+- `outcome`: `"success" | "error" | "cancelled"`.
+- `duration_ms`: Total execution duration in milliseconds.
+- `cache.outcome`: `"hit" | "miss" | "bypass"` (for cache-eligible tools).
+- `cached`: Boolean flag indicating whether the result was served from cache.
+
+#### Strict Security and Redaction Guarantees
+
+- **No Payload or Header Leakage:** Input arguments, request headers, and response bodies are **never** attached to span attributes or events.
+- **Error Redaction:** When a tool fails or throws an exception, error messages recorded on the span status and exception events are scrubbed through `redactString()`, replacing API tokens, Bearer headers, Basic auth credentials, and JWTs with `[REDACTED]`.
+
+#### Lifecycle and Cancellation
+
+- Spans always end upon tool completion.
+- When an execution is cancelled (e.g., via `context.signal.aborted` or timeout cancellation), the span is closed with `outcome: "cancelled"`.
+- When an execution fails with an error, the span status is set to `SpanStatusCode.ERROR` with a redacted description.
+
+#### Export and Fallback Semantics
+
+- If an OpenTelemetry SDK `TracerProvider` with an exporter (such as an OTLP trace exporter directed to `endpoint`) is initialized in the environment, spans are exported upstream.
+- If no SDK exporter is configured, spans are handled locally by `@opentelemetry/api` and dropped without crashing or affecting execution.
+
+#### Sampling
+
+- Tracing supports probabilistic sampling via `analytics.openTelemetry.tracing.sampleRatio` (from `0.0` to `1.0`, default `0.1`). When sampled out, a no-op span context is returned with zero overhead.
 
 ## 5. In-Memory Analytics Aggregator
 
@@ -107,6 +159,10 @@ analytics:
   openTelemetry:
     enabled: false
     serviceName: chainmcp
+    endpoint: http://localhost:4318/v1/traces # optional OTLP HTTP endpoint
+    tracing:
+      enabled: false
+      sampleRatio: 0.1 # sample ratio between 0.0 and 1.0
 ```
 
 ### Environment Variables

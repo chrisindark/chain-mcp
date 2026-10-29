@@ -90,6 +90,13 @@ analytics:
   includeArguments: false
   includeResponseBodies: false
   retentionDays: 14
+  openTelemetry:
+    enabled: false
+    serviceName: chainmcp
+    endpoint: http://localhost:4318/v1/traces
+    tracing:
+      enabled: false
+      sampleRatio: 0.1
 ```
 
 The implemented `@chainmcp/config` package exports `ChainMcpConfigSchema`, `parseConfig`, `safeParseConfig`, and wiring helpers. The supported sections are `version`, `name`, `contract`, `server`, `security`, `rateLimit`, `auth`, `logging`, `jsonNavigation`, and `analytics`. Unknown keys are rejected with Zod `.strict()`.
@@ -107,8 +114,8 @@ The implemented `@chainmcp/config` package exports `ChainMcpConfigSchema`, `pars
 - **`auth`:** Configures inbound authorization (`authorizer: "scope"`) and upstream credential providers (`static`, `env`, `secretStore`, `oauth`). Wired into executor options via `createUpstreamCredentialProviderFromConfig`.
 - **`logging`:** Configures structured logger levels (`debug`, `info`, `warn`, `error`, `silent`), output destination (`stdout`, `stderr`, `memory`), secret redaction keys, and body exclusion. Overridable via `CHAINMCP_LOG_LEVEL`. Wired into runtime options via `createLoggerFromConfig`.
 - **`jsonNavigation`:** Configures bounds for JSON exploration tools (`maxDepth`, `maxArrayItems`, `maxResultBytes`, `maxVisitedNodes`, `timeoutMs`). Mapped into `NavigationLimits` via `createNavigationLimitsFromConfig`.
-- **`analytics`:** Configures usage and performance event tracking, rolling metrics aggregation retention, and OpenTelemetry integration. Wired into runtime options via `buildRuntimeOptions`.
-- **Wiring Helpers:** `buildExecutorOptions(config, overrides)` maps allowlists, timeouts, response caps, and credentials into `@chainmcp/executor`. `buildRuntimeOptions(config, overrides, factoryOptions)` maps authorizers, rate limiters, loggers, metrics sinks, and default timeouts into `@chainmcp/core`.
+- **`analytics`:** Configures usage and performance event tracking, rolling metrics aggregation retention, and OpenTelemetry integration. Under `openTelemetry`, optional `endpoint` specifies the OTLP trace/metrics destination URL, and `tracing` (`enabled`, `sampleRatio`) controls OpenTelemetry span generation and probabilistic sampling.
+- **Wiring Helpers:** `buildExecutorOptions(config, overrides)` maps allowlists, timeouts, response caps, and credentials into `@chainmcp/executor`. `buildRuntimeOptions(config, overrides, factoryOptions)` maps authorizers, rate limiters, loggers, metrics sinks, OpenTelemetry tracers (`ToolTracer`), and default timeouts into `@chainmcp/core`.
 
 ## 3. Environment variables
 

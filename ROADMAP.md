@@ -229,8 +229,12 @@ exclusion. It routes diagnostic logs and security audit logs to separate sinks
 provides `RollingAnalyticsAggregator` for sliding-window performance and cache
 hit-ratio accounting.
 `@chainmcp/config` adds validated `logging`, `jsonNavigation`, and `analytics`
-schemas, maps `CHAINMCP_LOG_LEVEL`, and wires loggers and metrics into runtime
-options via `buildRuntimeOptions`.
+schemas, maps `CHAINMCP_LOG_LEVEL`, and wires loggers, metrics, and OpenTelemetry
+tracers (`ToolTracer`) into runtime options via `buildRuntimeOptions`.
+`ToolTracer` instruments tool invocations (`tool.<name>`) and child spans
+(`cache.read`, `upstream.call`, `projection`, `cache.write`) with OpenTelemetry
+context propagation, configurable sampling ratio, cancellation handling, and strict
+redaction of secrets without payload body or argument leakage (RM-14).
 
 ## Milestone 7 — Generated servers
 

@@ -423,6 +423,9 @@ export class DynamicGateway implements ToolRuntime {
       ...(this.options.metrics !== undefined
         ? { metrics: this.options.metrics }
         : {}),
+      ...(this.options.tracer !== undefined
+        ? { tracer: this.options.tracer }
+        : {}),
       ...(this.options.logger !== undefined
         ? { logger: this.options.logger }
         : {}),
@@ -466,6 +469,9 @@ export class DynamicGateway implements ToolRuntime {
         : {}),
       ...(this.options.metrics !== undefined
         ? { metrics: this.options.metrics }
+        : {}),
+      ...(this.options.tracer !== undefined
+        ? { tracer: this.options.tracer }
         : {}),
       ...(this.options.logger !== undefined
         ? { logger: this.options.logger }
