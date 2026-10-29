@@ -211,37 +211,55 @@ accessors, define a callable `toJSON`, nest deeper than 64 levels, or exceed
 
 ## Shared Redis cache
 
-`@chainmcp/cache-redis` provides a shared `CacheStore` without coupling core to
-a Redis client:
+`@chainmcp/cache-redis` provides a shared `CacheStore` using either custom client wrappers (e.g. `redis` or `ioredis`) or the built-in hardened zero-dependency client (`createSimpleRedisClient`):
 
 ```ts
-import { RedisCacheStore } from "@chainmcp/cache-redis";
-import { createClient } from "redis";
+import {
+  RedisCacheStore,
+  createSimpleRedisClient,
+} from "@chainmcp/cache-redis";
 
-const client = createClient({ url: process.env.REDIS_URL });
-await client.connect();
+// Using the built-in connection-pooled client with TLS and ACL support:
+const client = createSimpleRedisClient({
+  url:
+    process.env.CHAINMCP_REDIS_URL ?? "rediss://alice:secret@redis.prod:6380/0",
+  maxConnections: 4,
+  timeoutMs: 1000,
+  tls: {
+    rejectUnauthorized: true,
+  },
+});
 
 const runtime = new InMemoryToolRuntime({
   cache: {
     store: new RedisCacheStore({
-      client: {
-        get: (key) => client.get(key),
-        set: (key, value, ttlMs) => client.set(key, value, { PX: ttlMs }),
-        delete: (key) => client.del(key),
-      },
+      client,
       keyPrefix: "chainmcp:prod:",
-      commandTimeoutMs: 500,
+      commandTimeoutMs: 1000,
     }),
     authorizationPartition,
   },
 });
 ```
 
+### Redis connection hardening (RM-16)
+
+When using Redis caching via configuration (`cache.provider: "redis"`) or `createSimpleRedisClient`:
+
+- **Protocols and TLS:** Accepts `redis://` (cleartext TCP) and `rediss://` (TLS encrypted via `tls.connect`). Custom TLS options (`rejectUnauthorized`, `ca`, `cert`, `key`, `servername`) can be specified in configuration or options.
+- **ACL Authentication:** Supports Redis 6+ ACL authentication (`redis://username:password@host:port`), password-only authentication (`redis://:password@host:port`), and unauthenticated connections.
+- **Database Index:** Database index is parsed from the URL pathname (e.g. `/0`, `/1`) and issued via `SELECT`.
+- **Connection Pooling:** Sockets are managed by an internal pool (default 2–4 connections) featuring:
+  - **Lazy connect:** Sockets connect on demand rather than at process start.
+  - **Health check on checkout:** Active sockets run a quick `PING` check upon checkout to detect broken or stale connections before executing commands.
+  - **Exponential backoff with jitter:** Reconnect attempts use capped exponential backoff with jitter to recover from dropped connections without overloading Redis servers.
+  - **Graceful drain:** `close()` / `disconnect()` drains in-flight requests and cleanly terminates pooled sockets.
+- **Credential Redaction:** Passwords and tokens embedded in Redis URLs are automatically redacted from error messages, stack traces, and diagnostics. `CHAINMCP_REDIS_URL` may contain credentials and must never be logged in raw form.
+
 The adapter accepts only current-version hashed keys, serializes and validates
 values itself, applies a millisecond TTL, and bounds entry size, TTL, and every
-command. It does not manage the connection, TLS, credentials, retries, eviction,
-or cluster topology; the supplied client does. A Redis outage or corrupt value
-rejects the cache operation, which the runtime already treats as a bypass or miss.
+command. A Redis outage or corrupt value rejects the cache operation, which the runtime
+already treats as a bypass or miss.
 
 Use a deployment-specific `keyPrefix` so environments sharing Redis cannot read
 each other's entries. Changing the prefix makes old entries unreachable; rotate
@@ -262,9 +280,9 @@ not cancel the client's command, so configure client socket timeouts too.
   raw result first and project on read.
 - A shared/persistent store can outlive a projection-policy change. Rotate the
   namespace or revision when projection changes.
-- Redis credentials belong in the client configuration, never in cache keys,
-  partitions, or telemetry. Use TLS and a private network for a shared store,
-  and treat the stored payloads as sensitive.
+- Redis credentials belong in the client configuration or environment (`CHAINMCP_REDIS_URL`), never in cache keys,
+  partitions, or telemetry. `CHAINMCP_REDIS_URL` may contain sensitive passwords and must never be logged. The client automatically redacts passwords from all error messages and stacks. Use TLS (`rediss://`) and private network peering for shared production stores,
+  and treat stored payloads as sensitive.
 - `keyPrefix` separates deployments; it is not an authorization boundary. The
   hashed key and authorization partition remain the isolation mechanism.
 

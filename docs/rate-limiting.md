@@ -60,8 +60,13 @@ rateLimit:
 When `provider: redis` is configured:
 
 1. `createRateLimiterFromConfig` auto-constructs a zero-dependency RESP2 Redis client using `options.redisClient`, `options.redisUrl`, `config.redis.url`, or `process.env.CHAINMCP_REDIS_URL`. If none is supplied, startup fails fast with a helpful error naming both `rateLimit.redis.url` and `CHAINMCP_REDIS_URL`.
-2. **Shared Redis Client:** When both rate limiting and caching are Redis-backed, `buildRuntimeOptions` shares the same underlying Redis client instance between `@chainmcp/rate-limit` and `@chainmcp/cache-redis`, preventing duplicate socket connections and connection pool exhaustion.
-3. **Startup Health Logging:** The server logs connection health at startup (`provider`, `reachability: "reachable" | "unreachable"`, `keyPrefix`, and quota summary). Secrets and credentials in the Redis connection URL are strictly excluded from logs.
+2. **Hardened Redis Client (RM-16):**
+   - **TLS & Encryption:** Supports `rediss://` for TLS connections with configurable certificate verification (`tls.rejectUnauthorized`, `tls.ca`, `tls.cert`, `tls.key`, `tls.servername`).
+   - **ACL Support:** Full support for Redis ACL users (`redis://username:password@host:port`), password-only auth (`redis://:password@host:port`), and database indexing (`/0`, `/1`).
+   - **Connection Pooling:** Sockets are managed by an internal pool (default 2–4 connections) with lazy connect, checkout health verification (`PING`), exponential backoff with jitter on reconnects, and graceful pool drain on shutdown.
+   - **Credential Redaction:** Passwords and credentials embedded in Redis URLs are automatically sanitized from all error messages and stack traces. `CHAINMCP_REDIS_URL` may contain sensitive credentials and must not be logged.
+3. **Shared Redis Client:** When both rate limiting and caching are Redis-backed, `buildRuntimeOptions` shares the same underlying Redis client instance between `@chainmcp/rate-limit` and `@chainmcp/cache-redis`, preventing duplicate socket connections and connection pool exhaustion.
+4. **Startup Health Logging:** The server logs connection health at startup (`provider`, `reachability: "reachable" | "unreachable"`, `keyPrefix`, and quota summary). Secrets and credentials in the Redis connection URL are strictly excluded from logs.
 
 ### Programmatic Usage
 

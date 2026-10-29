@@ -44,6 +44,13 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- **RM-16 harden Redis client (TLS, ACL, pooling, reconnect):**
+  - Fully parsed `redis://` and `rediss://` URLs with support for TLS encryption via `node:tls`, ACL username/password credentials, database index paths (`/0`, `/1`), and validated search query parameters (`timeoutMs`, `rejectUnauthorized`, `maxConnections`, `database`).
+  - Added connection pooling (default 2–4 connections) to `createSimpleRedisClient` with lazy on-demand socket connection, checkout health verification (`PING`), exponential backoff with jitter and a cap on reconnects, and graceful pool draining on `close()` / `disconnect()`.
+  - Added `tls` configuration object to `RateLimitConfigSchema` and `CacheConfigSchema` in `@chainmcp/config` (`rejectUnauthorized`, `ca`, `cert`, `key`, `servername`), wired through `buildRuntimeOptions`.
+  - Enforced strict credential redaction across all client error messages, stack traces, and diagnostics; exposed `redactRedisUrl` utility.
+  - Added comprehensive test coverage in `@chainmcp/cache-redis` for TLS test servers, ACL authentication, connection reuse across sequential commands, concurrency bounds, dropped-socket backoff recovery, pool drain, and credential scrubbing.
+  - Documented URL formats, TLS options, and `CHAINMCP_REDIS_URL` credential handling in `docs/caching.md`, `docs/rate-limiting.md`, `CONFIGURATION.md`, `SECURITY.md`, and `API_REFERENCE.md`.
 - **RM-15 wire Redis rate limiter through CLI and config:**
   - Made `createRateLimiterFromConfig` self-sufficient when `provider: "redis"`, auto-constructing zero-dependency RESP2 Redis clients from `options.redisClient`, `options.redisUrl`, `config.redis.url`, or `process.env.CHAINMCP_REDIS_URL`. If none is supplied, startup fails fast naming both keys.
   - Added `rateLimit.redis.url` and `rateLimit.failurePolicy` (`fail-closed` | `fail-open`, default `fail-closed`) to `RateLimitConfigSchema` in `@chainmcp/config`.

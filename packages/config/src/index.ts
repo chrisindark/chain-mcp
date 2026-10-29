@@ -17,16 +17,24 @@ import {
   RedisCacheStore,
   createSimpleRedisCacheClient,
   createSimpleRedisClient,
+  redactRedisUrl,
   type RedisCacheClient,
   type SimpleRedisClient,
+  type SimpleRedisClientStatus,
+  type SimpleRedisOptions,
+  type SimpleRedisTlsOptions,
 } from "@chainmcp/cache-redis";
 
 export {
   createSimpleRedisClient,
   createSimpleRedisCacheClient,
+  redactRedisUrl,
   type RedisCacheClient,
   type RedisRateLimitClient,
   type SimpleRedisClient,
+  type SimpleRedisClientStatus,
+  type SimpleRedisOptions,
+  type SimpleRedisTlsOptions,
 };
 import {
   CompositeCredentialProvider,
@@ -96,6 +104,18 @@ export const QuotaPolicyConfigSchema = z
 
 export type QuotaPolicyConfig = z.infer<typeof QuotaPolicyConfigSchema>;
 
+export const RedisTlsConfigSchema = z
+  .object({
+    rejectUnauthorized: z.boolean().optional(),
+    ca: z.string().optional(),
+    cert: z.string().optional(),
+    key: z.string().optional(),
+    servername: z.string().optional(),
+  })
+  .strict();
+
+export type RedisTlsConfig = z.infer<typeof RedisTlsConfigSchema>;
+
 export const RateLimitConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
@@ -124,6 +144,7 @@ export const RateLimitConfigSchema = z
           .positive()
           .max(30_000)
           .default(1_000),
+        tls: RedisTlsConfigSchema.optional(),
       })
       .strict()
       .prefault({}),
@@ -398,6 +419,7 @@ export const CacheConfigSchema = z
         url: z.string().optional(),
         keyPrefix: z.string().default("chainmcp:cache:"),
         commandTimeoutMs: z.number().int().positive().default(1_000),
+        tls: RedisTlsConfigSchema.optional(),
       })
       .strict()
       .prefault({}),
@@ -692,7 +714,11 @@ export function createRateLimiterFromConfig(
           "Redis rate limiter requires a Redis client (options.redisClient), 'rateLimit.redis.url', or environment variable 'CHAINMCP_REDIS_URL'",
         );
       }
-      client = createSimpleRedisClient(url);
+      client = createSimpleRedisClient({
+        url,
+        ...(config.redis.tls ? { tls: config.redis.tls } : {}),
+        timeoutMs: config.redis.commandTimeoutMs,
+      });
     }
     return new DistributedRateLimiter({
       client,
@@ -761,7 +787,11 @@ export function createCacheStoreFromConfig(
           "Redis cache store requires a Redis client (options.redisClient) or CHAINMCP_REDIS_URL",
         );
       }
-      client = createSimpleRedisCacheClient(url);
+      client = createSimpleRedisCacheClient({
+        url,
+        ...(config.redis.tls ? { tls: config.redis.tls } : {}),
+        timeoutMs: config.redis.commandTimeoutMs,
+      });
     }
     return new RedisCacheStore({
       client,
@@ -1119,7 +1149,16 @@ export function buildRuntimeOptions(
       process.env.CHAINMCP_REDIS_URL;
 
     if (redisUrl) {
-      sharedClient = createSimpleRedisClient(redisUrl);
+      const tls = config.rateLimit.redis.tls ?? config.cache.redis.tls;
+      const timeoutMs = Math.max(
+        config.rateLimit.redis.commandTimeoutMs,
+        config.cache.redis.commandTimeoutMs,
+      );
+      sharedClient = createSimpleRedisClient({
+        url: redisUrl,
+        ...(tls ? { tls } : {}),
+        timeoutMs,
+      });
     }
   } else if (
     passedLimiterClient &&

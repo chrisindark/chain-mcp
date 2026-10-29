@@ -60,7 +60,7 @@ rather than marking it complete.
 | [x]  | RM-13 | Remove implicit `"default"` tenant fallback                   | P1       | gateway/cli          | RM-01       |
 | [x]  | RM-14 | Wire `ToolTracer` into runtime and server                     | P2       | core/server/config   | —           |
 | [x]  | RM-15 | Wire Redis rate limiter through CLI and config                | P1       | config/cli           | —           |
-| [ ]  | RM-16 | Harden Redis client: TLS, ACL, pooling, reconnect             | P2       | cache-redis          | RM-15       |
+| [x]  | RM-16 | Harden Redis client: TLS, ACL, pooling, reconnect             | P2       | cache-redis          | RM-15       |
 | [ ]  | RM-17 | Add secret interpolation and implement documented env vars    | P1       | config/cli           | —           |
 | [ ]  | RM-18 | Stamp generated projects with the real CLI version            | P1       | cli/release          | —           |
 | [ ]  | RM-19 | Fix changeset fixed group to cover all 13 packages            | P1       | release              | —           |
@@ -1248,6 +1248,8 @@ This is not production-grade for a managed Redis (ElastiCache, Upstash, Redis Cl
 pnpm --filter @chainmcp/cache-redis test
 pnpm --filter @chainmcp/rate-limit test
 ```
+
+**Status (2026-10-29):** Completed in RM-16. `createSimpleRedisClient` fully parses `redis://` and `rediss://`, connects with TLS, handles ACL credentials and database index, manages a connection pool (2–4 sockets) with lazy connect, checkout PING health checks, and exponential backoff with jitter on reconnects, and enforces password scrubbing from all error messages and diagnostics. Optional `redis.tls` is wired through `@chainmcp/config`. Validated with unit and TLS mock test suites.
 
 ---
 
