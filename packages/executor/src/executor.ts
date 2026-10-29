@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   type Logger,
   RuntimeError,
@@ -6,7 +7,12 @@ import {
   type ToolDefinition,
   validateJsonSchema,
 } from "@chainmcp/core";
-import type { CompiledOperation, CompiledResponse } from "@chainmcp/compiler";
+import type {
+  CompiledOperation,
+  CompiledRequestBody,
+  CompiledResponse,
+  RequestBodyKind,
+} from "@chainmcp/compiler";
 import {
   normalizeUpstreamCredential,
   type OAuthTokenFetcher,
@@ -48,6 +54,7 @@ export const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000;
 export const MAX_RESPONSE_BYTES_LIMIT = 10_000_000;
 export const DEFAULT_MAX_REQUEST_BYTES = 1_000_000;
 export const MAX_REQUEST_BYTES_LIMIT = 10_000_000;
+export const DEFAULT_MAX_MULTIPART_PART_BYTES = 1_000_000;
 export const DEFAULT_MAX_REDIRECTS = 3;
 export const MAX_REDIRECTS_LIMIT = 5;
 export const DEFAULT_TIMEOUT_MS = 15_000;
@@ -98,6 +105,7 @@ interface NormalizedExecutorOptions {
   tokenEndpointFetch?: OAuthTokenFetcher;
   maxResponseBytes: number;
   maxRequestBytes: number;
+  maxMultipartPartBytes: number;
   maxRedirects: number;
   timeoutMs: number;
   validateResponses: "off" | "warn" | "enforce";
@@ -191,6 +199,7 @@ async function executeOperation(
       settings.maxRequestBytes,
       settings.policy.maxUrlLength,
       credentials,
+      settings.maxMultipartPartBytes,
     );
     for (let redirects = 0; ; redirects += 1) {
       const destination = await abortable(
@@ -357,6 +366,12 @@ function normalizeOptions(
     DEFAULT_MAX_REQUEST_BYTES,
     MAX_REQUEST_BYTES_LIMIT,
   );
+  const maxMultipartPartBytes = boundedInteger(
+    "maxMultipartPartBytes",
+    options.maxMultipartPartBytes,
+    DEFAULT_MAX_MULTIPART_PART_BYTES,
+    MAX_REQUEST_BYTES_LIMIT,
+  );
   const maxRedirects = boundedInteger(
     "maxRedirects",
     options.maxRedirects,
@@ -440,6 +455,7 @@ function normalizeOptions(
         }),
     maxResponseBytes,
     maxRequestBytes,
+    maxMultipartPartBytes,
     maxRedirects,
     timeoutMs,
     ...(options.defaultReadCacheTtlSeconds !== undefined &&
@@ -487,7 +503,8 @@ function validateOperation(operation: CompiledOperation): void {
       parameter.name.length === 0 ||
       (parameter.in !== "path" &&
         parameter.in !== "query" &&
-        parameter.in !== "header") ||
+        parameter.in !== "header" &&
+        parameter.in !== "cookie") ||
       typeof parameter.required !== "boolean"
     ) {
       throw new TypeError("Compiled operation has invalid parameter metadata");
@@ -596,6 +613,7 @@ function buildInitialRequest(
   maxRequestBytes: number,
   maxUrlLength: number,
   credentials?: readonly UpstreamCredential[],
+  maxMultipartPartBytes = DEFAULT_MAX_MULTIPART_PART_BYTES,
 ): BuiltRequest {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     throw new RequestBuildError("Input must be an object");
@@ -633,6 +651,36 @@ function buildInitialRequest(
       throw new RequestBuildError("Header parameter is reserved");
     }
     headers[parameter.name] = serializeHeader(valueOf(values, parameter.name));
+  }
+
+  for (const parameter of operation.parameters) {
+    if (parameter.in !== "cookie") continue;
+    if (!Object.hasOwn(values, parameter.name)) {
+      if (parameter.required) {
+        throw new RequestBuildError("Cookie parameter is missing");
+      }
+      continue;
+    }
+    const rawVal = valueOf(values, parameter.name);
+    if (rawVal === undefined) {
+      if (parameter.required) {
+        throw new RequestBuildError("Cookie parameter is missing");
+      }
+      continue;
+    }
+    if (!HEADER_NAME.test(parameter.name)) {
+      throw new RequestBuildError("Cookie parameter name is invalid");
+    }
+    const lowerName = parameter.name.toLowerCase();
+    if (
+      lowerName === "__proto__" ||
+      lowerName === "prototype" ||
+      lowerName === "constructor"
+    ) {
+      throw new RequestBuildError("Cookie parameter name is reserved");
+    }
+    const serializedCookie = serializeCookieValue(rawVal, parameter.name);
+    injectCookie(headers, parameter.name, serializedCookie);
   }
 
   if (credentials) {
@@ -674,29 +722,51 @@ function buildInitialRequest(
   let body: Uint8Array | undefined;
   if (operation.requestBody !== undefined) {
     if (Object.hasOwn(values, "body") && values.body !== undefined) {
-      let serialized: string | undefined;
-      try {
-        serialized = JSON.stringify(values.body);
-      } catch {
-        throw new RequestBuildError("Request body could not be serialized");
+      const kind =
+        operation.requestBody.kind ??
+        resolveRequestBodyKind(operation.requestBody.mediaType);
+
+      if (kind === "form-urlencoded") {
+        body = serializeFormUrlEncoded(
+          values.body,
+          operation.requestBody.encodings,
+          maxRequestBytes,
+        );
+        headers["content-type"] = "application/x-www-form-urlencoded";
+      } else if (kind === "multipart") {
+        const serialized = serializeMultipartFormData(
+          values.body,
+          operation.requestBody.encodings,
+          maxMultipartPartBytes,
+          maxRequestBytes,
+        );
+        body = serialized.body;
+        headers["content-type"] = serialized.contentType;
+      } else {
+        let serialized: string | undefined;
+        try {
+          serialized = JSON.stringify(values.body);
+        } catch {
+          throw new RequestBuildError("Request body could not be serialized");
+        }
+        if (serialized === undefined) {
+          throw new RequestBuildError("Request body could not be serialized");
+        }
+        body = new TextEncoder().encode(serialized);
+        if (body.byteLength > maxRequestBytes) {
+          throw new RequestBuildError("Request body exceeded the size limit");
+        }
+        const mediaType = operation.requestBody.mediaType;
+        if (
+          typeof mediaType !== "string" ||
+          mediaType.length === 0 ||
+          mediaType.length > MAX_REQUEST_HEADER_BYTES ||
+          hasControlCharacter(mediaType)
+        ) {
+          throw new RequestBuildError("Request body media type is invalid");
+        }
+        headers["content-type"] = mediaType;
       }
-      if (serialized === undefined) {
-        throw new RequestBuildError("Request body could not be serialized");
-      }
-      body = new TextEncoder().encode(serialized);
-      if (body.byteLength > maxRequestBytes) {
-        throw new RequestBuildError("Request body exceeded the size limit");
-      }
-      const mediaType = operation.requestBody.mediaType;
-      if (
-        typeof mediaType !== "string" ||
-        mediaType.length === 0 ||
-        mediaType.length > MAX_REQUEST_HEADER_BYTES ||
-        hasControlCharacter(mediaType)
-      ) {
-        throw new RequestBuildError("Request body media type is invalid");
-      }
-      headers["content-type"] = mediaType;
     } else if (operation.requestBody.required) {
       throw new RequestBuildError("Required request body is missing");
     }
@@ -905,6 +975,9 @@ function injectCookie(
   value: string,
 ): void {
   assertHeaderValue(value);
+  if (value.includes(";") || value.includes("\r") || value.includes("\n")) {
+    throw new RequestBuildError("Cookie value contains invalid characters");
+  }
   const cookiePair = `${name}=${value}`;
   const prev = headers["cookie"];
   if (!prev) {
@@ -921,6 +994,354 @@ function injectCookie(
     });
   parts.push(cookiePair);
   headers["cookie"] = parts.join("; ");
+}
+
+function serializeCookieValue(value: unknown, parameterName: string): string {
+  if (Array.isArray(value)) {
+    const parts: string[] = [];
+    for (const item of value) {
+      parts.push(serializeCookiePrimitive(item, parameterName));
+    }
+    return parts.join(",");
+  }
+  if (typeof value === "object" && value !== null) {
+    const parts: string[] = [];
+    for (const [key, val] of Object.entries(value)) {
+      if (val === undefined) continue;
+      parts.push(serializeCookiePrimitive(key, parameterName));
+      parts.push(serializeCookiePrimitive(val, parameterName));
+    }
+    return parts.join(",");
+  }
+  return serializeCookiePrimitive(value, parameterName);
+}
+
+function serializeCookiePrimitive(
+  value: unknown,
+  parameterName: string,
+): string {
+  let serialized: string;
+  if (typeof value === "string") {
+    serialized = value;
+  } else if (typeof value === "number" && Number.isFinite(value)) {
+    serialized = String(value);
+  } else if (typeof value === "boolean") {
+    serialized = value ? "true" : "false";
+  } else {
+    throw new RequestBuildError(
+      `Cookie parameter '${parameterName}' must be a string, number, or boolean`,
+    );
+  }
+  if (serialized.length > MAX_REQUEST_HEADER_BYTES) {
+    throw new RequestBuildError("Cookie value exceeded the size limit");
+  }
+  if (
+    hasControlCharacter(serialized) ||
+    serialized.includes(";") ||
+    serialized.includes("\r") ||
+    serialized.includes("\n")
+  ) {
+    throw new RequestBuildError(
+      `Cookie parameter '${parameterName}' contains invalid characters`,
+    );
+  }
+  return serialized;
+}
+
+function resolveRequestBodyKind(
+  mediaTypeOrRequestBody: string | CompiledRequestBody,
+): RequestBodyKind {
+  if (
+    typeof mediaTypeOrRequestBody === "object" &&
+    mediaTypeOrRequestBody !== null
+  ) {
+    if (mediaTypeOrRequestBody.kind) return mediaTypeOrRequestBody.kind;
+    return resolveRequestBodyKind(mediaTypeOrRequestBody.mediaType);
+  }
+  const [rawPart] = (mediaTypeOrRequestBody as string).toLowerCase().split(";");
+  const mt = (rawPart ?? "").trim();
+  if (mt === "application/x-www-form-urlencoded") return "form-urlencoded";
+  if (mt === "multipart/form-data") return "multipart";
+  return "json";
+}
+
+export function serializeFormUrlEncoded(
+  body: unknown,
+  encodings?: Readonly<
+    Record<string, { contentType?: string; style?: string; explode?: boolean }>
+  >,
+  maxRequestBytes = DEFAULT_MAX_REQUEST_BYTES,
+): Uint8Array {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw new RequestBuildError(
+      "Request body must be an object for application/x-www-form-urlencoded",
+    );
+  }
+
+  const pairs: string[] = [];
+
+  for (const [key, val] of Object.entries(body)) {
+    if (val === undefined) continue;
+    if (key === "__proto__" || key === "prototype" || key === "constructor") {
+      continue;
+    }
+
+    const encoding = encodings?.[key];
+    const explode = encoding?.explode ?? true;
+
+    if (Array.isArray(val)) {
+      if (explode) {
+        for (const item of val) {
+          if (item === undefined) continue;
+          pairs.push(
+            `${encodeURIComponent(key)}=${encodeURIComponent(serializeFormPrimitive(item))}`,
+          );
+        }
+      } else {
+        const serializedItems = val.map((item) =>
+          encodeURIComponent(serializeFormPrimitive(item)),
+        );
+        pairs.push(`${encodeURIComponent(key)}=${serializedItems.join(",")}`);
+      }
+    } else if (typeof val === "object" && val !== null) {
+      if (explode) {
+        for (const [subKey, subVal] of Object.entries(val)) {
+          if (subVal === undefined) continue;
+          if (
+            subKey === "__proto__" ||
+            subKey === "prototype" ||
+            subKey === "constructor"
+          ) {
+            continue;
+          }
+          pairs.push(
+            `${encodeURIComponent(subKey)}=${encodeURIComponent(serializeFormPrimitive(subVal))}`,
+          );
+        }
+      } else {
+        const subParts: string[] = [];
+        for (const [subKey, subVal] of Object.entries(val)) {
+          if (subVal === undefined) continue;
+          if (
+            subKey === "__proto__" ||
+            subKey === "prototype" ||
+            subKey === "constructor"
+          ) {
+            continue;
+          }
+          subParts.push(encodeURIComponent(subKey));
+          subParts.push(encodeURIComponent(serializeFormPrimitive(subVal)));
+        }
+        pairs.push(`${encodeURIComponent(key)}=${subParts.join(",")}`);
+      }
+    } else {
+      pairs.push(
+        `${encodeURIComponent(key)}=${encodeURIComponent(serializeFormPrimitive(val))}`,
+      );
+    }
+  }
+
+  const serialized = pairs.join("&");
+  const bytes = new TextEncoder().encode(serialized);
+  if (bytes.byteLength > maxRequestBytes) {
+    throw new RequestBuildError("Request body exceeded the size limit");
+  }
+  return bytes;
+}
+
+function serializeFormPrimitive(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (value === null) return "";
+  throw new RequestBuildError(
+    "Form URL-encoded values must be primitives (string, number, boolean, or null)",
+  );
+}
+
+export interface SerializedMultipartBody {
+  body: Uint8Array;
+  contentType: string;
+}
+
+export function serializeMultipartFormData(
+  body: unknown,
+  encodings?: Readonly<
+    Record<string, { contentType?: string; style?: string; explode?: boolean }>
+  >,
+  maxMultipartPartBytes = DEFAULT_MAX_MULTIPART_PART_BYTES,
+  maxRequestBytes = DEFAULT_MAX_REQUEST_BYTES,
+  boundaryOverride?: string,
+): SerializedMultipartBody {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw new RequestBuildError(
+      "Request body must be an object for multipart/form-data",
+    );
+  }
+
+  const boundary =
+    boundaryOverride ?? `----ChainMcpBoundary${randomUUID().replace(/-/g, "")}`;
+
+  if (
+    boundary.includes("\r") ||
+    boundary.includes("\n") ||
+    hasControlCharacter(boundary)
+  ) {
+    throw new RequestBuildError("Multipart boundary is invalid");
+  }
+
+  const encoder = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  for (const [key, val] of Object.entries(body)) {
+    if (val === undefined) continue;
+    if (key === "__proto__" || key === "prototype" || key === "constructor") {
+      continue;
+    }
+    if (key.includes("\r") || key.includes("\n") || key.includes('"')) {
+      throw new RequestBuildError(
+        `Multipart part name '${key}' contains invalid characters`,
+      );
+    }
+
+    const encoding = encodings?.[key];
+    let filename: string | undefined;
+    let contentType: string | undefined = encoding?.contentType;
+    let partBytes: Uint8Array;
+
+    if (val instanceof Uint8Array) {
+      partBytes = val;
+      contentType = contentType ?? "application/octet-stream";
+    } else if (
+      typeof val === "object" &&
+      val !== null &&
+      ("content" in val || "data" in val)
+    ) {
+      const fileObj = val as {
+        filename?: unknown;
+        contentType?: unknown;
+        content?: unknown;
+        data?: unknown;
+        encoding?: unknown;
+      };
+      if (typeof fileObj.filename === "string") {
+        if (
+          fileObj.filename.includes("\r") ||
+          fileObj.filename.includes("\n") ||
+          fileObj.filename.includes('"')
+        ) {
+          throw new RequestBuildError(
+            "Multipart filename contains invalid characters",
+          );
+        }
+        filename = fileObj.filename;
+      }
+      if (typeof fileObj.contentType === "string") {
+        contentType = fileObj.contentType;
+      } else if (contentType === undefined) {
+        contentType = "application/octet-stream";
+      }
+      const rawData = fileObj.content ?? fileObj.data;
+      if (rawData instanceof Uint8Array) {
+        partBytes = rawData;
+      } else if (typeof rawData === "string") {
+        if (fileObj.encoding === "base64") {
+          partBytes = Buffer.from(rawData, "base64");
+        } else {
+          partBytes = encoder.encode(rawData);
+        }
+      } else {
+        throw new RequestBuildError(
+          `Multipart part '${key}' content must be a string or Uint8Array`,
+        );
+      }
+    } else if (typeof val === "object" && val !== null) {
+      contentType = contentType ?? "application/json";
+      try {
+        const jsonStr = JSON.stringify(val);
+        partBytes = encoder.encode(jsonStr);
+      } catch {
+        throw new RequestBuildError(
+          `Multipart part '${key}' JSON could not be serialized`,
+        );
+      }
+    } else if (
+      typeof val === "string" ||
+      typeof val === "number" ||
+      typeof val === "boolean"
+    ) {
+      partBytes = encoder.encode(String(val));
+    } else {
+      throw new RequestBuildError(
+        `Multipart part '${key}' has an unsupported value type`,
+      );
+    }
+
+    if (contentType !== undefined) {
+      if (
+        hasControlCharacter(contentType) ||
+        contentType.includes("\r") ||
+        contentType.includes("\n")
+      ) {
+        throw new RequestBuildError(
+          `Multipart part '${key}' Content-Type contains invalid characters`,
+        );
+      }
+    }
+
+    if (partBytes.byteLength > maxMultipartPartBytes) {
+      throw new RequestBuildError(
+        `Multipart part '${key}' exceeded the size limit`,
+      );
+    }
+
+    let partHeader = `--${boundary}\r\nContent-Disposition: form-data; name="${key}"`;
+    if (filename !== undefined) {
+      partHeader += `; filename="${filename}"`;
+    }
+    if (contentType !== undefined) {
+      partHeader += `\r\nContent-Type: ${contentType}`;
+    }
+    partHeader += "\r\n\r\n";
+
+    const headerBytes = encoder.encode(partHeader);
+    const crlfBytes = encoder.encode("\r\n");
+
+    totalBytes +=
+      headerBytes.byteLength + partBytes.byteLength + crlfBytes.byteLength;
+    if (totalBytes > maxRequestBytes) {
+      throw new RequestBuildError("Request body exceeded the size limit");
+    }
+
+    chunks.push(headerBytes, partBytes, crlfBytes);
+  }
+
+  const closingBoundaryBytes = encoder.encode(`--${boundary}--\r\n`);
+  totalBytes += closingBoundaryBytes.byteLength;
+  if (totalBytes > maxRequestBytes) {
+    throw new RequestBuildError("Request body exceeded the size limit");
+  }
+  chunks.push(closingBoundaryBytes);
+
+  return {
+    body: concatUint8Arrays(chunks),
+    contentType: `multipart/form-data; boundary=${boundary}`,
+  };
+}
+
+function concatUint8Arrays(arrays: readonly Uint8Array[]): Uint8Array {
+  let totalLength = 0;
+  for (const arr of arrays) {
+    totalLength += arr.byteLength;
+  }
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const arr of arrays) {
+    result.set(arr, offset);
+    offset += arr.byteLength;
+  }
+  return result;
 }
 
 function valueOf(

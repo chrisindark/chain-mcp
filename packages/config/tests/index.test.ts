@@ -54,6 +54,7 @@ describe("configuration schema", () => {
         requestTimeoutMs: 15_000,
         maxResponseBytes: 1_000_000,
         maxRequestBytes: 1_048_576,
+        maxMultipartPartBytes: 1_048_576,
         maxToolInputBytes: 1_048_576,
         validateResponses: "warn",
         allowedHosts: [],
@@ -111,6 +112,7 @@ describe("configuration schema", () => {
         requestTimeoutMs: 15_000,
         maxResponseBytes: 1_000_000,
         maxRequestBytes: 1_048_576,
+        maxMultipartPartBytes: 1_048_576,
         maxToolInputBytes: 1_048_576,
         validateResponses: "warn",
         allowedHosts: [],
@@ -654,6 +656,8 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
         validateResponses: "enforce",
         maxToolInputBytes: 50_000,
         maxResponseBytes: 200_000,
+        maxRequestBytes: 300_000,
+        maxMultipartPartBytes: 150_000,
       },
       security: {
         allowedUpstreamHosts: ["api.example.com"],
@@ -665,6 +669,8 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
     });
     expect(execOpts.validateResponses).toBe("enforce");
     expect(execOpts.maxResponseBytes).toBe(200_000);
+    expect(execOpts.maxRequestBytes).toBe(300_000);
+    expect(execOpts.maxMultipartPartBytes).toBe(150_000);
 
     const runtimeOpts = buildRuntimeOptions(config);
     expect(runtimeOpts.maxToolInputBytes).toBe(50_000);

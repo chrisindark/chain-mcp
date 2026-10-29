@@ -1,5 +1,10 @@
 import type { Readable, Writable } from "node:stream";
-import type { CompileDiagnostic, CompileManifest } from "@chainmcp/compiler";
+import type {
+  CompileDiagnostic,
+  CompileManifest,
+  CompileResult,
+  ContractChange,
+} from "@chainmcp/compiler";
 import type { ChainMcpConfig } from "@chainmcp/config";
 import type { ToolDefinition } from "@chainmcp/core";
 
@@ -77,6 +82,7 @@ export interface ValidateResult {
   toolCount: number;
   toolNames: readonly string[];
   manifest?: CompileManifest | undefined;
+  compiled?: CompileResult | undefined;
   diagnostics: readonly CompileDiagnostic[];
   error?: string | undefined;
 }
@@ -103,25 +109,41 @@ export interface BuildResult {
   error?: string | undefined;
 }
 
+export type DiffFailOn = "breaking" | "breaking+potential" | "none";
+
 export interface DiffOptions {
   config?: string | undefined;
   spec?: string | undefined;
   against?: string | undefined;
   allowHttp?: boolean | undefined;
+  failOn?: DiffFailOn | undefined;
+  failOnBreaking?: boolean | undefined;
+  json?: boolean | undefined;
   cwd?: string | undefined;
 }
 
 export interface DiffResult {
+  schemaVersion: 1;
   ok: boolean;
   contractRevision: string;
   sourceHash: string;
   toolsetHash: string;
   hasChanges: boolean;
   hasBreakingChanges: boolean;
+  hasPotentiallyBreakingChanges: boolean;
+  summary: {
+    breaking: number;
+    potentiallyBreaking: number;
+    nonBreaking: number;
+  };
   addedTools: readonly string[];
   removedTools: readonly string[];
   changedTools: readonly string[];
   unchangedTools: readonly string[];
+  changes: readonly ContractChange[];
+  breaking: readonly ContractChange[];
+  potentiallyBreaking: readonly ContractChange[];
+  nonBreaking: readonly ContractChange[];
   error?: string | undefined;
 }
 
@@ -159,6 +181,7 @@ export interface GatewayServeOptions {
   port?: number | undefined;
   host?: string | undefined;
   path?: string | undefined;
+  tenantId?: string | undefined;
   allowUnauthenticatedHttp?: boolean | undefined;
   cwd?: string | undefined;
   stdin?: Readable | undefined;

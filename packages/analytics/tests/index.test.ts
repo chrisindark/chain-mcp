@@ -35,6 +35,8 @@ describe("Analytics & Logging", () => {
         userId: "user-1",
         authorization: "Bearer secret-token",
         password: "my-password",
+        cookie: "session_id=secret-cookie-val; secret=val",
+        "set-cookie": "session_id=new-val",
         nested: {
           apiKey: "key-xyz",
           regularField: "safe value",
@@ -46,6 +48,8 @@ describe("Analytics & Logging", () => {
       expect(result["userId"]).toBe("user-1");
       expect(result["authorization"]).toBe(REDACTED_MARKER);
       expect(result["password"]).toBe(REDACTED_MARKER);
+      expect(result["cookie"]).toBe(REDACTED_MARKER);
+      expect(result["set-cookie"]).toBe(REDACTED_MARKER);
       expect(nested["apiKey"]).toBe(REDACTED_MARKER);
       expect(nested["regularField"]).toBe("safe value");
     });

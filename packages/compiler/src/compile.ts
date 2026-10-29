@@ -32,6 +32,7 @@ import type {
   CompileManifest,
   CompileOptions,
   CompileResult,
+  CompiledEncoding,
   CompiledOperation,
   CompiledResponse,
   CompiledSecurityScheme,
@@ -39,6 +40,7 @@ import type {
   HttpMethod,
   ManifestToolEntry,
   OpenApiVersion,
+  RequestBodyKind,
   SecurityRequirement,
 } from "./types.js";
 
@@ -82,7 +84,9 @@ const OPERATION_KEYS = new Set<string>([
   "callbacks",
 ]);
 
-const PARAMETER_LOCATIONS = new Set(["path", "query", "header"]);
+const PARAMETER_LOCATIONS = new Set(["path", "query", "header", "cookie"]);
+
+const COOKIE_NAME_TOKEN = /^[!#$%&'*+\-.^_`|~0-9a-zA-Z]+$/;
 
 const PARAMETER_KEYS = new Set<string>([
   "name",
@@ -137,16 +141,20 @@ interface NormalizedOptions {
 
 interface ParameterInfo {
   name: string;
-  in: "path" | "query" | "header";
+  in: "path" | "query" | "header" | "cookie";
   schema: JsonSchema;
   required: boolean;
+  style?: string;
+  explode?: boolean;
   description?: string;
 }
 
-interface CompiledRequestBody {
+interface InternalRequestBody {
   schema: JsonSchema;
   mediaType: string;
   required: boolean;
+  kind: RequestBodyKind;
+  encodings?: Record<string, CompiledEncoding>;
   description?: string;
 }
 
@@ -655,6 +663,10 @@ function compileOperation(
       name: parameter.name,
       in: parameter.in,
       required: parameter.required,
+      ...(parameter.style !== undefined ? { style: parameter.style } : {}),
+      ...(parameter.explode !== undefined
+        ? { explode: parameter.explode }
+        : {}),
     }))
     .sort(
       (left, right) =>
@@ -688,6 +700,10 @@ function compileOperation(
           requestBody: {
             mediaType: body.mediaType,
             required: body.required,
+            kind: body.kind,
+            ...(body.encodings !== undefined
+              ? { encodings: body.encodings }
+              : {}),
           },
         }),
     responses,
@@ -746,19 +762,22 @@ function collectParameters(
     ) {
       diagnostics.push({
         severity: "error",
-        code:
-          parameter.in === "cookie"
-            ? "PARAMETER_UNSUPPORTED"
-            : "PARAMETER_INVALID",
-        message:
-          parameter.in === "cookie"
-            ? "Cookie parameters are not supported"
-            : "Parameter 'in' must be path, query, or header",
+        code: "PARAMETER_INVALID",
+        message: "Parameter 'in' must be path, query, header, or cookie",
         location: parameterLocation,
       });
       return undefined;
     }
-    const parameterIn = parameter.in as "path" | "query" | "header";
+    const parameterIn = parameter.in as "path" | "query" | "header" | "cookie";
+    if (parameterIn === "cookie" && !COOKIE_NAME_TOKEN.test(parameter.name)) {
+      diagnostics.push({
+        severity: "error",
+        code: "PARAMETER_INVALID",
+        message: `Cookie parameter '${parameter.name}' has an invalid name; must be an RFC 6265 token without separators or control characters`,
+        location: parameterLocation,
+      });
+      return undefined;
+    }
     if (
       parameterIn === "header" &&
       FORBIDDEN_HEADER_PARAMETERS.has(parameter.name.toLowerCase())
@@ -857,6 +876,14 @@ function collectParameters(
             severity: settings.strict ? "error" : "warning",
             code: "PARAMETER_UNSUPPORTED",
             message: `Query parameter '${parameter.name}' specifies unsupported style '${style}'; only 'form' is supported for query parameters. Remove 'style' or use 'form'`,
+            location: `${parameterLocation}/style`,
+          });
+          if (settings.strict) parameterHasError = true;
+        } else if (parameterIn === "cookie" && style !== "form") {
+          diagnostics.push({
+            severity: settings.strict ? "error" : "warning",
+            code: "PARAMETER_UNSUPPORTED",
+            message: `Cookie parameter '${parameter.name}' specifies unsupported style '${style}'; only 'form' is supported for cookie parameters. Remove 'style' or use 'form'`,
             location: `${parameterLocation}/style`,
           });
           if (settings.strict) parameterHasError = true;
@@ -1003,6 +1030,12 @@ function collectParameters(
       in: parameterIn,
       schema,
       required,
+      ...(typeof parameter.style === "string"
+        ? { style: parameter.style }
+        : {}),
+      ...(typeof parameter.explode === "boolean"
+        ? { explode: parameter.explode }
+        : {}),
       ...(typeof parameter.description === "string"
         ? { description: parameter.description }
         : {}),
@@ -1018,7 +1051,7 @@ function compileRequestBody(
   settings: NormalizedOptions,
   diagnostics: CompileDiagnostic[],
   location: string,
-): CompiledRequestBody | undefined {
+): InternalRequestBody | undefined {
   const requestBody = resolveObjectReference(
     value,
     document,
@@ -1063,16 +1096,20 @@ function compileRequestBody(
     });
     return undefined;
   }
-  const mediaType = selectJsonMediaType(Object.keys(requestBody.content));
-  if (mediaType === undefined) {
+  const selected = selectSupportedRequestBodyMediaType(
+    Object.keys(requestBody.content),
+  );
+  if (selected === undefined) {
     diagnostics.push({
       severity: "error",
       code: "REQUEST_BODY_UNSUPPORTED",
-      message: "Request body must declare an application/json media type",
+      message:
+        "Request body must declare a supported media type (application/json, application/x-www-form-urlencoded, or multipart/form-data)",
       location,
     });
     return undefined;
   }
+  const { mediaType, kind } = selected;
   const media = requestBody.content[mediaType];
   if (!isPlainObject(media) || !isPlainObject(media.schema)) {
     diagnostics.push({
@@ -1082,6 +1119,21 @@ function compileRequestBody(
       location,
     });
     return undefined;
+  }
+
+  let encodings: Record<string, CompiledEncoding> | undefined;
+  if (isPlainObject(media.encoding)) {
+    encodings = {};
+    for (const [propName, enc] of Object.entries(media.encoding)) {
+      if (isPlainObject(enc)) {
+        const entry: CompiledEncoding = {};
+        if (typeof enc.contentType === "string")
+          entry.contentType = enc.contentType;
+        if (typeof enc.style === "string") entry.style = enc.style;
+        if (typeof enc.explode === "boolean") entry.explode = enc.explode;
+        encodings[propName] = entry;
+      }
+    }
   }
 
   const schema = translateInputSchema(media.schema, {
@@ -1097,6 +1149,8 @@ function compileRequestBody(
     schema,
     mediaType,
     required,
+    kind,
+    ...(encodings && Object.keys(encodings).length > 0 ? { encodings } : {}),
     ...(typeof requestBody.description === "string"
       ? { description: requestBody.description }
       : {}),
@@ -1126,14 +1180,26 @@ function isJsonMediaType(base: string): boolean {
   );
 }
 
-function selectJsonMediaType(
+function selectSupportedRequestBodyMediaType(
   mediaTypes: readonly string[],
-): string | undefined {
+): { mediaType: string; kind: RequestBodyKind } | undefined {
   const normalized = normalizeMediaTypes(mediaTypes);
-  return (
-    normalized.find((entry) => entry.base === "application/json")?.original ??
-    normalized.find((entry) => isJsonMediaType(entry.base))?.original
+  const json =
+    normalized.find((entry) => entry.base === "application/json") ??
+    normalized.find((entry) => isJsonMediaType(entry.base));
+  if (json) return { mediaType: json.original, kind: "json" };
+
+  const form = normalized.find(
+    (entry) => entry.base === "application/x-www-form-urlencoded",
   );
+  if (form) return { mediaType: form.original, kind: "form-urlencoded" };
+
+  const multipart = normalized.find(
+    (entry) => entry.base === "multipart/form-data",
+  );
+  if (multipart) return { mediaType: multipart.original, kind: "multipart" };
+
+  return undefined;
 }
 
 function selectResponseMediaType(mediaTypes: readonly string[]): {

@@ -184,11 +184,14 @@ export async function devCommand(options: DevOptions): Promise<DevResult> {
     name: config.name,
     version: "0.1.0",
     maxResponseBytes: config.server.maxResponseBytes,
-    createContext: () => ({
-      requestId: randomUUID(),
-      tenantId: options.tenantId ?? "default",
-      principal: { id: "mcp-caller", scopes: [] },
-    }),
+    createContext: () => {
+      const explicitTenant = options.tenantId ?? config.tenant;
+      return {
+        requestId: randomUUID(),
+        tenantId: explicitTenant ?? "",
+        principal: { id: "mcp-caller", scopes: [] },
+      };
+    },
   };
 
   const serverHandle = await serveStdio(runtime, serverOptions, {

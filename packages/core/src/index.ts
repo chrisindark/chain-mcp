@@ -322,6 +322,7 @@ export type RuntimeErrorCode =
   | "INPUT_TOO_LARGE"
   | "AUTH_REQUIRED"
   | "AUTH_FORBIDDEN"
+  | "TENANT_REQUIRED"
   | "RATE_LIMITED"
   | "OUTPUT_POLICY_VIOLATION"
   | "OUTPUT_LIMIT_EXCEEDED"
@@ -629,10 +630,17 @@ export class InMemoryToolRuntime implements ToolRuntime {
         "Listing tools requires a caller context",
       );
     }
-    const bucket =
-      typeof context.tenantId === "string"
-        ? this.tenantTools.get(context.tenantId)
-        : undefined;
+    if (
+      !context.tenantId ||
+      typeof context.tenantId !== "string" ||
+      context.tenantId.trim().length === 0
+    ) {
+      throw new RuntimeError(
+        "TENANT_REQUIRED",
+        "A non-empty tenantId is required to list tools in multi-tenant mode",
+      );
+    }
+    const bucket = this.tenantTools.get(context.tenantId);
     if (!bucket) return [];
     return [...bucket.values()].map(summarize);
   }
@@ -839,6 +847,14 @@ export class InMemoryToolRuntime implements ToolRuntime {
             ) {
               this.options.logger.audit(
                 `Authorization denied for tool '${name}'`,
+                logContext,
+              );
+            } else if (
+              errorCode === "TENANT_REQUIRED" &&
+              typeof this.options.logger.audit === "function"
+            ) {
+              this.options.logger.audit(
+                `Tenant resolution failed for tool '${name}'`,
                 logContext,
               );
             }
@@ -1063,8 +1079,13 @@ export class InMemoryToolRuntime implements ToolRuntime {
       markUnresolved();
       throw new RuntimeError("TOOL_NOT_FOUND", `Tool '${name}' was not found`);
     }
-    const tenantId =
-      typeof context.tenantId === "string" ? context.tenantId : "";
+    const tenantId = context?.tenantId;
+    if (typeof tenantId !== "string" || tenantId.trim().length === 0) {
+      throw new RuntimeError(
+        "TENANT_REQUIRED",
+        "Tenant context required to invoke tools in multi-tenant mode",
+      );
+    }
     const tool = this.tenantTools.get(tenantId)?.get(name);
     if (tool) return tool;
     markUnresolved();

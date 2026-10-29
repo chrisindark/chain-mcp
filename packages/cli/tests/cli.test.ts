@@ -178,4 +178,191 @@ describe("CLI entry point (runCli)", () => {
       true,
     );
   });
+
+  it("supports --fail-on, --fail-on-breaking, and --json with breaking-change taxonomy", async () => {
+    const baseSpec = `
+openapi: "3.1.0"
+info:
+  title: Pet API
+  version: "1.0.0"
+servers:
+  - url: https://api.example.com
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+`;
+    const breakingSpec = `
+openapi: "3.1.0"
+info:
+  title: Pet API
+  version: "1.0.0"
+servers:
+  - url: https://api.example.com
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+`;
+    const potentialSpec = `
+openapi: "3.1.0"
+info:
+  title: Pet API
+  version: "1.0.0"
+servers:
+  - url: https://api.example.com
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      parameters:
+        - name: limit
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+`;
+
+    const basePath = join(tempDir, "base.yaml");
+    const breakingPath = join(tempDir, "breaking.yaml");
+    const potentialPath = join(tempDir, "potential.yaml");
+
+    await writeFile(basePath, baseSpec, "utf8");
+    await writeFile(breakingPath, breakingSpec, "utf8");
+    await writeFile(potentialPath, potentialSpec, "utf8");
+
+    // 1. Breaking change defaults to exit 1
+    outLogs = [];
+    errLogs = [];
+    const defaultBreakCode = await runCli(
+      ["diff", "--spec", breakingPath, "--against", basePath],
+      io,
+    );
+    expect(defaultBreakCode).toBe(1);
+    expect(
+      errLogs.some((l) =>
+        l.includes("Diff failed: contract changes exceed allowed threshold"),
+      ),
+    ).toBe(true);
+
+    // 2. Breaking change with --fail-on-breaking exits 1
+    outLogs = [];
+    errLogs = [];
+    const aliasBreakCode = await runCli(
+      [
+        "diff",
+        "--spec",
+        breakingPath,
+        "--against",
+        basePath,
+        "--fail-on-breaking",
+      ],
+      io,
+    );
+    expect(aliasBreakCode).toBe(1);
+
+    // 3. Breaking change with --fail-on none exits 0
+    outLogs = [];
+    errLogs = [];
+    const noneBreakCode = await runCli(
+      [
+        "diff",
+        "--spec",
+        breakingPath,
+        "--against",
+        basePath,
+        "--fail-on",
+        "none",
+      ],
+      io,
+    );
+    expect(noneBreakCode).toBe(0);
+
+    // 4. Potentially breaking change with --fail-on breaking exits 0, with breaking+potential exits 1
+    outLogs = [];
+    errLogs = [];
+    const potBreakingOnlyCode = await runCli(
+      [
+        "diff",
+        "--spec",
+        potentialPath,
+        "--against",
+        basePath,
+        "--fail-on",
+        "breaking",
+      ],
+      io,
+    );
+    expect(potBreakingOnlyCode).toBe(0);
+
+    outLogs = [];
+    errLogs = [];
+    const potPlusBreakCode = await runCli(
+      [
+        "diff",
+        "--spec",
+        potentialPath,
+        "--against",
+        basePath,
+        "--fail-on",
+        "breaking+potential",
+      ],
+      io,
+    );
+    expect(potPlusBreakCode).toBe(1);
+
+    // 5. Machine-readable JSON output contains schemaVersion: 1 and changes
+    outLogs = [];
+    errLogs = [];
+    await runCli(
+      [
+        "diff",
+        "--spec",
+        breakingPath,
+        "--against",
+        basePath,
+        "--json",
+        "--fail-on",
+        "none",
+      ],
+      io,
+    );
+    const jsonStr = outLogs.join("\n");
+    const parsed = JSON.parse(jsonStr) as {
+      schemaVersion: number;
+      breaking: Array<{ code: string }>;
+      potentiallyBreaking: unknown[];
+      nonBreaking: unknown[];
+    };
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.breaking.some((c) => c.code === "INPUT_REQUIRED_ADDED")).toBe(
+      true,
+    );
+  });
 });

@@ -449,6 +449,12 @@ export const ServerConfigSchema = z
       .positive()
       .max(100_000_000)
       .default(1_048_576),
+    maxMultipartPartBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(100_000_000)
+      .default(1_048_576),
     maxToolInputBytes: z
       .number()
       .int()
@@ -485,6 +491,7 @@ export const ChainMcpConfigSchema = z
   .object({
     version: z.literal(1),
     name: z.string().min(1).max(128),
+    tenant: z.string().min(1).optional(),
     contract: ContractConfigSchema.optional(),
     server: ServerConfigSchema,
     security: SecurityConfigSchema,
@@ -590,6 +597,7 @@ export const GatewayConfigSchema = z
   .object({
     version: z.literal(1),
     name: z.string().min(1).max(128).default("chainmcp-gateway"),
+    tenant: z.string().min(1).optional(),
     server: ServerConfigSchema,
     security: SecurityConfigSchema,
     rateLimit: RateLimitConfigSchema,
@@ -925,7 +933,14 @@ export function buildExecutorOptions(
       : {}),
     ...(overrides?.maxRequestBytes !== undefined
       ? { maxRequestBytes: overrides.maxRequestBytes }
-      : {}),
+      : config.server.maxRequestBytes !== undefined
+        ? { maxRequestBytes: config.server.maxRequestBytes }
+        : {}),
+    ...(overrides?.maxMultipartPartBytes !== undefined
+      ? { maxMultipartPartBytes: overrides.maxMultipartPartBytes }
+      : config.server.maxMultipartPartBytes !== undefined
+        ? { maxMultipartPartBytes: config.server.maxMultipartPartBytes }
+        : {}),
     ...(overrides?.maxRedirects !== undefined
       ? { maxRedirects: overrides.maxRedirects }
       : {}),
@@ -1105,7 +1120,9 @@ export function buildRuntimeOptions(
       : {}),
     ...(overrides?.tenantId !== undefined
       ? { tenantId: overrides.tenantId }
-      : {}),
+      : config.tenant !== undefined
+        ? { tenantId: config.tenant }
+        : {}),
     ...(overrides?.now !== undefined ? { now: overrides.now } : {}),
     ...(overrides?.monotonicNow !== undefined
       ? { monotonicNow: overrides.monotonicNow }

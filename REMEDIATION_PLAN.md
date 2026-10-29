@@ -54,9 +54,9 @@ rather than marking it complete.
 | [x]  | RM-07 | Unify remote spec loading with SSRF-safe fetch policy         | P1       | cli                  | RM-06       |
 | [x]  | RM-08 | Support code-first projects in `serve`, `build`, `export`     | P1       | cli                  | RM-07       |
 | [x]  | RM-09 | Resolve or reject `mutualTLS` and `openIdConnect` schemes     | P1       | executor/compiler    | —           |
-| [ ]  | RM-10 | Bound serialization and add response-schema validation        | P1       | core/executor        | —           |
-| [ ]  | RM-11 | Support form, multipart, and cookie parameters                | P2       | compiler/executor    | RM-05       |
-| [ ]  | RM-12 | Classify non-removal contract changes as breaking in `diff`   | P1       | cli/compiler         | —           |
+| [x]  | RM-10 | Bound serialization and add response-schema validation        | P1       | core/executor        | —           |
+| [x]  | RM-11 | Support form, multipart, and cookie parameters                | P2       | compiler/executor    | RM-05       |
+| [x]  | RM-12 | Classify non-removal contract changes as breaking in `diff`   | P1       | cli/compiler         | —           |
 | [ ]  | RM-13 | Remove implicit `"default"` tenant fallback                   | P1       | gateway/cli          | RM-01       |
 | [ ]  | RM-14 | Wire `ToolTracer` into runtime and server                     | P2       | core/server/config   | —           |
 | [ ]  | RM-15 | Wire Redis rate limiter through CLI and config                | P1       | config/cli           | —           |
@@ -859,12 +859,15 @@ pnpm --filter @chainmcp/core test
 pnpm --filter @chainmcp/executor test
 ```
 
+**Status (2026-10-28):** Complete. Implemented bounded JSON serialization, response schema validation with `warn` and `enforce` modes, input size caps, and error payload redaction in commit `7b0a13d`.
+
 ---
 
 ## RM-11 — Support form, multipart, and cookie parameters
 
 - **Priority:** P2
 - **Depends on:** RM-05
+- **Status:** Complete (2026-10-28)
 
 ### Evidence
 
@@ -918,6 +921,8 @@ pnpm --filter @chainmcp/compiler test
 pnpm --filter @chainmcp/executor test
 pnpm --filter @chainmcp/core test
 ```
+
+**Status (2026-10-28):** Complete. Compiler and executor support `cookie` parameters with RFC 6265 token names and injection defenses, `application/x-www-form-urlencoded` with per-property `explode: true/false`, and `multipart/form-data` with text, binary base64 decode, JSON parts, and `maxMultipartPartBytes` / `maxRequestBytes` bounds. All tests passing.
 
 ---
 
@@ -975,6 +980,8 @@ pnpm --filter @chainmcp/cli test
 pnpm --filter @chainmcp/compiler test
 ```
 
+**Status (2026-10-28):** Complete. Implemented deep recursive schema diffing engine `diffContracts` in `@chainmcp/compiler` with the full breaking-change taxonomy across tools, inputs, constraints, authentication, base URLs, and response schemas. Updated CLI `chainmcp diff` with `--fail-on` (`breaking`, `breaking+potential`, `none`), `--fail-on-breaking`, and `--json` machine-readable output (`schemaVersion: 1`). Added unit tests for every taxonomy row and CLI integration tests for flags and exit codes. Documentation updated in `API_REFERENCE.md`, `docs/migration-and-rollback.md`, and `CHANGELOG.md`. All tests passing.
+
 ---
 
 ## RM-13 — Remove implicit `"default"` tenant fallback
@@ -1029,6 +1036,8 @@ Consequence: default-tenant contracts are reachable over unauthenticated stdio, 
 pnpm --filter @chainmcp/cli test
 pnpm --filter @chainmcp/gateway test
 ```
+
+**Status (2026-10-28):** Complete. Removed all implicit `"default"` tenant fallbacks across `@chainmcp/cli` (`serve.ts`, `gateway-serve.ts`, `dev.ts`, `templates.ts`) and `@chainmcp/gateway`. Introduced `TENANT_REQUIRED` runtime error code in `@chainmcp/core` and `@chainmcp/server`. Enforced multi-tenant `listTools` and `resolveTool` rejection when tenant ID is empty or whitespace. Added `--tenant <id>` CLI flag and `tenant: string` in `@chainmcp/config` defaulting to unset. Enforced dynamic gateway startup validation requiring inbound verifier (`auth.inbound`) or explicit tenant fallback (`--tenant` / `config.tenant`). Enforced authenticated principal tenant claim precedence over explicit default (`authTenant ?? explicitTenant`). Added `"tenant_resolution_failed"` audit event emission on DynamicGateway. Verified `grep -rn '"default"' packages/cli/src packages/gateway/src` returns zero matches. All tests passing.
 
 ---
 

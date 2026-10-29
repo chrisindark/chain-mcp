@@ -8,6 +8,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createUpstreamExecutor,
+  serializeFormUrlEncoded,
+  serializeMultipartFormData,
   type UpstreamExecutorOptions,
   type UpstreamTransport,
   type UpstreamTransportRequest,
@@ -1805,6 +1807,439 @@ describe("response schema validation (RM-10)", () => {
     ).rejects.toMatchObject({
       code: "UPSTREAM_FAILURE",
       message: "Upstream response was invalid",
+    });
+  });
+
+  describe("cookie parameters (RM-11)", () => {
+    it("injects cookie parameters into the Cookie header", async () => {
+      const transport = new FakeTransport([jsonResponse({ ok: true })]);
+      const tool = createUpstreamExecutor(options(transport)).createTool(
+        operation({
+          parameters: [
+            {
+              name: "session_id",
+              in: "cookie",
+              required: true,
+            },
+            {
+              name: "theme",
+              in: "cookie",
+              required: false,
+            },
+          ],
+        }),
+      );
+
+      await tool.execute({ session_id: "sess_12345", theme: "dark" }, context);
+
+      expect(transport.requests).toHaveLength(1);
+      expect(transport.requests[0]?.headers["cookie"]).toBe(
+        "session_id=sess_12345; theme=dark",
+      );
+    });
+
+    it("serializes array cookie parameters as comma-separated values", async () => {
+      const transport = new FakeTransport([jsonResponse({ ok: true })]);
+      const tool = createUpstreamExecutor(options(transport)).createTool(
+        operation({
+          parameters: [
+            {
+              name: "flags",
+              in: "cookie",
+              required: true,
+            },
+          ],
+        }),
+      );
+
+      await tool.execute({ flags: ["flag1", "flag2", "flag3"] }, context);
+
+      expect(transport.requests).toHaveLength(1);
+      expect(transport.requests[0]?.headers["cookie"]).toBe(
+        "flags=flag1,flag2,flag3",
+      );
+    });
+
+    it("rejects cookie parameters containing CRLF or semicolon to prevent injection", async () => {
+      const transport = new FakeTransport([jsonResponse({ ok: true })]);
+      const tool = createUpstreamExecutor(options(transport)).createTool(
+        operation({
+          parameters: [
+            {
+              name: "session",
+              in: "cookie",
+              required: true,
+            },
+          ],
+        }),
+      );
+
+      await expectRuntimeError(
+        tool.execute({ session: "s123; injected=cookie" }, context),
+        "UPSTREAM_FAILURE",
+        "Upstream request could not be constructed",
+      );
+
+      await expectRuntimeError(
+        tool.execute({ session: "s123\r\nInjected-Header: evil" }, context),
+        "UPSTREAM_FAILURE",
+        "Upstream request could not be constructed",
+      );
+
+      await expectRuntimeError(
+        tool.execute({ session: "s123\nInjected-Header: evil" }, context),
+        "UPSTREAM_FAILURE",
+        "Upstream request could not be constructed",
+      );
+    });
+
+    it("prevents cookie parameters from overriding credential cookies", async () => {
+      const transport = new FakeTransport([jsonResponse({ ok: true })]);
+      const tool = createUpstreamExecutor(
+        options(transport, {
+          credentialProvider: {
+            resolveCredential: async () => ({
+              type: "apiKey",
+              location: "cookie",
+              name: "session_token",
+              value: "credential-secret-token",
+            }),
+          },
+        }),
+      ).createTool(
+        operation({
+          parameters: [
+            {
+              name: "session_token",
+              in: "cookie",
+              required: false,
+            },
+            {
+              name: "user_pref",
+              in: "cookie",
+              required: false,
+            },
+          ],
+          authentication: {
+            alternatives: [
+              {
+                schemes: [
+                  {
+                    name: "cookieAuth",
+                    type: "apiKey",
+                    parameterName: "session_token",
+                    parameterLocation: "cookie",
+                    scopes: [],
+                  },
+                ],
+              },
+            ],
+            allowsAnonymous: false,
+          },
+        }),
+      );
+
+      await tool.execute(
+        {
+          session_token: "attacker-supplied-token",
+          user_pref: "compact",
+        },
+        context,
+      );
+
+      expect(transport.requests).toHaveLength(1);
+      // Credential cookie overrides matching cookie parameter, preserving other cookie parameters
+      expect(transport.requests[0]?.headers["cookie"]).toBe(
+        "user_pref=compact; session_token=credential-secret-token",
+      );
+    });
+
+    it("never leaks cookie values into errors or validation logs", async () => {
+      const logs: Array<{ message: string; context?: unknown }> = [];
+      const testLogger: Logger = {
+        debug: () => {},
+        info: (msg, ctx) => logs.push({ message: msg, context: ctx }),
+        warn: (msg, ctx) => logs.push({ message: msg, context: ctx }),
+        error: (msg, ctx) => logs.push({ message: msg, context: ctx }),
+      };
+
+      const transport = new FakeTransport([
+        jsonResponse({ invalid: true }), // Fails response schema
+      ]);
+      const tool = createUpstreamExecutor(
+        options(transport, {
+          logger: testLogger,
+          validateResponses: "warn",
+        }),
+      ).createTool(
+        operation({
+          parameters: [
+            {
+              name: "super_secret_cookie",
+              in: "cookie",
+              required: true,
+            },
+          ],
+          responses: [
+            {
+              status: "200",
+              description: "OK",
+              schema: {
+                type: "object",
+                required: ["id"],
+                properties: { id: { type: "string" } },
+              },
+            },
+          ],
+        }),
+      );
+
+      await tool.execute(
+        { super_secret_cookie: "super-secret-cookie-val-999" },
+        context,
+      );
+
+      // Verify that neither the logger message nor context contains the cookie value
+      const loggedStr = JSON.stringify(logs);
+      expect(loggedStr).not.toContain("super-secret-cookie-val-999");
+    });
+  });
+
+  describe("application/x-www-form-urlencoded request bodies (RM-11)", () => {
+    it("serializes flat primitives", async () => {
+      const transport = new FakeTransport([jsonResponse({ ok: true })]);
+      const tool = createUpstreamExecutor(options(transport)).createTool(
+        operation({
+          method: "post",
+          path: "/submit",
+          requestBody: {
+            mediaType: "application/x-www-form-urlencoded",
+            required: true,
+            kind: "form-urlencoded",
+          },
+        }),
+      );
+
+      await tool.execute(
+        {
+          body: {
+            username: "alice",
+            active: true,
+            count: 42,
+          },
+        },
+        context,
+      );
+
+      expect(transport.requests).toHaveLength(1);
+      const req = transport.requests[0]!;
+      expect(req.headers["content-type"]).toBe(
+        "application/x-www-form-urlencoded",
+      );
+      const text = new TextDecoder().decode(req.body);
+      expect(text).toBe("username=alice&active=true&count=42");
+    });
+
+    it("serializes nested object with explode: true (default) as top-level fields", async () => {
+      const transport = new FakeTransport([jsonResponse({ ok: true })]);
+      const tool = createUpstreamExecutor(options(transport)).createTool(
+        operation({
+          method: "post",
+          path: "/filter",
+          requestBody: {
+            mediaType: "application/x-www-form-urlencoded",
+            required: true,
+            kind: "form-urlencoded",
+          },
+        }),
+      );
+
+      await tool.execute(
+        {
+          body: {
+            filter: { status: "active", role: "admin" },
+          },
+        },
+        context,
+      );
+
+      const req = transport.requests[0]!;
+      const text = new TextDecoder().decode(req.body);
+      expect(text).toBe("status=active&role=admin");
+    });
+
+    it("serializes nested object with explode: false as comma-separated key,value pairs", async () => {
+      const transport = new FakeTransport([jsonResponse({ ok: true })]);
+      const tool = createUpstreamExecutor(options(transport)).createTool(
+        operation({
+          method: "post",
+          path: "/filter",
+          requestBody: {
+            mediaType: "application/x-www-form-urlencoded",
+            required: true,
+            kind: "form-urlencoded",
+            encodings: {
+              filter: {
+                explode: false,
+              },
+            },
+          },
+        }),
+      );
+
+      await tool.execute(
+        {
+          body: {
+            filter: { status: "active", role: "admin" },
+          },
+        },
+        context,
+      );
+
+      const req = transport.requests[0]!;
+      const text = new TextDecoder().decode(req.body);
+      expect(text).toBe("filter=status,active,role,admin");
+    });
+
+    it("serializes arrays with explode: true and explode: false", () => {
+      const exploded = serializeFormUrlEncoded({
+        tags: ["red", "blue"],
+      });
+      expect(new TextDecoder().decode(exploded)).toBe("tags=red&tags=blue");
+
+      const notExploded = serializeFormUrlEncoded(
+        { tags: ["red", "blue"] },
+        { tags: { explode: false } },
+      );
+      expect(new TextDecoder().decode(notExploded)).toBe("tags=red,blue");
+    });
+
+    it("enforces maxRequestBytes limit on form urlencoded body", () => {
+      expect(() =>
+        serializeFormUrlEncoded({ longField: "a".repeat(100) }, undefined, 50),
+      ).toThrow("Request body exceeded the size limit");
+    });
+  });
+
+  describe("multipart/form-data request bodies (RM-11)", () => {
+    it("serializes text and binary parts with exact boundary and headers", () => {
+      const boundary = "----TestBoundary123";
+      const result = serializeMultipartFormData(
+        {
+          title: "Document Title",
+          attachment: {
+            filename: "readme.txt",
+            contentType: "text/plain",
+            content: "Hello world!",
+          },
+        },
+        undefined,
+        1_000_000,
+        1_000_000,
+        boundary,
+      );
+
+      expect(result.contentType).toBe(
+        `multipart/form-data; boundary=${boundary}`,
+      );
+      const text = new TextDecoder().decode(result.body);
+      expect(text).toBe(
+        `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="title"\r\n\r\n` +
+          `Document Title\r\n` +
+          `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="attachment"; filename="readme.txt"\r\n` +
+          `Content-Type: text/plain\r\n\r\n` +
+          `Hello world!\r\n` +
+          `--${boundary}--\r\n`,
+      );
+    });
+
+    it("serializes base64 binary parts and JSON object parts", () => {
+      const boundary = "----TestBoundary456";
+      const binaryBytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+      const base64Data = Buffer.from(binaryBytes).toString("base64");
+
+      const result = serializeMultipartFormData(
+        {
+          meta: { version: 1, active: true },
+          binaryFile: {
+            filename: "payload.bin",
+            contentType: "application/octet-stream",
+            content: base64Data,
+            encoding: "base64",
+          },
+        },
+        {
+          meta: { contentType: "application/json" },
+        },
+        1_000_000,
+        1_000_000,
+        boundary,
+      );
+
+      const header1 =
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="meta"\r\n` +
+        `Content-Type: application/json\r\n\r\n` +
+        `{"version":1,"active":true}\r\n`;
+      const header2 =
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="binaryFile"; filename="payload.bin"\r\n` +
+        `Content-Type: application/octet-stream\r\n\r\n`;
+
+      const text = new TextDecoder().decode(result.body);
+      expect(text).toContain(header1);
+      expect(text).toContain(header2);
+      expect(text.endsWith(`\r\n--${boundary}--\r\n`)).toBe(true);
+    });
+
+    it("enforces maxMultipartPartBytes limit per part", () => {
+      expect(() =>
+        serializeMultipartFormData(
+          { small: "ok", big: "a".repeat(100) },
+          undefined,
+          50,
+          1_000_000,
+        ),
+      ).toThrow("Multipart part 'big' exceeded the size limit");
+    });
+
+    it("enforces maxRequestBytes limit across entire multipart body", () => {
+      expect(() =>
+        serializeMultipartFormData(
+          { part1: "hello", part2: "world" },
+          undefined,
+          1_000_000,
+          100,
+        ),
+      ).toThrow("Request body exceeded the size limit");
+    });
+
+    it("rejects CRLF injection in part names and filenames", () => {
+      expect(() =>
+        serializeMultipartFormData({
+          "evil\r\nInjected: Header": "val",
+        }),
+      ).toThrow("invalid characters");
+
+      expect(() =>
+        serializeMultipartFormData({
+          file: {
+            filename: "evil\r\nInjected: Header.txt",
+            content: "test",
+          },
+        }),
+      ).toThrow("invalid characters");
+
+      expect(() =>
+        serializeMultipartFormData({
+          file: {
+            filename: 'evil"quote.txt',
+            content: "test",
+          },
+        }),
+      ).toThrow("invalid characters");
     });
   });
 });

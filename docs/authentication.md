@@ -48,6 +48,8 @@ export interface InboundPrincipalConfig {
 1. **Own-property credential lookup:** Verifier credential maps (`tokens` and `keys`) evaluate credentials using own-property semantics (`Object.hasOwn`). Prototype properties (such as `constructor`, `__proto__`, `toString`, `valueOf`, or `hasOwnProperty`) are never matched.
 2. **Fail-closed principal validation:** Configured token/key records, custom verification callbacks (`verifyToken`, `verifyKey`), and JWT claim mappers (`mapClaims`) are strictly validated against `InboundPrincipalConfig`. If a candidate principal is nullish, non-object, lacks a non-empty `tenantId` or `principalId`, or contains invalid scopes, verification returns `undefined` (unauthenticated). The runtime never fabricates an empty principal.
 3. **Exact credential lookup:** Token and API key lookups are exact matches; credentials are not case-folded. Empty or whitespace-only credentials reject before lookup.
+4. **No implicit 'default' tenant fallback:** Authenticated callers without a valid `tenantId` claim reject with `RuntimeError("TENANT_REQUIRED")`. The server and dynamic gateway never assign callers an implicit `"default"` tenant.
+5. **Tenant resolution precedence:** In dynamic gateway or multi-tenant deployments with a configured fallback `--tenant <id>`, the authenticated principal's tenant claim strictly overrides the fallback: `authTenant ?? explicitTenant`. When no tenant can be resolved, the gateway emits a `tenant_resolution_failed` audit event and rejects with `TENANT_REQUIRED`.
 
 ## 3. Encrypted Secret Storage
 

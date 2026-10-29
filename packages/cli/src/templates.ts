@@ -166,7 +166,7 @@ import {
   parseConfig,
 } from "@chainmcp/config";
 import { compileOpenApi } from "@chainmcp/compiler";
-import { InMemoryToolRuntime } from "@chainmcp/core";
+import { InMemoryToolRuntime, RuntimeError } from "@chainmcp/core";
 import {
   createUpstreamExecutor,
   type UpstreamTransport,
@@ -279,9 +279,22 @@ export async function runServer(options?: RunServerOptions) {
     maxResponseBytes: config.server.maxResponseBytes,
     createContext: (request: McpRequestContext) => {
       const auth = request.authInfo;
+      const authTenant =
+        typeof auth?.extra?.tenantId === "string" &&
+        auth.extra.tenantId.trim().length > 0
+          ? auth.extra.tenantId
+          : undefined;
+      const explicitTenant = config.tenant;
+      const tenantId = authTenant ?? explicitTenant;
+      if (auth && !tenantId) {
+        throw new RuntimeError(
+          "TENANT_REQUIRED",
+          "Tenant context required: authenticated principal has no tenantId",
+        );
+      }
       return {
         requestId: randomUUID(),
-        tenantId: (auth?.extra?.tenantId as string) ?? "default",
+        tenantId: tenantId ?? "",
         principal: {
           id: auth?.clientId ?? "mcp-caller",
           scopes: auth?.scopes ?? [],

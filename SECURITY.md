@@ -109,8 +109,19 @@ are strictly validated against `InboundPrincipalConfig`: both `tenantId` and
 fails closed as unauthenticated. `@chainmcp/auth` keeps inbound identity
 (`OperationScopeAuthorizer` over `ToolContext.principal`) separate from upstream
 credentials, which only `@chainmcp/executor` injects after declared parameters
-are mapped, so caller arguments cannot supply or override `authorization`,
-`cookie`, or other reserved headers. Credentials come from pluggable providers
+are mapped, so caller arguments cannot supply or override `authorization` or
+other reserved headers. Raw `Cookie` headers remain strictly forbidden as
+`header` parameters (`FORBIDDEN_HEADER_PARAMETERS` and `RESERVED_REQUEST_HEADERS`).
+Validated `cookie` parameters (`in: "cookie"`) form a dedicated channel with
+RFC 6265 token name validation and strict prohibition of `;`, `\r`, `\n`, or
+control characters to eliminate HTTP header and cookie injection. When upstream
+credential cookies are supplied, they are injected _after_ parameter cookies,
+strictly overwriting matching names so caller input can never hijack or override
+transport or credential session cookies. All cookie values and headers are
+redacted from telemetry by default. In multipart and form-urlencoded request
+bodies, CR/LF injection in field names, filenames, and boundaries is strictly
+rejected, and both individual part size (`maxMultipartPartBytes`) and total body
+size (`maxRequestBytes`) are enforced fail-closed. Credentials come from pluggable providers
 and are validated against the declared credential shapes; invalid material is
 unresolved and fails closed as `AUTH_REQUIRED`. `SecretStoreCredentialProvider`
 reads tenant-scoped keys only, so a missing tenant secret never falls back to a

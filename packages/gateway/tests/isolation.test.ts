@@ -443,4 +443,46 @@ describe("DynamicGateway Isolation", () => {
     const res2 = await gateway.callTool("fetchData", {}, ctx2);
     expect(res2).toEqual({ data: "tenant-2-result", execCount: 2 });
   });
+
+  it("rejects tool invocation and listing with TENANT_REQUIRED when tenantId is empty or absent", async () => {
+    const gateway = new DynamicGateway();
+    await gateway.publishContract({
+      tenantId: "tenant-1",
+      contractName: "service-1",
+      tools: [
+        {
+          name: "tool_1",
+          description: "Tool 1",
+          ownerTenantId: "tenant-1",
+          operation: {},
+          inputSchema: { type: "object" },
+          execute: async () => ({ ok: true }),
+        },
+      ],
+      destinationPolicy: {
+        baseUrl: "https://api.test",
+        allowedHosts: ["api.test"],
+      },
+      autoActivate: true,
+    });
+
+    const emptyTenantCtx: ToolContext = {
+      tenantId: "",
+      requestId: "r-empty",
+      principal: { id: "user-empty", scopes: [] },
+    };
+
+    try {
+      gateway.listTools(emptyTenantCtx);
+      expect.fail("Expected listTools to throw");
+    } catch (err: unknown) {
+      expect((err as { code?: string }).code).toBe("TENANT_REQUIRED");
+    }
+
+    await expect(
+      gateway.callTool("tool_1", {}, emptyTenantCtx),
+    ).rejects.toMatchObject({
+      code: "TENANT_REQUIRED",
+    });
+  });
 });

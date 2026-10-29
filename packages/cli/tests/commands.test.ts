@@ -433,6 +433,13 @@ components:
       expect(serverSource).toContain("config.contract?.baseUrl ??");
       expect(serverSource).not.toContain("api.example.com");
     });
+
+    it("asserts renderServerTs does not fallback to default tenant", () => {
+      const serverSource = renderServerTs();
+      expect(serverSource).not.toContain('?? "default"');
+      expect(serverSource).not.toContain("?? 'default'");
+      expect(serverSource).toContain("TENANT_REQUIRED");
+    });
   });
 
   describe("buildCommand", () => {
@@ -782,6 +789,7 @@ auth:
       const gwConfig = `
 version: 1
 name: test-dynamic-gw
+tenant: tenant-alpha
 server:
   transport: stdio
 contracts:
@@ -822,6 +830,7 @@ contracts:
       const gwConfig = `
 version: 1
 name: test-http-gw
+tenant: tenant-alpha
 server:
   transport: http
   port: 3333
@@ -866,6 +875,7 @@ contracts:
       const gwConfig = `
 version: 1
 name: test-fail-gw
+tenant: tenant-alpha
 server:
   transport: http
   port: 3333
@@ -900,6 +910,7 @@ contracts:
       const gwConfig = `
 version: 1
 name: test-allow-gw
+tenant: tenant-alpha
 server:
   transport: http
   port: 3333
@@ -945,6 +956,7 @@ contracts:
       const gwConfig = `
 version: 1
 name: test-no-verifier-gw
+tenant: tenant-alpha
 server:
   transport: http
   port: 3333
@@ -973,6 +985,77 @@ contracts:
       ).rejects.toThrow(
         /Inbound authorizer is configured as "scope", but no inbound verifier is configured|HTTP inbound authentication is required/,
       );
+    });
+
+    it("refuses to start gateway mode when no inbound verifier and no explicit tenant are configured", async () => {
+      const specFile = join(tempDir, "service-gw-no-tenant.yaml");
+      await writeFile(specFile, SAMPLE_SPEC, "utf8");
+
+      const gwConfigFile = join(tempDir, "gateway-no-tenant.config.yaml");
+      const gwConfig = `
+version: 1
+name: test-no-tenant-gw
+server:
+  transport: http
+  port: 3333
+  host: 127.0.0.1
+security:
+  allowUnauthenticatedHttp: true
+contracts:
+  - name: pets
+    tenantId: tenant-alpha
+    spec: service-gw-no-tenant.yaml
+    destination:
+      baseUrl: https://api.petstore.test
+      allowedHosts:
+        - api.petstore.test
+`;
+      await writeFile(gwConfigFile, gwConfig, "utf8");
+
+      await expect(
+        gatewayServeCommand({
+          cwd: tempDir,
+          config: "gateway-no-tenant.config.yaml",
+          port: 0,
+        }),
+      ).rejects.toThrow(/Dynamic gateway requires a tenant resolver/);
+    });
+
+    it("starts gateway mode when explicit --tenant is provided via options", async () => {
+      const specFile = join(tempDir, "service-gw-explicit-tenant.yaml");
+      await writeFile(specFile, SAMPLE_SPEC, "utf8");
+
+      const gwConfigFile = join(tempDir, "gateway-explicit-tenant.config.yaml");
+      const gwConfig = `
+version: 1
+name: test-explicit-tenant-gw
+server:
+  transport: http
+  port: 3333
+  host: 127.0.0.1
+security:
+  allowUnauthenticatedHttp: true
+contracts:
+  - name: pets
+    tenantId: tenant-alpha
+    spec: service-gw-explicit-tenant.yaml
+    destination:
+      baseUrl: https://api.petstore.test
+      allowedHosts:
+        - api.petstore.test
+`;
+      await writeFile(gwConfigFile, gwConfig, "utf8");
+
+      const gwHandle = await gatewayServeCommand({
+        cwd: tempDir,
+        config: "gateway-explicit-tenant.config.yaml",
+        port: 0,
+        tenantId: "tenant-alpha",
+      });
+
+      expect(gwHandle.ok).toBe(true);
+      await gwHandle.close();
+      await gwHandle.closed;
     });
   });
 
@@ -1119,6 +1202,102 @@ contracts:
       expect(result.hasChanges).toBe(true);
       expect(result.addedTools).toContain("listPets");
       expect(result.removedTools).toContain("listAllPets");
+    });
+
+    it("detects schema-level breaking changes in diffCommand", async () => {
+      const v1Spec = `
+openapi: "3.1.0"
+info:
+  title: Petstore
+  version: "1.0.0"
+servers:
+  - url: https://api.petstore.test
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["available", "pending", "sold"]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                  total:
+                    type: integer
+                required: ["items", "total"]
+`;
+      const v2SpecBreaking = `
+openapi: "3.1.0"
+info:
+  title: Petstore
+  version: "2.0.0"
+servers:
+  - url: https://api.petstore.test
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["available", "sold"]
+        - name: apiKey
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                required: ["items"]
+`;
+
+      const v1Path = join(tempDir, "v1.yaml");
+      const v2Path = join(tempDir, "v2.yaml");
+      await writeFile(v1Path, v1Spec, "utf8");
+      await writeFile(v2Path, v2SpecBreaking, "utf8");
+
+      const result = await diffCommand({
+        spec: v2Path,
+        against: v1Path,
+        cwd: tempDir,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.schemaVersion).toBe(1);
+      expect(result.hasChanges).toBe(true);
+      expect(result.hasBreakingChanges).toBe(true);
+      expect(
+        result.breaking.some((c) => c.code === "INPUT_REQUIRED_ADDED"),
+      ).toBe(true);
+      expect(
+        result.breaking.some((c) => c.code === "INPUT_ENUM_VALUE_REMOVED"),
+      ).toBe(true);
+      expect(
+        result.breaking.some((c) => c.code === "RESPONSE_FIELD_REMOVED"),
+      ).toBe(true);
+      expect(result.summary.breaking).toBeGreaterThanOrEqual(3);
     });
   });
 });

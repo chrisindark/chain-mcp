@@ -103,13 +103,16 @@ validated and rejected in strict mode (`PARAMETER_UNSUPPORTED`, `PARAMETER_INVAL
 or warned in permissive mode, with warnings preserved in the manifest and tool entries.
 
 `@chainmcp/executor` converts compiled operations into runnable tools. It maps
-path, query, header, and JSON body inputs; enforces an exact host allowlist,
+path, query, header, cookie, and request body inputs (JSON, `application/x-www-form-urlencoded`,
+and `multipart/form-data`); enforces an exact host allowlist,
 HTTPS by default, fixed protocol/port, and same-host redirects; rejects any DNS
 answer in loopback, private, shared, link-local, metadata, multicast,
 documentation, or reserved ranges; pins the resolved address and verifies the
 peer; rejects compressed and oversized responses; and binds `context.signal`
-plus a total timeout to upstream I/O. It does not inject credentials, validate
-response schemas, retry, or resolve per-operation `servers`.
+plus a total timeout to upstream I/O. Form-urlencoded requests support `explode: true/false`,
+multipart requests support file and binary base64 decoding with per-part caps (`maxMultipartPartBytes`),
+and cookie parameters are validated and formatted into `Cookie` headers without overriding
+upstream credentials.
 
 The `examples/petstore` project compiles a contract, binds the executor,
 registers the tools in the shared runtime, and serves them over stdio. The MCP
@@ -258,6 +261,9 @@ Deployment documentation is established in `docs/deployment.md`.
 Upstream base URL scheme, port, and path prefix are preserved end-to-end
 through `chainmcp init`, configuration `contract.baseUrl`, `security.allowInsecureHttp`,
 and generated server templates without arbitrary host synthesis.
+`chainmcp diff` implements schema-level comparison via `diffContracts` with the
+RM-12 breaking-change taxonomy (breaking, potentially-breaking, non-breaking),
+`--fail-on <level>`, `--fail-on-breaking`, and machine-readable `--json` output (`schemaVersion: 1`).
 End-to-end integration tests (`end-to-end.test.ts`) demonstrate that an exported
 server compiles with `tsc` and runs independently, discovering and executing both
 OpenAPI-compiled tools and JSON navigation tools over the official MCP SDK
@@ -333,7 +339,9 @@ from discovery and execution, emitting structured, redacted audit events
 Per-contract network destination policies and upstream credentials are strictly
 isolated per contract revision.
 Multi-tenant isolation tests demonstrate that callers without context fail with
-`AUTH_REQUIRED`, and cross-tenant requests fail closed as `TOOL_NOT_FOUND`
+`AUTH_REQUIRED`, callers missing tenant context in multi-tenant mode fail closed
+with `TENANT_REQUIRED` (with `tenant_resolution_failed` audit emission and no
+implicit `'default'` fallback), and cross-tenant requests fail closed as `TOOL_NOT_FOUND`
 without leaking other tenants' inventory.
 ADR 0008 is accepted, and ADR 0026 is recorded.
 

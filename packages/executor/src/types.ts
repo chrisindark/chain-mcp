@@ -74,6 +74,8 @@ export interface UpstreamExecutorOptions {
   maxResponseBytes?: number;
   /** Request body cap in bytes. Default 1 MiB; maximum 10 MiB. */
   maxRequestBytes?: number;
+  /** Maximum bytes for an individual multipart part. Default 1 MiB; maximum 10 MiB. */
+  maxMultipartPartBytes?: number;
   /** Redirects followed per call. Default 3; maximum 5. */
   maxRedirects?: number;
   /** Total time budget per call in milliseconds. Default 15s; maximum 120s. */

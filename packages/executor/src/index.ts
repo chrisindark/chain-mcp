@@ -1,4 +1,5 @@
 export {
+  DEFAULT_MAX_MULTIPART_PART_BYTES,
   DEFAULT_MAX_REDIRECTS,
   DEFAULT_MAX_REQUEST_BYTES,
   DEFAULT_MAX_RESPONSE_BYTES,
@@ -10,6 +11,9 @@ export {
   MAX_RESPONSE_BYTES_LIMIT,
   MAX_TIMEOUT_MS,
   createUpstreamExecutor,
+  serializeFormUrlEncoded,
+  serializeMultipartFormData,
+  type SerializedMultipartBody,
 } from "./executor.js";
 export {
   MAX_RESPONSE_HEADER_BYTES,

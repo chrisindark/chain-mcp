@@ -8,6 +8,7 @@ export {
   compileOpenApi,
   diffManifests,
 } from "./compile.js";
+export { diffContracts } from "./diff.js";
 export {
   DEFAULT_MAX_SOURCE_BYTES,
   MAX_DOCUMENT_DEPTH,
@@ -25,16 +26,24 @@ export type {
   CompiledAuthenticationAlternative,
   CompiledAuthenticationPolicy,
   CompiledAuthenticationScheme,
+  CompiledEncoding,
   CompiledOperation,
   CompiledParameter,
   CompiledRequestBody,
   CompiledResponse,
   CompiledSecurityScheme,
+  ContractChange,
   ContractCompiler,
+  ContractDiffInput,
+  ContractDiffInputObject,
+  ContractDiffResult,
+  ContractDiffTool,
   DiagnosticSeverity,
+  DiffClassification,
   HttpMethod,
   ManifestToolEntry,
   OpenApiVersion,
+  RequestBodyKind,
   SecurityRequirement,
   SecuritySchemeType,
 } from "./types.js";

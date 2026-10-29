@@ -331,6 +331,7 @@ const SAFE_RUNTIME_ERROR_MESSAGES: Record<RuntimeErrorCode, string> = {
   TOOL_ALREADY_REGISTERED: "Tool is unavailable",
   CONFIG_INVALID: "Tool is unavailable",
   AUTH_REQUIRED: "Authentication required",
+  TENANT_REQUIRED: "Tenant context required",
   CONTRACT_INVALID: "Tool definition is invalid",
   UPSTREAM_FAILURE: "Tool invocation failed",
 };
