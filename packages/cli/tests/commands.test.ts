@@ -748,6 +748,128 @@ auth:
         /Inbound authorizer is configured as "scope", but no inbound verifier is configured\. Scope authorization requires an authenticated principal/,
       );
     });
+
+    it("throws helpful error naming both config key and env var when rateLimit provider is redis without URL", async () => {
+      const targetDir = join(tempDir, "serve-redis-missing-url");
+      await initCommand({
+        spec: specPath,
+        output: targetDir,
+        cwd: tempDir,
+      });
+
+      const configPath = join(targetDir, "chainmcp.config.yaml");
+      const configYaml = `
+version: 1
+name: test-redis-server
+contract:
+  source: ./spec/openapi.yaml
+security:
+  allowedUpstreamHosts:
+    - api.petstore.test
+rateLimit:
+  enabled: true
+  provider: redis
+`;
+      await writeFile(configPath, configYaml, "utf8");
+
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+
+      await expect(
+        serveCommand({
+          cwd: targetDir,
+          stdin,
+          stdout,
+        }),
+      ).rejects.toThrow(/rateLimit\.redis\.url.*CHAINMCP_REDIS_URL/);
+    });
+
+    it("initializes serveCommand with Redis rate limiting when URL is configured in config", async () => {
+      const targetDir = join(tempDir, "serve-redis-url-configured");
+      await initCommand({
+        spec: specPath,
+        output: targetDir,
+        cwd: tempDir,
+      });
+
+      const configPath = join(targetDir, "chainmcp.config.yaml");
+      const configYaml = `
+version: 1
+name: test-redis-server
+contract:
+  source: ./spec/openapi.yaml
+security:
+  allowedUpstreamHosts:
+    - api.petstore.test
+rateLimit:
+  enabled: true
+  provider: redis
+  redis:
+    url: redis://127.0.0.1:6379
+`;
+      await writeFile(configPath, configYaml, "utf8");
+
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+
+      const serverHandle = await serveCommand({
+        cwd: targetDir,
+        stdin,
+        stdout,
+      });
+
+      expect(serverHandle.ok).toBe(true);
+      await serverHandle.close();
+      await serverHandle.closed;
+    });
+
+    it("initializes serveCommand with Redis rate limiting when CHAINMCP_REDIS_URL is set in environment", async () => {
+      const targetDir = join(tempDir, "serve-redis-env-configured");
+      await initCommand({
+        spec: specPath,
+        output: targetDir,
+        cwd: tempDir,
+      });
+
+      const configPath = join(targetDir, "chainmcp.config.yaml");
+      const configYaml = `
+version: 1
+name: test-redis-server
+contract:
+  source: ./spec/openapi.yaml
+security:
+  allowedUpstreamHosts:
+    - api.petstore.test
+rateLimit:
+  enabled: true
+  provider: redis
+`;
+      await writeFile(configPath, configYaml, "utf8");
+
+      const prev = process.env.CHAINMCP_REDIS_URL;
+      process.env.CHAINMCP_REDIS_URL = "redis://127.0.0.1:6379";
+
+      try {
+        const stdin = new PassThrough();
+        const stdout = new PassThrough();
+
+        const serverHandle = await serveCommand({
+          cwd: targetDir,
+          stdin,
+          stdout,
+        });
+
+        expect(serverHandle.ok).toBe(true);
+        await serverHandle.close();
+        await serverHandle.closed;
+      } finally {
+        if (prev !== undefined) {
+          process.env.CHAINMCP_REDIS_URL = prev;
+        } else {
+          delete process.env.CHAINMCP_REDIS_URL;
+        }
+      }
+    });
   });
 
   describe("devCommand", () => {

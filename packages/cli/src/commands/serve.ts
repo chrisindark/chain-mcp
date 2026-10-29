@@ -6,8 +6,10 @@ import {
   buildExecutorOptions,
   buildRuntimeOptions,
   createNavigationLimitsFromConfig,
+  logRateLimiterStartup,
   parseConfig,
   type ChainMcpConfig,
+  type RedisRateLimitClient,
 } from "@chainmcp/config";
 import { InMemoryToolRuntime, RuntimeError } from "@chainmcp/core";
 import { createUpstreamExecutor } from "@chainmcp/executor";
@@ -63,6 +65,13 @@ export async function serveCommand(
     ...(explicitTenant !== undefined ? { tenantId: explicitTenant } : {}),
   });
   const runtime = new InMemoryToolRuntime(runtimeOptions);
+  await logRateLimiterStartup(config.rateLimit, {
+    logger: runtimeOptions.logger,
+    client: (
+      runtimeOptions.rateLimiter as
+        { client?: RedisRateLimitClient } | undefined
+    )?.client,
+  });
   let totalToolCount = 0;
 
   if (validation.contractKind === "code-first") {

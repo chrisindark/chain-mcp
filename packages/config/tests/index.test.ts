@@ -10,6 +10,7 @@ import {
   createRateLimiterFromConfig,
   createTokenizerFromConfig,
   createUpstreamCredentialProviderFromConfig,
+  logRateLimiterStartup,
   parseConfig,
   parseGatewayConfig,
   resolveLogLevel,
@@ -321,6 +322,7 @@ describe("rateLimit configuration and factory", () => {
     const limiter = createRateLimiterFromConfig({
       enabled: false,
       provider: "memory",
+      failurePolicy: "fail-closed",
       redis: { keyPrefix: "p:", commandTimeoutMs: 1000 },
       maxTrackedWindows: 1000,
     });
@@ -333,6 +335,7 @@ describe("rateLimit configuration and factory", () => {
       {
         enabled: true,
         provider: "memory",
+        failurePolicy: "fail-closed",
         requestsPerMinute: 2,
         concurrency: 1,
         redis: { keyPrefix: "p:", commandTimeoutMs: 1000 },
@@ -376,6 +379,7 @@ describe("rateLimit configuration and factory", () => {
       {
         enabled: true,
         provider: "redis",
+        failurePolicy: "fail-closed",
         globalQuota: { maxRequests: 10, windowMs: 60_000 },
         globalConcurrency: 5,
         redis: { keyPrefix: "prod:rl:", commandTimeoutMs: 1500 },
@@ -395,10 +399,136 @@ describe("rateLimit configuration and factory", () => {
       createRateLimiterFromConfig({
         enabled: true,
         provider: "redis",
+        failurePolicy: "fail-closed",
         redis: { keyPrefix: "p:", commandTimeoutMs: 1000 },
         maxTrackedWindows: 1000,
       }),
-    ).toThrow(/requires a Redis client/);
+    ).toThrow(/rateLimit\.redis\.url.*CHAINMCP_REDIS_URL/);
+  });
+
+  it("constructs DistributedRateLimiter when provider is redis and url is in config", () => {
+    const limiter = createRateLimiterFromConfig({
+      enabled: true,
+      provider: "redis",
+      failurePolicy: "fail-closed",
+      redis: {
+        url: "redis://127.0.0.1:6379",
+        keyPrefix: "test:rl:",
+        commandTimeoutMs: 1000,
+      },
+      maxTrackedWindows: 1000,
+    });
+    expect(limiter).toBeInstanceOf(DistributedRateLimiter);
+    expect((limiter as DistributedRateLimiter).client).toBeDefined();
+    expect((limiter as DistributedRateLimiter).failurePolicy).toBe(
+      "fail-closed",
+    );
+  });
+
+  it("constructs DistributedRateLimiter when provider is redis and CHAINMCP_REDIS_URL is in env", () => {
+    const prev = process.env.CHAINMCP_REDIS_URL;
+    try {
+      process.env.CHAINMCP_REDIS_URL = "redis://127.0.0.1:6380";
+      const limiter = createRateLimiterFromConfig({
+        enabled: true,
+        provider: "redis",
+        failurePolicy: "fail-open",
+        redis: { keyPrefix: "env:rl:", commandTimeoutMs: 2000 },
+        maxTrackedWindows: 1000,
+      });
+      expect(limiter).toBeInstanceOf(DistributedRateLimiter);
+      expect((limiter as DistributedRateLimiter).client).toBeDefined();
+      expect((limiter as DistributedRateLimiter).failurePolicy).toBe(
+        "fail-open",
+      );
+    } finally {
+      if (prev !== undefined) {
+        process.env.CHAINMCP_REDIS_URL = prev;
+      } else {
+        delete process.env.CHAINMCP_REDIS_URL;
+      }
+    }
+  });
+
+  it("shares the same Redis client instance between rateLimiter and cacheStore in buildRuntimeOptions", () => {
+    const config = parseConfig({
+      version: 1,
+      name: "shared-client-test",
+      rateLimit: {
+        enabled: true,
+        provider: "redis",
+        redis: { url: "redis://127.0.0.1:6379" },
+      },
+      cache: {
+        enabled: true,
+        provider: "redis",
+        redis: { url: "redis://127.0.0.1:6379" },
+      },
+    });
+
+    const runtimeOptions = buildRuntimeOptions(config);
+    expect(runtimeOptions.rateLimiter).toBeInstanceOf(DistributedRateLimiter);
+    expect(runtimeOptions.cache?.store).toBeInstanceOf(RedisCacheStore);
+
+    const rateLimitClient = (
+      runtimeOptions.rateLimiter as DistributedRateLimiter
+    ).client;
+    const cacheClient = (runtimeOptions.cache?.store as RedisCacheStore).client;
+    expect(rateLimitClient).toBe(cacheClient);
+  });
+
+  it("logRateLimiterStartup logs connection health and quota summary without secrets", async () => {
+    const logs: Array<{
+      message: string;
+      context?: Record<string, unknown> | undefined;
+    }> = [];
+    const mockLogger = {
+      info(message: string, context?: Record<string, unknown>) {
+        logs.push({ message, ...(context !== undefined ? { context } : {}) });
+      },
+      warn(message: string, context?: Record<string, unknown>) {
+        logs.push({ message, ...(context !== undefined ? { context } : {}) });
+      },
+      debug() {},
+      error() {},
+    };
+
+    const mockClient: RedisRateLimitClient = {
+      async eval() {
+        return 1;
+      },
+    };
+
+    const health = await logRateLimiterStartup(
+      {
+        enabled: true,
+        provider: "redis",
+        failurePolicy: "fail-closed",
+        requestsPerMinute: 120,
+        concurrency: 10,
+        redis: {
+          url: "redis://:secret-password@127.0.0.1:6379",
+          keyPrefix: "app:rl:",
+          commandTimeoutMs: 1000,
+        },
+        maxTrackedWindows: 1000,
+      },
+      { logger: mockLogger, client: mockClient },
+    );
+
+    expect(health).toBeDefined();
+    expect(health?.provider).toBe("redis");
+    expect(health?.reachability).toBe("reachable");
+    expect(health?.keyPrefix).toBe("app:rl:");
+    expect(health?.quotaSummary.globalQuota?.maxRequests).toBe(120);
+    expect(health?.quotaSummary.globalConcurrency).toBe(10);
+
+    expect(logs.length).toBe(1);
+    expect(logs[0]?.message).toBe("Rate limiter initialized");
+    // Assert no password or URL in log output
+    const logString = JSON.stringify(logs[0]);
+    expect(logString).not.toContain("secret-password");
+    expect(logString).not.toContain("redis://");
   });
 });
 

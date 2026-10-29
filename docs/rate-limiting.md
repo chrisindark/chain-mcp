@@ -40,7 +40,30 @@ Eviction trades strictness for memory: an evicted identity starts a fresh window
 
 ## 3. Distributed Rate Limiter
 
-In multi-process or clustered deployments, use `DistributedRateLimiter` with a Redis client:
+In multi-process or clustered deployments, use `DistributedRateLimiter` with a Redis backend.
+
+### Configuration via `chainmcp.config.yaml`
+
+```yaml
+rateLimit:
+  enabled: true
+  provider: redis
+  failurePolicy: fail-closed # fail-closed (default) | fail-open
+  requestsPerMinute: 60
+  concurrency: 10
+  redis:
+    url: redis://127.0.0.1:6379 # Or omit to use CHAINMCP_REDIS_URL
+    keyPrefix: "chainmcp:prod:ratelimit:"
+    commandTimeoutMs: 1000
+```
+
+When `provider: redis` is configured:
+
+1. `createRateLimiterFromConfig` auto-constructs a zero-dependency RESP2 Redis client using `options.redisClient`, `options.redisUrl`, `config.redis.url`, or `process.env.CHAINMCP_REDIS_URL`. If none is supplied, startup fails fast with a helpful error naming both `rateLimit.redis.url` and `CHAINMCP_REDIS_URL`.
+2. **Shared Redis Client:** When both rate limiting and caching are Redis-backed, `buildRuntimeOptions` shares the same underlying Redis client instance between `@chainmcp/rate-limit` and `@chainmcp/cache-redis`, preventing duplicate socket connections and connection pool exhaustion.
+3. **Startup Health Logging:** The server logs connection health at startup (`provider`, `reachability: "reachable" | "unreachable"`, `keyPrefix`, and quota summary). Secrets and credentials in the Redis connection URL are strictly excluded from logs.
+
+### Programmatic Usage
 
 ```ts
 import {
@@ -59,12 +82,20 @@ const rateLimiter = new DistributedRateLimiter({
   client: redisClient,
   keyPrefix: "chainmcp:prod:ratelimit:",
   commandTimeoutMs: 1_000,
+  failurePolicy: "fail-closed", // "fail-closed" (default) or "fail-open"
   tenantQuota: { maxRequests: 60, windowMs: 60_000 },
   tenantConcurrency: 5,
 });
 
 const runtime = new InMemoryToolRuntime({ rateLimiter });
 ```
+
+### Outage Failure Policy
+
+When Redis experiences an outage, network partition, or command timeout:
+
+- **`failurePolicy: "fail-closed"` (Default):** Re-throws an `UPSTREAM_FAILURE` `RuntimeError`, blocking requests to guarantee quotas and concurrency limits are never exceeded. Any concurrency slots acquired prior to the failure are rolled back.
+- **`failurePolicy: "fail-open"`:** Logs an outage warning at `warn` level with the underlying error cause and permits the request to proceed (`{ allowed: true }`), prioritizing API availability over strict quota enforcement.
 
 ### Atomic Lua Scripts
 

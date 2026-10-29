@@ -15,6 +15,7 @@ export function renderPackageJson(options: PackageJsonOptions): string {
     "@chainmcp/analytics": versionSpec,
     "@chainmcp/auth": versionSpec,
     "@chainmcp/authoring": versionSpec,
+    "@chainmcp/cache-redis": versionSpec,
     "@chainmcp/compiler": versionSpec,
     "@chainmcp/config": versionSpec,
     "@chainmcp/core": versionSpec,
@@ -163,7 +164,9 @@ import {
   buildExecutorOptions,
   buildRuntimeOptions,
   createNavigationLimitsFromConfig,
+  logRateLimiterStartup,
   parseConfig,
+  type RedisRateLimitClient,
 } from "@chainmcp/config";
 import { compileOpenApi } from "@chainmcp/compiler";
 import { InMemoryToolRuntime, RuntimeError } from "@chainmcp/core";
@@ -207,6 +210,14 @@ export async function runServer(options?: RunServerOptions) {
 
   const runtimeOptions = buildRuntimeOptions(config);
   const runtime = new InMemoryToolRuntime(runtimeOptions);
+  await logRateLimiterStartup(config.rateLimit, {
+    logger: runtimeOptions.logger,
+    client: (
+      runtimeOptions.rateLimiter as
+        | { client?: RedisRateLimitClient }
+        | undefined
+    )?.client,
+  });
 
   // Compile and register contract operations if contract is configured
   const effectiveContractPath =

@@ -1143,8 +1143,19 @@ export interface RedisCacheStoreOptions {
   commandTimeoutMs?: number;
 }
 
+export interface SimpleRedisClient extends RedisCacheClient {
+  eval(script: string, keys: string[], args: string[]): Promise<unknown>;
+}
+
+export function createSimpleRedisClient(
+  urlOrOptions: string | SimpleRedisOptions,
+): SimpleRedisClient;
+
+export const createSimpleRedisCacheClient = createSimpleRedisClient;
+
 export class RedisCacheStore implements CacheStore {
   constructor(options: RedisCacheStoreOptions);
+  readonly client: RedisCacheClient;
 }
 
 export const DEFAULT_REDIS_COMMAND_TIMEOUT_MS = 1_000;
@@ -1393,6 +1404,8 @@ export interface RedisRateLimitClient {
 
 export class DistributedRateLimiter implements RateLimiter {
   constructor(options: DistributedRateLimiterOptions);
+  readonly client: RedisRateLimitClient;
+  readonly failurePolicy: "fail-closed" | "fail-open";
   check(context: ToolContext, toolName: string): Promise<RateLimitDecision>;
   release(context: ToolContext, toolName: string): Promise<void>;
 }
@@ -1552,6 +1565,14 @@ export function createRateLimiterFromConfig(
   config: RateLimitConfig,
   options?: RateLimiterFactoryOptions,
 ): RateLimiter | undefined;
+
+export function logRateLimiterStartup(
+  config: RateLimitConfig,
+  options?: {
+    logger?: Logger | undefined;
+    client?: RedisRateLimitClient | undefined;
+  },
+): Promise<RateLimiterStartupHealth | undefined>;
 
 export function createAuthorizerFromConfig(
   config: InboundAuthConfig,

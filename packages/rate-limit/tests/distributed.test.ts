@@ -285,4 +285,83 @@ describe("DistributedRateLimiter multi-scope accounting", () => {
 
     expect(decisions).toEqual([true, false, true, false, false]);
   });
+
+  it("enforces tenant quota isolation between distinct tenants", async () => {
+    const mockTime = 1_000_000;
+    const redis = new MockRedisClient();
+    const limiter = new DistributedRateLimiter({
+      client: redis,
+      now: () => mockTime,
+      tenantQuota: { maxRequests: 1, windowMs: 60_000 },
+    });
+
+    const ctxA = context("tenant-a");
+    const ctxB = context("tenant-b");
+
+    // First call for tenant A succeeds
+    expect((await limiter.check(ctxA, "tool-1")).allowed).toBe(true);
+    // Second call for tenant A is denied
+    expect((await limiter.check(ctxA, "tool-1")).allowed).toBe(false);
+
+    // Call for tenant B succeeds despite tenant A exhaustion
+    expect((await limiter.check(ctxB, "tool-1")).allowed).toBe(true);
+    // Second call for tenant B is denied
+    expect((await limiter.check(ctxB, "tool-1")).allowed).toBe(false);
+  });
+
+  it("fails closed on Redis outage by default with UPSTREAM_FAILURE", async () => {
+    const brokenClient: RedisRateLimitClient = {
+      async eval() {
+        throw new Error("ECONNREFUSED 127.0.0.1:6379");
+      },
+    };
+
+    const limiter = new DistributedRateLimiter({
+      client: brokenClient,
+      globalQuota: { maxRequests: 10, windowMs: 60_000 },
+      failurePolicy: "fail-closed",
+    });
+
+    await expect(limiter.check(context("t1"), "tool-1")).rejects.toMatchObject({
+      code: "UPSTREAM_FAILURE",
+      message: expect.stringContaining("Redis rate limiter command"),
+    });
+  });
+
+  it("fails open on Redis outage when configured with failurePolicy: fail-open and logs warning", async () => {
+    const brokenClient: RedisRateLimitClient = {
+      async eval() {
+        throw new Error("ETIMEDOUT 127.0.0.1:6379");
+      },
+    };
+
+    const warnings: Array<{
+      message: string;
+      context?: Record<string, unknown> | undefined;
+    }> = [];
+    const mockLogger = {
+      warn(message: string, context?: Record<string, unknown>) {
+        warnings.push({
+          message,
+          ...(context !== undefined ? { context } : {}),
+        });
+      },
+      error() {},
+    };
+
+    const limiter = new DistributedRateLimiter({
+      client: brokenClient,
+      globalQuota: { maxRequests: 10, windowMs: 60_000 },
+      failurePolicy: "fail-open",
+      logger: mockLogger,
+    });
+
+    const decision = await limiter.check(context("t1"), "tool-1");
+    expect(decision.allowed).toBe(true);
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]?.message).toContain(
+      "Redis rate limiter encountered an outage; failing open",
+    );
+    expect(warnings[0]?.context?.error).toContain("ETIMEDOUT");
+  });
 });

@@ -9,13 +9,17 @@ export interface SimpleRedisOptions {
   timeoutMs?: number | undefined;
 }
 
+export interface SimpleRedisClient extends RedisCacheClient {
+  eval(script: string, keys: string[], args: string[]): Promise<unknown>;
+}
+
 /**
- * Creates a zero-dependency Redis client implementing RedisCacheClient
+ * Creates a zero-dependency Redis client implementing RedisCacheClient and eval
  * using the standard Redis Serialization Protocol (RESP2) over a Node socket.
  */
-export function createSimpleRedisCacheClient(
+export function createSimpleRedisClient(
   urlOrOptions: string | SimpleRedisOptions,
-): RedisCacheClient {
+): SimpleRedisClient {
   let host = "127.0.0.1";
   let port = 6379;
   let password: string | undefined;
@@ -133,48 +137,86 @@ export function createSimpleRedisCacheClient(
     async delete(key: string): Promise<unknown> {
       return await executeCommand(["DEL", key]);
     },
+
+    async eval(
+      script: string,
+      keys: string[],
+      args: string[],
+    ): Promise<unknown> {
+      return await executeCommand([
+        "EVAL",
+        script,
+        String(keys.length),
+        ...keys,
+        ...args,
+      ]);
+    },
   };
 }
+
+export const createSimpleRedisCacheClient = createSimpleRedisClient;
 
 function parseResp(buf: Buffer, expectedResponses = 1): unknown | undefined {
   let offset = 0;
   let result: unknown;
 
   for (let i = 0; i < expectedResponses; i++) {
-    if (offset >= buf.length) return undefined;
-    const prefix = String.fromCharCode(buf[offset]!);
-
-    const crlf = buf.indexOf("\r\n", offset);
-    if (crlf === -1) return undefined;
-
-    const line = buf.toString("utf8", offset + 1, crlf);
-    offset = crlf + 2;
-
-    switch (prefix) {
-      case "+": // Simple string
-        result = line;
-        break;
-      case "-": // Error
-        throw new Error(`Redis error: ${line}`);
-      case ":": // Integer
-        result = Number.parseInt(line, 10);
-        break;
-      case "$": {
-        // Bulk string
-        const len = Number.parseInt(line, 10);
-        if (len === -1) {
-          result = null;
-          break;
-        }
-        if (buf.length < offset + len + 2) return undefined;
-        result = buf.toString("utf8", offset, offset + len);
-        offset += len + 2;
-        break;
-      }
-      default:
-        throw new Error(`Unsupported RESP type prefix: '${prefix}'`);
-    }
+    const parsed = parseRespValue(buf, offset);
+    if (parsed === undefined) return undefined;
+    result = parsed.value;
+    offset = parsed.offset;
   }
 
   return result;
+}
+
+function parseRespValue(
+  buf: Buffer,
+  offset: number,
+): { value: unknown; offset: number } | undefined {
+  if (offset >= buf.length) return undefined;
+  const prefix = String.fromCharCode(buf[offset]!);
+
+  const crlf = buf.indexOf("\r\n", offset);
+  if (crlf === -1) return undefined;
+
+  const line = buf.toString("utf8", offset + 1, crlf);
+  const next = crlf + 2;
+
+  switch (prefix) {
+    case "+": // Simple string
+      return { value: line, offset: next };
+    case "-": // Error
+      throw new Error(`Redis error: ${line}`);
+    case ":": // Integer
+      return { value: Number.parseInt(line, 10), offset: next };
+    case "$": {
+      // Bulk string
+      const len = Number.parseInt(line, 10);
+      if (len === -1) {
+        return { value: null, offset: next };
+      }
+      if (buf.length < next + len + 2) return undefined;
+      const val = buf.toString("utf8", next, next + len);
+      return { value: val, offset: next + len + 2 };
+    }
+    case "*": {
+      // Array
+      const count = Number.parseInt(line, 10);
+      if (count === -1) {
+        return { value: null, offset: next };
+      }
+      const items: unknown[] = [];
+      let cursor = next;
+      for (let i = 0; i < count; i++) {
+        const item = parseRespValue(buf, cursor);
+        if (item === undefined) return undefined;
+        items.push(item.value);
+        cursor = item.offset;
+      }
+      return { value: items, offset: cursor };
+    }
+    default:
+      throw new Error(`Unsupported RESP type prefix: '${prefix}'`);
+  }
 }

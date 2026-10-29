@@ -57,9 +57,9 @@ rather than marking it complete.
 | [x]  | RM-10 | Bound serialization and add response-schema validation        | P1       | core/executor        | —           |
 | [x]  | RM-11 | Support form, multipart, and cookie parameters                | P2       | compiler/executor    | RM-05       |
 | [x]  | RM-12 | Classify non-removal contract changes as breaking in `diff`   | P1       | cli/compiler         | —           |
-| [ ]  | RM-13 | Remove implicit `"default"` tenant fallback                   | P1       | gateway/cli          | RM-01       |
-| [ ]  | RM-14 | Wire `ToolTracer` into runtime and server                     | P2       | core/server/config   | —           |
-| [ ]  | RM-15 | Wire Redis rate limiter through CLI and config                | P1       | config/cli           | —           |
+| [x]  | RM-13 | Remove implicit `"default"` tenant fallback                   | P1       | gateway/cli          | RM-01       |
+| [x]  | RM-14 | Wire `ToolTracer` into runtime and server                     | P2       | core/server/config   | —           |
+| [x]  | RM-15 | Wire Redis rate limiter through CLI and config                | P1       | config/cli           | —           |
 | [ ]  | RM-16 | Harden Redis client: TLS, ACL, pooling, reconnect             | P2       | cache-redis          | RM-15       |
 | [ ]  | RM-17 | Add secret interpolation and implement documented env vars    | P1       | config/cli           | —           |
 | [ ]  | RM-18 | Stamp generated projects with the real CLI version            | P1       | cli/release          | —           |
@@ -1185,6 +1185,8 @@ pnpm --filter @chainmcp/config test
 pnpm --filter @chainmcp/rate-limit test
 pnpm --filter @chainmcp/cli test
 ```
+
+**Status (2026-10-29):** Completed in RM-15. Redis rate limiter auto-constructs client from config URL or `CHAINMCP_REDIS_URL`, shares client instance with cache store, logs startup connection health, and enforces explicit failure policy (`fail-closed` by default, `fail-open` configurable). Validated with unit and CLI integration tests.
 
 ---
 
