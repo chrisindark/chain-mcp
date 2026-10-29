@@ -8,6 +8,7 @@ import type {
   RuntimeCacheOptions,
   Tokenizer,
   ToolDefinition,
+  ToolTracer,
 } from "@chainmcp/core";
 import type { HostResolver, UpstreamTransport } from "@chainmcp/executor";
 import type { UpstreamCredentialProvider } from "@chainmcp/auth";
@@ -95,6 +96,7 @@ export interface DynamicGatewayOptions {
   readonly tokenizer?: Tokenizer | undefined;
   readonly projector?: ResultProjector | undefined;
   readonly metrics?: MetricsSink | undefined;
+  readonly tracer?: ToolTracer | undefined;
   readonly logger?: Logger | undefined;
   readonly auditSink?: GatewayAuditSink | undefined;
   readonly resolveHost?: HostResolver | undefined;

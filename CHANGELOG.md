@@ -44,6 +44,16 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- **RM-14 wire ToolTracer into runtime and server:**
+  - Added OpenTelemetry distributed tracing configuration to `@chainmcp/config`: `analytics.openTelemetry.tracing: { enabled: boolean, sampleRatio: number }` and optional `endpoint: string`.
+  - Wired `ToolTracer` into `InMemoryToolRuntime` (`@chainmcp/core`), starting root spans named `tool.<name>` for resolved tool calls and emitting safe correlation attributes (`tool.name`, `mcp.tool_name`, `tenant.id`, `principal.id`, `mcp.request_id`, `contract.revision`, `outcome`, `duration_ms`, `cache.outcome`, `cached`).
+  - Added context propagation via `withSpan` for nested child spans (`cache.read`, `upstream.call`, `projection`, `cache.write`), ensuring they inherit parent trace IDs.
+  - Enforced strict payload exclusion: request headers, input arguments, and response bodies are never attached to span attributes.
+  - Scrubbed API tokens, Bearer/Basic credentials, and JWTs from error messages recorded on spans.
+  - Handled span lifecycle guarantees on success, error (`SpanStatusCode.ERROR`), and cancellation (`outcome: "cancelled"`).
+  - Wired `ToolTracer` into `buildRuntimeOptions`, `DynamicGateway`, and `gateway serve`.
+  - Added comprehensive test suites in `@chainmcp/analytics`, `@chainmcp/core`, and `@chainmcp/config`.
+  - Documented tracing vs metrics, OTLP endpoint configuration, sampling ratio, and local drop fallback behavior in `docs/analytics.md`, `CONFIGURATION.md`, `API_REFERENCE.md`, `ROADMAP.md`, and `REMEDIATION_PLAN.md`.
 - **RM-13 remove implicit "default" tenant fallback:**
   - Removed `"default"` fallback in CLI commands (`serve.ts`, `gateway-serve.ts`, `dev.ts`), server generator templates (`templates.ts`), and `@chainmcp/gateway`.
   - Added `TENANT_REQUIRED` error code to `RuntimeErrorCode` in `@chainmcp/core` and `SAFE_RUNTIME_ERROR_MESSAGES` in `@chainmcp/server`.

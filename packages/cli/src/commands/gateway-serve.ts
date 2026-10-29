@@ -6,6 +6,7 @@ import { parse as parseYaml } from "yaml";
 import {
   OpenTelemetryMetricsSink,
   RollingAnalyticsAggregator,
+  ToolTracer,
 } from "@chainmcp/analytics";
 import { OperationScopeAuthorizer } from "@chainmcp/auth";
 import {
@@ -131,7 +132,7 @@ export async function gatewayServeCommand(
       ? createLoggerFromConfig(config.logging)
       : undefined;
 
-  // 6. Metrics
+  // 6. Metrics & Tracing
   let metrics: MetricsSink | undefined;
   if (config.analytics.enabled) {
     if (config.analytics.openTelemetry.enabled) {
@@ -145,6 +146,21 @@ export async function gatewayServeCommand(
     }
   }
 
+  let tracer: ToolTracer | undefined;
+  if (
+    config.analytics.enabled &&
+    config.analytics.openTelemetry.enabled &&
+    config.analytics.openTelemetry.tracing.enabled
+  ) {
+    tracer = new ToolTracer({
+      tracerName: config.analytics.openTelemetry.serviceName,
+      sampleRatio: config.analytics.openTelemetry.tracing.sampleRatio,
+      ...(config.analytics.openTelemetry.endpoint !== undefined
+        ? { endpoint: config.analytics.openTelemetry.endpoint }
+        : {}),
+    });
+  }
+
   // 7. Dynamic Gateway instantiation
   const gateway = new DynamicGateway({
     authorizer,
@@ -154,6 +170,7 @@ export async function gatewayServeCommand(
     ...(projector !== undefined ? { projector } : {}),
     ...(logger !== undefined ? { logger } : {}),
     ...(metrics !== undefined ? { metrics } : {}),
+    ...(tracer !== undefined ? { tracer } : {}),
     defaultTimeoutMs: config.server.requestTimeoutMs,
   });
 

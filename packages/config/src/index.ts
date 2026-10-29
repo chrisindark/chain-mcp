@@ -47,6 +47,7 @@ import {
   MemorySink,
   OpenTelemetryMetricsSink,
   RollingAnalyticsAggregator,
+  ToolTracer,
   type LogSink,
 } from "@chainmcp/analytics";
 import type { NavigationLimits } from "@chainmcp/json-navigation";
@@ -354,6 +355,14 @@ export const AnalyticsConfigSchema = z
       .object({
         enabled: z.boolean().default(false),
         serviceName: z.string().min(1).default("chainmcp"),
+        endpoint: z.string().url().optional(),
+        tracing: z
+          .object({
+            enabled: z.boolean().default(false),
+            sampleRatio: z.number().min(0).max(1).default(0.1),
+          })
+          .strict()
+          .prefault({}),
       })
       .strict()
       .prefault({}),
@@ -1080,6 +1089,22 @@ export function buildRuntimeOptions(
     }
   }
 
+  let tracer = overrides?.tracer;
+  if (
+    tracer === undefined &&
+    config.analytics.enabled &&
+    config.analytics.openTelemetry.enabled &&
+    config.analytics.openTelemetry.tracing.enabled
+  ) {
+    tracer = new ToolTracer({
+      tracerName: config.analytics.openTelemetry.serviceName,
+      sampleRatio: config.analytics.openTelemetry.tracing.sampleRatio,
+      ...(config.analytics.openTelemetry.endpoint !== undefined
+        ? { endpoint: config.analytics.openTelemetry.endpoint }
+        : {}),
+    });
+  }
+
   let cache: RuntimeCacheOptions | undefined = overrides?.cache;
   if (cache === undefined && config.cache.enabled) {
     const store = createCacheStoreFromConfig(
@@ -1113,6 +1138,7 @@ export function buildRuntimeOptions(
     ...(rateLimiter !== undefined ? { rateLimiter } : {}),
     ...(logger !== undefined ? { logger } : {}),
     ...(metrics !== undefined ? { metrics } : {}),
+    ...(tracer !== undefined ? { tracer } : {}),
     defaultTimeoutMs:
       overrides?.defaultTimeoutMs ?? config.server.requestTimeoutMs,
     ...(overrides?.tenantMode !== undefined

@@ -1083,6 +1083,27 @@ pnpm --filter @chainmcp/gateway test
 ### Documentation
 
 - `docs/analytics.md`: tracing vs metrics.
+
+### Done when
+
+- Tracing configuration is parsed and wired through `buildRuntimeOptions` and `DynamicGateway`.
+- Spans named `tool.<name>` are created on tool calls with correlation attributes and no payload leaks.
+- Child spans (`cache.read`, `upstream.call`, `projection`, `cache.write`) inherit parent trace context.
+- Spans end on success, error, and cancellation.
+- All tests pass.
+
+### Validation
+
+```bash
+pnpm --filter @chainmcp/analytics test
+pnpm --filter @chainmcp/core test
+pnpm --filter @chainmcp/config test
+pnpm --filter @chainmcp/gateway test
+pnpm --filter @chainmcp/cli test
+```
+
+**Status (2026-10-29):** Complete. Wired `ToolTracer` into `@chainmcp/core` runtime, `@chainmcp/config` runtime options builder, `@chainmcp/gateway` dynamic runtime snapshotting, and `@chainmcp/cli` gateway-serve command. Added `analytics.openTelemetry.tracing` (`enabled`, `sampleRatio`) and `endpoint` to configuration schemas. Implemented root span `tool.<name>` with correlation attributes (`tool.name`, `mcp.tool_name`, `tenant.id`, `principal.id`, `mcp.request_id`, `contract.revision`, `outcome`, `duration_ms`, `cache.outcome`, `cached`) and child spans (`cache.read`, `upstream.call`, `projection`, `cache.write`) sharing trace context via OpenTelemetry `withSpan`. Enforced strict body/argument/header exclusion from traces and scrubbed secret tokens from error status messages. Handled cancellation cleanly with `outcome: "cancelled"`. Added unit and integration tests across core, analytics, and config. Synchronized `docs/analytics.md`, `CONFIGURATION.md`, `API_REFERENCE.md`, `ROADMAP.md`, and `CHANGELOG.md`.
+
 - `CONFIGURATION.md`: tracing block.
 - `ARCHITECTURE.md`: observability topology.
 - `API_REFERENCE.md`: public tracer types.

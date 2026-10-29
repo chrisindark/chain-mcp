@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { SpanStatusCode, type Span, type Tracer } from "@opentelemetry/api";
 import type { RuntimeEvent, ToolContext } from "@chainmcp/core";
 import {
   redactString,
@@ -264,8 +265,72 @@ describe("Analytics & Logging", () => {
   });
 
   describe("ToolTracer", () => {
-    it("creates, populates, and ends tool spans", () => {
-      const tracer = new ToolTracer();
+    it("creates, populates, and ends tool spans with expected attributes", () => {
+      const recorded: Array<{
+        name: string;
+        attributes: Record<string, unknown>;
+        ended: boolean;
+        status?: { code: number; message?: string } | undefined;
+        exceptions: unknown[];
+      }> = [];
+
+      const mockSpan = (
+        name: string,
+        initialAttrs: Record<string, unknown> = {},
+      ): Span => {
+        const item = {
+          name,
+          attributes: { ...initialAttrs },
+          ended: false,
+          status: undefined as { code: number; message?: string } | undefined,
+          exceptions: [] as unknown[],
+        };
+        recorded.push(item);
+        const span: Span = {
+          spanContext: () => ({
+            traceId: "trace-abc-123",
+            spanId: "span-xyz-789",
+            traceFlags: 1,
+          }),
+          setAttribute(k, v) {
+            item.attributes[k] = v;
+            return this;
+          },
+          setAttributes(attrs) {
+            Object.assign(item.attributes, attrs);
+            return this;
+          },
+          setStatus(status) {
+            item.status = status;
+            return this;
+          },
+          recordException(err) {
+            item.exceptions.push(err);
+            return this;
+          },
+          end() {
+            item.ended = true;
+          },
+          isRecording: () => true,
+          addEvent: () => span,
+          addLink: () => span,
+          addLinks: () => span,
+          updateName: () => span,
+        };
+        return span;
+      };
+
+      const mockTracer: Tracer = {
+        startSpan(name, options) {
+          return mockSpan(
+            name,
+            (options?.attributes as Record<string, unknown>) ?? {},
+          );
+        },
+        startActiveSpan: vi.fn(),
+      };
+
+      const tracer = new ToolTracer({ tracer: mockTracer });
       const ctx: ToolContext = {
         requestId: "r-1",
         tenantId: "t-1",
@@ -274,14 +339,102 @@ describe("Analytics & Logging", () => {
 
       const span = tracer.startToolSpan("my_tool", ctx, "rev-1");
       expect(span).toBeDefined();
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]?.name).toBe("tool.my_tool");
+      expect(recorded[0]?.attributes).toEqual({
+        "tool.name": "my_tool",
+        "mcp.tool_name": "my_tool",
+        "tenant.id": "t-1",
+        "principal.id": "p-1",
+        "mcp.request_id": "r-1",
+        "contract.revision": "rev-1",
+      });
 
-      expect(() => {
-        tracer.endToolSpan(span, { cacheOutcome: "hit" });
-      }).not.toThrow();
+      // Assert no input arguments or headers leaked into span attributes
+      expect(recorded[0]?.attributes).not.toHaveProperty("arguments");
+      expect(recorded[0]?.attributes).not.toHaveProperty("headers");
+      expect(recorded[0]?.attributes).not.toHaveProperty("body");
+
+      tracer.endToolSpan(span, {
+        outcome: "success",
+        durationMs: 42,
+        cacheOutcome: "hit",
+        cached: true,
+      });
+
+      expect(recorded[0]?.ended).toBe(true);
+      expect(recorded[0]?.attributes["outcome"]).toBe("success");
+      expect(recorded[0]?.attributes["duration_ms"]).toBe(42);
+      expect(recorded[0]?.attributes["cache.outcome"]).toBe("hit");
+      expect(recorded[0]?.attributes["cached"]).toBe(true);
     });
 
-    it("handles error spans gracefully", () => {
-      const tracer = new ToolTracer();
+    it("handles error spans gracefully and redacts sensitive error messages", () => {
+      const recorded: Array<{
+        name: string;
+        attributes: Record<string, unknown>;
+        ended: boolean;
+        status?: { code: number; message?: string } | undefined;
+        exceptions: unknown[];
+      }> = [];
+
+      const mockSpan = (
+        name: string,
+        initialAttrs: Record<string, unknown> = {},
+      ): Span => {
+        const item = {
+          name,
+          attributes: { ...initialAttrs },
+          ended: false,
+          status: undefined as { code: number; message?: string } | undefined,
+          exceptions: [] as unknown[],
+        };
+        recorded.push(item);
+        const span: Span = {
+          spanContext: () => ({
+            traceId: "trace-err-123",
+            spanId: "span-err-789",
+            traceFlags: 1,
+          }),
+          setAttribute(k, v) {
+            item.attributes[k] = v;
+            return this;
+          },
+          setAttributes(attrs) {
+            Object.assign(item.attributes, attrs);
+            return this;
+          },
+          setStatus(status) {
+            item.status = status;
+            return this;
+          },
+          recordException(err) {
+            item.exceptions.push(err);
+            return this;
+          },
+          end() {
+            item.ended = true;
+          },
+          isRecording: () => true,
+          addEvent: () => span,
+          addLink: () => span,
+          addLinks: () => span,
+          updateName: () => span,
+        };
+        return span;
+      };
+
+      const mockTracer: Tracer = {
+        startSpan(name, options) {
+          return mockSpan(
+            name,
+            (options?.attributes as Record<string, unknown>) ?? {},
+          );
+        },
+        startActiveSpan: vi.fn(),
+      };
+
+      const tracer = new ToolTracer({ tracer: mockTracer });
       const ctx: ToolContext = {
         requestId: "r-2",
         tenantId: "t-2",
@@ -289,9 +442,62 @@ describe("Analytics & Logging", () => {
       };
 
       const span = tracer.startToolSpan("failing_tool", ctx);
-      expect(() => {
-        tracer.endToolSpan(span, { error: new Error("Upstream failed") });
-      }).not.toThrow();
+      tracer.endToolSpan(span, {
+        error: new Error(
+          "Failed to authenticate with Bearer secret-token-abcdef123456",
+        ),
+        outcome: "error",
+        durationMs: 15,
+      });
+
+      expect(recorded[0]?.ended).toBe(true);
+      expect(recorded[0]?.status?.code).toBe(SpanStatusCode.ERROR);
+      // Status message must NOT contain raw Bearer token
+      expect(recorded[0]?.status?.message).not.toContain(
+        "secret-token-abcdef123456",
+      );
+      expect(recorded[0]?.status?.message).toContain("[REDACTED]");
+    });
+
+    it("supports child spans and context propagation", () => {
+      const tracer = new ToolTracer();
+      const ctx: ToolContext = {
+        requestId: "r-3",
+        tenantId: "t-3",
+        principal: { id: "p-3", scopes: [] },
+      };
+
+      const parentSpan = tracer.startToolSpan("parent_tool", ctx);
+      expect(parentSpan).toBeDefined();
+
+      let childTraceId: string | undefined;
+      tracer.withSpan(parentSpan, () => {
+        const childSpan = tracer.startChildSpan("upstream.call", {
+          "upstream.service": "petstore",
+        });
+        childTraceId = childSpan.spanContext().traceId;
+        tracer.endSpan(childSpan, { outcome: "success", durationMs: 12 });
+      });
+
+      // Child span in withSpan inherits the parent's traceId
+      expect(childTraceId).toBe(parentSpan.spanContext().traceId);
+      tracer.endToolSpan(parentSpan, { outcome: "success", durationMs: 25 });
+    });
+
+    it("respects sampleRatio", () => {
+      // sampleRatio: 0 drops all spans
+      const neverTracer = new ToolTracer({ sampleRatio: 0 });
+      const ctx: ToolContext = {
+        requestId: "r-4",
+        tenantId: "t-4",
+        principal: { id: "p-4", scopes: [] },
+      };
+
+      const sampledOut = neverTracer.startToolSpan("sampled_tool", ctx);
+      // TraceId of dropped/wrapped context is all zeros
+      expect(sampledOut.spanContext().traceId).toBe(
+        "00000000000000000000000000000000",
+      );
     });
   });
 

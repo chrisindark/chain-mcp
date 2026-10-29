@@ -3,13 +3,17 @@ import {
   auditInputSchema,
   CACHE_KEY_VERSION,
   createCacheKey,
+  createFieldProjector,
   InMemoryToolRuntime,
+  InMemoryCacheStore,
   MAX_CACHE_KEY_INPUT_BYTES,
   MAX_SCHEMA_DEPTH,
   RuntimeError,
   type ToolContext,
   type ToolDefinition,
   type ToolSource,
+  type ToolSpan,
+  type ToolTracer,
   validateJsonSchema,
 } from "../src/index.js";
 
@@ -1805,6 +1809,204 @@ describe("tenant binding and tenancy modes (ADR 0008)", () => {
         getTools: () => [invalidTool],
       };
       await expect(runtime.registerSource(source)).rejects.toThrow(TypeError);
+    });
+  });
+
+  describe("tool tracer integration", () => {
+    it("starts tool span with name, context, and revision, propagates context, and ends span on success", async () => {
+      const startToolSpan = vi.fn();
+      const endToolSpan = vi.fn();
+      const withSpan = vi.fn((span, fn) => fn());
+      const mockSpan: ToolSpan = {
+        spanContext: () => ({ traceId: "trace-1", spanId: "span-1" }),
+        end: vi.fn(),
+      };
+      startToolSpan.mockReturnValue(mockSpan);
+
+      const tracer: ToolTracer = {
+        startToolSpan,
+        endToolSpan,
+        withSpan,
+      };
+
+      const runtime = new InMemoryToolRuntime({ tracer });
+      const myTool = {
+        ...tool(async () => ({ ok: true })),
+        contractRevision: "rev-99",
+      };
+      runtime.register(myTool);
+
+      const ctx = tenantContext("tenant-test");
+      const result = await runtime.callTool("lookup_item", { id: "1" }, ctx);
+      expect(result).toEqual({ ok: true });
+
+      expect(startToolSpan).toHaveBeenCalledOnce();
+      expect(startToolSpan).toHaveBeenCalledWith("lookup_item", ctx, "rev-99");
+      expect(withSpan).toHaveBeenCalledOnce();
+      expect(withSpan).toHaveBeenCalledWith(mockSpan, expect.any(Function));
+      expect(endToolSpan).toHaveBeenCalledOnce();
+      expect(endToolSpan).toHaveBeenCalledWith(
+        mockSpan,
+        expect.objectContaining({
+          outcome: "success",
+          cached: false,
+        }),
+      );
+    });
+
+    it("ends span with error outcome and passes error on failure", async () => {
+      const startToolSpan = vi.fn();
+      const endToolSpan = vi.fn();
+      const mockSpan: ToolSpan = {
+        spanContext: () => ({ traceId: "trace-err", spanId: "span-err" }),
+        end: vi.fn(),
+      };
+      startToolSpan.mockReturnValue(mockSpan);
+
+      const tracer: ToolTracer = {
+        startToolSpan,
+        endToolSpan,
+      };
+
+      const runtime = new InMemoryToolRuntime({ tracer });
+      const failingTool = tool(async () => {
+        throw new Error("Tool execution failed");
+      });
+      runtime.register(failingTool);
+
+      const ctx = tenantContext("tenant-err");
+      await expect(
+        runtime.callTool("lookup_item", { id: "1" }, ctx),
+      ).rejects.toThrow("Tool 'lookup_item' failed");
+
+      expect(startToolSpan).toHaveBeenCalledOnce();
+      expect(endToolSpan).toHaveBeenCalledOnce();
+      expect(endToolSpan).toHaveBeenCalledWith(
+        mockSpan,
+        expect.objectContaining({
+          outcome: "error",
+          error: expect.any(Error),
+        }),
+      );
+    });
+
+    it("ends span with cancelled outcome when context signal is aborted", async () => {
+      const startToolSpan = vi.fn();
+      const endToolSpan = vi.fn();
+      const mockSpan: ToolSpan = {
+        spanContext: () => ({ traceId: "trace-abort", spanId: "span-abort" }),
+        end: vi.fn(),
+      };
+      startToolSpan.mockReturnValue(mockSpan);
+
+      const tracer: ToolTracer = {
+        startToolSpan,
+        endToolSpan,
+      };
+
+      const runtime = new InMemoryToolRuntime({ tracer });
+      const slowTool = tool(async () => {
+        return new Promise((resolve) => setTimeout(resolve, 50));
+      });
+      runtime.register(slowTool);
+
+      const controller = new AbortController();
+      controller.abort();
+
+      const ctx = {
+        ...tenantContext("tenant-abort"),
+        signal: controller.signal,
+      };
+
+      await expect(
+        runtime.callTool("lookup_item", { id: "1" }, ctx),
+      ).rejects.toThrow();
+
+      expect(startToolSpan).toHaveBeenCalledOnce();
+      expect(endToolSpan).toHaveBeenCalledOnce();
+      expect(endToolSpan).toHaveBeenCalledWith(
+        mockSpan,
+        expect.objectContaining({
+          outcome: "cancelled",
+        }),
+      );
+    });
+
+    it("creates and ends child spans for cache, upstream call, and projection", async () => {
+      const childSpans: Array<{ name: string; details?: unknown }> = [];
+      const startChildSpan = vi.fn((name) => {
+        const span: ToolSpan = {
+          spanContext: () => ({ traceId: "t-child", spanId: `s-${name}` }),
+          end: vi.fn(),
+        };
+        childSpans.push({ name });
+        return span;
+      });
+      const endSpan = vi.fn((span, details) => {
+        const found = childSpans.find(
+          (s) => `s-${s.name}` === span.spanContext().spanId,
+        );
+        if (found) {
+          found.details = details;
+        }
+      });
+      const mockSpan: ToolSpan = {
+        spanContext: () => ({ traceId: "t-root", spanId: "s-root" }),
+        end: vi.fn(),
+      };
+      const tracer: ToolTracer = {
+        startToolSpan: vi.fn().mockReturnValue(mockSpan),
+        endToolSpan: vi.fn(),
+        startChildSpan,
+        endSpan,
+      };
+
+      const store = new InMemoryCacheStore();
+      const runtime = new InMemoryToolRuntime({
+        tracer,
+        cache: {
+          store,
+          authorizationPartition: () => "public",
+        },
+        projector: createFieldProjector(),
+      });
+
+      const cachedTool = {
+        ...tool(async () => ({ data: "value", secret: "drop" })),
+        contractRevision: "rev-cache-1",
+        cache: { ttlSeconds: 60 },
+        output: { fields: { include: ["data"] } },
+      };
+      runtime.register(cachedTool);
+
+      const ctx = tenantContext("t-1");
+      const res = await runtime.callTool("lookup_item", { id: "1" }, ctx);
+      expect(res).toEqual({ data: "value" });
+
+      const names = childSpans.map((s) => s.name);
+      expect(names).toContain("cache.read");
+      expect(names).toContain("upstream.call");
+      expect(names).toContain("projection");
+      expect(names).toContain("cache.write");
+      expect(endSpan).toHaveBeenCalledTimes(4);
+    });
+
+    it("does not start tool span when tool cannot be found", async () => {
+      const startToolSpan = vi.fn();
+      const endToolSpan = vi.fn();
+      const tracer: ToolTracer = {
+        startToolSpan,
+        endToolSpan,
+      };
+      const runtime = new InMemoryToolRuntime({ tracer });
+      const ctx = tenantContext("t-1");
+      await expect(
+        runtime.callTool("nonexistent", {}, ctx),
+      ).rejects.toMatchObject({
+        code: "TOOL_NOT_FOUND",
+      });
+      expect(startToolSpan).not.toHaveBeenCalled();
+      expect(endToolSpan).not.toHaveBeenCalled();
     });
   });
 });

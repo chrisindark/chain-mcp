@@ -632,6 +632,60 @@ The runtime injects `RuntimeOptions.logger` and emits correlated lifecycle event
 - Administrative cache invalidations call `audit`.
 - All logger calls are completely isolated: throwing loggers and rejected promises never alter the tool result or surface to clients.
 
+### Tracing Interfaces (`@chainmcp/core`)
+
+```ts
+export interface ToolSpan {
+  readonly spanContext: () => {
+    readonly traceId: string;
+    readonly spanId: string;
+    readonly traceFlags?: number | undefined;
+  };
+  setAttribute?(key: string, value: string | number | boolean): this;
+  setAttributes?(attributes: Record<string, string | number | boolean>): this;
+  recordException?(exception: unknown): this;
+  end(): void;
+}
+
+export interface ToolTracer {
+  startToolSpan(
+    toolName: string,
+    context: ToolContext,
+    contractRevision?: string | undefined,
+  ): ToolSpan;
+  endToolSpan(
+    span: ToolSpan,
+    details?: {
+      readonly error?: unknown;
+      readonly outcome?: "success" | "error" | "cancelled" | undefined;
+      readonly durationMs?: number | undefined;
+      readonly cacheOutcome?: "hit" | "miss" | "bypass" | undefined;
+      readonly cached?: boolean | undefined;
+    },
+  ): void;
+  startChildSpan?(
+    name: string,
+    attributes?: Record<string, string | number | boolean> | undefined,
+  ): ToolSpan;
+  endSpan?(
+    span: ToolSpan,
+    details?: {
+      readonly error?: unknown;
+      readonly outcome?: "success" | "error" | "cancelled" | undefined;
+      readonly durationMs?: number | undefined;
+    },
+  ): void;
+  withSpan?<T>(span: ToolSpan, fn: () => T): T;
+}
+```
+
+When configured with `RuntimeOptions.tracer`, the runtime automatically instruments tool execution:
+
+- Creates a root span `tool.<name>` for every resolved tool invocation.
+- Propagates span context via `withSpan` to child operations (`cache.read`, `upstream.call`, `projection`, `cache.write`).
+- Concludes the span on success, failure (with scrubbed error message), or cancellation (`outcome: "cancelled"`).
+- Guarantees zero payload, argument, or header leaks into span attributes.
+
 ## `@chainmcp/compiler`
 
 `@chainmcp/compiler` parses and validates OpenAPI 3.0 and 3.1 documents and emits deterministic operation metadata, including parameter bindings, request-body metadata, response schemas, and authentication policies. The compiler itself does not execute anything. `@chainmcp/executor` turns an emitted `CompiledOperation` into a runnable `ToolDefinition` with bounded upstream I/O and an explicit destination policy. Credential injection, response validation, and generated-server/CLI wiring remain unimplemented.
@@ -1404,17 +1458,36 @@ export class OpenTelemetryMetricsSink implements MetricsSink {
   record(event: RuntimeEvent): void;
 }
 
-export class ToolTracer {
+export class ToolTracer implements CoreToolTracer {
   constructor(options?: ToolTracerOptions);
   startToolSpan(
     toolName: string,
     context: ToolContext,
-    contractRevision?: string,
+    contractRevision?: string | undefined,
   ): Span;
   endToolSpan(
     span: Span,
-    details?: { error?: unknown; cacheOutcome?: string },
+    details?: {
+      readonly error?: unknown;
+      readonly outcome?: "success" | "error" | "cancelled" | undefined;
+      readonly durationMs?: number | undefined;
+      readonly cacheOutcome?: "hit" | "miss" | "bypass" | undefined;
+      readonly cached?: boolean | undefined;
+    },
   ): void;
+  startChildSpan(
+    name: string,
+    attributes?: Record<string, string | number | boolean> | undefined,
+  ): Span;
+  endSpan(
+    span: Span,
+    details?: {
+      readonly error?: unknown;
+      readonly outcome?: "success" | "error" | "cancelled" | undefined;
+      readonly durationMs?: number | undefined;
+    },
+  ): void;
+  withSpan<T>(span: Span, fn: () => T): T;
 }
 
 export class RollingAnalyticsAggregator implements MetricsSink {
@@ -1513,7 +1586,7 @@ export function createNavigationLimitsFromConfig(
 ### Wiring Helpers
 
 - `buildExecutorOptions(config, overrides)` maps `config.contract.baseUrl` (or fallback to `allowedUpstreamHosts[0]`) to `baseUrl`, `security.allowedUpstreamHosts` to `allowedHosts`, `security.allowInsecureHttp` to `allowInsecureHttp`, `server.requestTimeoutMs` to `timeoutMs`, `server.maxResponseBytes` to `maxResponseBytes`, `server.validateResponses` to `validateResponses`, `config.logging` to `logger`, and `auth.upstream` to `credentialProvider`. Fails closed if `allowedUpstreamHosts` is empty or no base URL can be resolved.
-- `buildRuntimeOptions(config, overrides, factoryOptions)` maps `security.requireInboundAuth` / `auth.inbound` to `authorizer`, `config.rateLimit` to `rateLimiter`, `config.logging` to `logger`, `config.analytics` to `metrics`, `server.requestTimeoutMs` to `defaultTimeoutMs`, `server.maxToolInputBytes` to `maxToolInputBytes`, and `server.maxResponseBytes` to `maxResponseBytes`.
+- `buildRuntimeOptions(config, overrides, factoryOptions)` maps `security.requireInboundAuth` / `auth.inbound` to `authorizer`, `config.rateLimit` to `rateLimiter`, `config.logging` to `logger`, `config.analytics` to `metrics`, `config.analytics.openTelemetry.tracing` to `tracer` (`ToolTracer`), `server.requestTimeoutMs` to `defaultTimeoutMs`, `server.maxToolInputBytes` to `maxToolInputBytes`, and `server.maxResponseBytes` to `maxResponseBytes`.
 
 ## Error codes
 

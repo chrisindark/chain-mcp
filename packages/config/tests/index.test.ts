@@ -33,6 +33,7 @@ import {
   OpenTelemetryMetricsSink,
   RollingAnalyticsAggregator,
   StructuredLogger,
+  ToolTracer,
 } from "@chainmcp/analytics";
 
 const toolContext = (tenantId = "tenant-1"): ToolContext => ({
@@ -763,7 +764,36 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
         openTelemetry: {
           enabled: false,
           serviceName: "chainmcp",
+          tracing: {
+            enabled: false,
+            sampleRatio: 0.1,
+          },
         },
+      });
+    });
+
+    it("parses custom openTelemetry tracing configuration and endpoint", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test",
+        analytics: {
+          openTelemetry: {
+            enabled: true,
+            serviceName: "custom-service",
+            endpoint: "http://localhost:4318/v1/traces",
+            tracing: {
+              enabled: true,
+              sampleRatio: 0.5,
+            },
+          },
+        },
+      });
+      expect(config.analytics.openTelemetry.endpoint).toBe(
+        "http://localhost:4318/v1/traces",
+      );
+      expect(config.analytics.openTelemetry.tracing).toEqual({
+        enabled: true,
+        sampleRatio: 0.5,
       });
     });
 
@@ -780,6 +810,7 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
       const runtimeOpts = buildRuntimeOptions(config);
       expect(runtimeOpts.metrics).toBeInstanceOf(RollingAnalyticsAggregator);
       expect(runtimeOpts.logger).toBeInstanceOf(StructuredLogger);
+      expect(runtimeOpts.tracer).toBeUndefined();
     });
 
     it("wires OpenTelemetryMetricsSink when openTelemetry is enabled", () => {
@@ -794,6 +825,33 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
 
       const runtimeOpts = buildRuntimeOptions(config);
       expect(runtimeOpts.metrics).toBeInstanceOf(OpenTelemetryMetricsSink);
+      expect(runtimeOpts.tracer).toBeUndefined();
+    });
+
+    it("wires ToolTracer when openTelemetry and tracing are both enabled", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test",
+        analytics: {
+          enabled: true,
+          openTelemetry: {
+            enabled: true,
+            serviceName: "test-service",
+            endpoint: "http://localhost:4318/v1/traces",
+            tracing: {
+              enabled: true,
+              sampleRatio: 0.75,
+            },
+          },
+        },
+      });
+
+      const runtimeOpts = buildRuntimeOptions(config);
+      expect(runtimeOpts.tracer).toBeInstanceOf(ToolTracer);
+      expect(runtimeOpts.tracer).toHaveProperty(
+        "endpoint",
+        "http://localhost:4318/v1/traces",
+      );
     });
   });
 
