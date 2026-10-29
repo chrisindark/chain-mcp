@@ -14,9 +14,12 @@ import {
   createCacheStoreFromConfig,
   createLoggerFromConfig,
   createRateLimiterFromConfig,
+  createSimpleRedisClient,
   createTokenizerFromConfig,
+  logRateLimiterStartup,
   parseGatewayConfig,
   type GatewayConfig,
+  type RedisRateLimitClient,
 } from "@chainmcp/config";
 import {
   createFieldProjector,
@@ -99,13 +102,52 @@ export async function gatewayServeCommand(
     createAuthorizerFromConfig(config.auth.inbound) ??
     new OperationScopeAuthorizer();
 
-  // 2. Rate limiter
-  const rateLimiter = createRateLimiterFromConfig(config.rateLimit);
+  // 2. Logger
+  const logger =
+    config.logging.level !== "silent"
+      ? createLoggerFromConfig(config.logging)
+      : undefined;
 
-  // 3. Cache
+  // 3. Shared Redis client if both rateLimit and cache are Redis-backed
+  const rateLimitUsesRedis =
+    config.rateLimit.enabled && config.rateLimit.provider === "redis";
+  const cacheUsesRedis =
+    config.cache.enabled && config.cache.provider === "redis";
+
+  let sharedRedisClient: ReturnType<typeof createSimpleRedisClient> | undefined;
+  if (rateLimitUsesRedis || cacheUsesRedis) {
+    const redisUrl =
+      config.rateLimit.redis.url ??
+      config.cache.redis.url ??
+      process.env.CHAINMCP_REDIS_URL;
+    if (redisUrl) {
+      sharedRedisClient = createSimpleRedisClient(redisUrl);
+    }
+  }
+
+  // 4. Rate limiter
+  const rateLimiter = createRateLimiterFromConfig(
+    config.rateLimit,
+    sharedRedisClient
+      ? { redisClient: sharedRedisClient, ...(logger ? { logger } : {}) }
+      : logger
+        ? { logger }
+        : undefined,
+  );
+
+  await logRateLimiterStartup(config.rateLimit, {
+    ...(logger ? { logger } : {}),
+    client: (rateLimiter as { client?: RedisRateLimitClient } | undefined)
+      ?.client,
+  });
+
+  // 5. Cache
   let cache: RuntimeCacheOptions | undefined;
   if (config.cache.enabled) {
-    const store = createCacheStoreFromConfig(config.cache);
+    const store = createCacheStoreFromConfig(
+      config.cache,
+      sharedRedisClient ? { redisClient: sharedRedisClient } : undefined,
+    );
     if (store) {
       cache = {
         store,
@@ -118,7 +160,7 @@ export async function gatewayServeCommand(
     }
   }
 
-  // 4. Tokenizer & Projector
+  // 6. Tokenizer & Projector
   const tokenizer = config.tokenMetrics.enabled
     ? createTokenizerFromConfig(config.tokenMetrics)
     : undefined;
@@ -126,13 +168,7 @@ export async function gatewayServeCommand(
     ? createFieldProjector()
     : undefined;
 
-  // 5. Logger
-  const logger =
-    config.logging.level !== "silent"
-      ? createLoggerFromConfig(config.logging)
-      : undefined;
-
-  // 6. Metrics & Tracing
+  // 7. Metrics & Tracing
   let metrics: MetricsSink | undefined;
   if (config.analytics.enabled) {
     if (config.analytics.openTelemetry.enabled) {

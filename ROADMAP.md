@@ -189,7 +189,7 @@ evidence combines unit tests, executor credential and egress tests, and an opt-i
 suite that runs the Lua scripts against a real Redis (CI job `redis-integration`); the default
 `pnpm check` path stays hermetic.
 
-`@chainmcp/config` wires `security.allowedUpstreamHosts` directly into executor options with strict hostname syntax validation (no schemes, ports, or wildcards), and wires `rateLimit` and `auth` (inbound authorizers and upstream providers) into runtime and executor options via factory helpers (`buildExecutorOptions`, `buildRuntimeOptions`, `createRateLimiterFromConfig`, and `createUpstreamCredentialProviderFromConfig`).
+`@chainmcp/config` wires `security.allowedUpstreamHosts` directly into executor options with strict hostname syntax validation (no schemes, ports, or wildcards), and wires `rateLimit` and `auth` (inbound authorizers and upstream providers) into runtime and executor options via factory helpers (`buildExecutorOptions`, `buildRuntimeOptions`, `createRateLimiterFromConfig`, and `createUpstreamCredentialProviderFromConfig`). `createRateLimiterFromConfig` auto-constructs zero-dependency Redis clients from `rateLimit.redis.url` or `CHAINMCP_REDIS_URL`, shares client instances with `@chainmcp/cache-redis`, logs startup reachability and quota health without secrets, and enforces an explicit outage failure policy (`fail-closed` default, `fail-open` configurable) (RM-15).
 
 ## Milestone 6 — JSON navigation, logging, and analytics
 

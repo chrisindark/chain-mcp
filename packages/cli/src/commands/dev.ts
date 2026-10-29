@@ -9,8 +9,10 @@ import {
   buildExecutorOptions,
   buildRuntimeOptions,
   createNavigationLimitsFromConfig,
+  logRateLimiterStartup,
   parseConfig,
   type ChainMcpConfig,
+  type RedisRateLimitClient,
 } from "@chainmcp/config";
 import { InMemoryToolRuntime, type ToolDefinition } from "@chainmcp/core";
 import { createUpstreamExecutor } from "@chainmcp/executor";
@@ -70,6 +72,13 @@ export async function devCommand(options: DevOptions): Promise<DevResult> {
 
   const runtimeOptions = buildRuntimeOptions(config);
   const runtime = new InMemoryToolRuntime(runtimeOptions);
+  await logRateLimiterStartup(config.rateLimit, {
+    logger: runtimeOptions.logger,
+    client: (
+      runtimeOptions.rateLimiter as
+        { client?: RedisRateLimitClient } | undefined
+    )?.client,
+  });
 
   // 2. Register tools provided directly (for programmatic invocation and testing)
   if (options.tools && options.tools.length > 0) {

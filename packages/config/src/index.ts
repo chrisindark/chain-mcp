@@ -16,8 +16,18 @@ import {
 import {
   RedisCacheStore,
   createSimpleRedisCacheClient,
+  createSimpleRedisClient,
   type RedisCacheClient,
+  type SimpleRedisClient,
 } from "@chainmcp/cache-redis";
+
+export {
+  createSimpleRedisClient,
+  createSimpleRedisCacheClient,
+  type RedisCacheClient,
+  type RedisRateLimitClient,
+  type SimpleRedisClient,
+};
 import {
   CompositeCredentialProvider,
   EncryptedSecretStore,
@@ -90,6 +100,10 @@ export const RateLimitConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
     provider: z.enum(["memory", "redis"]).default("memory"),
+    failurePolicy: z
+      .enum(["fail-closed", "fail-open"])
+      .optional()
+      .default("fail-closed"),
     requestsPerMinute: z.number().int().positive().optional(),
     concurrency: z.number().int().positive().optional(),
     globalQuota: QuotaPolicyConfigSchema.optional(),
@@ -102,6 +116,7 @@ export const RateLimitConfigSchema = z
       .optional(),
     redis: z
       .object({
+        url: z.string().optional(),
         keyPrefix: z.string().min(1).default("chainmcp:ratelimit:"),
         commandTimeoutMs: z
           .number()
@@ -633,8 +648,10 @@ export function safeParseGatewayConfig(
 }
 
 export interface RateLimiterFactoryOptions {
-  redisClient?: RedisRateLimitClient;
-  now?: () => number;
+  redisClient?: RedisRateLimitClient | undefined;
+  redisUrl?: string | undefined;
+  now?: (() => number) | undefined;
+  logger?: Logger | undefined;
 }
 
 export function createRateLimiterFromConfig(
@@ -664,15 +681,25 @@ export function createRateLimiterFromConfig(
       : undefined;
 
   if (config.provider === "redis") {
-    if (!options?.redisClient) {
-      throw new TypeError(
-        "Distributed rate limiter requires a Redis client (options.redisClient)",
-      );
+    let client = options?.redisClient;
+    if (!client) {
+      const url =
+        options?.redisUrl ??
+        (config.redis.url?.trim() || undefined) ??
+        process.env.CHAINMCP_REDIS_URL;
+      if (!url) {
+        throw new TypeError(
+          "Redis rate limiter requires a Redis client (options.redisClient), 'rateLimit.redis.url', or environment variable 'CHAINMCP_REDIS_URL'",
+        );
+      }
+      client = createSimpleRedisClient(url);
     }
     return new DistributedRateLimiter({
-      client: options.redisClient,
+      client,
       keyPrefix: config.redis.keyPrefix,
       commandTimeoutMs: config.redis.commandTimeoutMs,
+      failurePolicy: config.failurePolicy ?? "fail-closed",
+      ...(options?.logger !== undefined ? { logger: options.logger } : {}),
       ...(globalQuota !== undefined ? { globalQuota } : {}),
       ...(globalConcurrency !== undefined ? { globalConcurrency } : {}),
       ...(config.tenantQuota !== undefined
@@ -1059,13 +1086,6 @@ export function buildRuntimeOptions(
       ? createAuthorizerFromConfig(config.auth.inbound)
       : undefined);
 
-  const rateLimiter =
-    overrides?.rateLimiter ??
-    createRateLimiterFromConfig(
-      config.rateLimit,
-      factoryOptions?.rateLimiterOptions,
-    );
-
   const logger =
     overrides?.logger ??
     (config.logging.level !== "silent"
@@ -1075,6 +1095,68 @@ export function buildRuntimeOptions(
           auditSink: factoryOptions?.auditSink,
         })
       : undefined);
+
+  const rateLimitUsesRedis =
+    config.rateLimit.enabled && config.rateLimit.provider === "redis";
+  const cacheUsesRedis =
+    config.cache.enabled && config.cache.provider === "redis";
+
+  const passedLimiterClient = factoryOptions?.rateLimiterOptions?.redisClient;
+  const passedCacheClient = factoryOptions?.cacheStoreOptions?.redisClient;
+
+  let sharedClient: SimpleRedisClient | undefined;
+  if (
+    !passedLimiterClient &&
+    !passedCacheClient &&
+    (rateLimitUsesRedis || cacheUsesRedis)
+  ) {
+    const redisUrl =
+      factoryOptions?.rateLimiterOptions?.redisUrl ??
+      (config.rateLimit.redis.url?.trim() || undefined) ??
+      factoryOptions?.cacheStoreOptions?.redisUrl ??
+      (config.cache.redis.url?.trim() || undefined) ??
+      factoryOptions?.env?.CHAINMCP_REDIS_URL ??
+      process.env.CHAINMCP_REDIS_URL;
+
+    if (redisUrl) {
+      sharedClient = createSimpleRedisClient(redisUrl);
+    }
+  } else if (
+    passedLimiterClient &&
+    !passedCacheClient &&
+    cacheUsesRedis &&
+    "get" in passedLimiterClient &&
+    "set" in passedLimiterClient &&
+    "delete" in passedLimiterClient
+  ) {
+    sharedClient = passedLimiterClient as SimpleRedisClient;
+  } else if (
+    passedCacheClient &&
+    !passedLimiterClient &&
+    rateLimitUsesRedis &&
+    "eval" in passedCacheClient
+  ) {
+    sharedClient = passedCacheClient as SimpleRedisClient;
+  }
+
+  const rateLimiterOptions: RateLimiterFactoryOptions = {
+    ...factoryOptions?.rateLimiterOptions,
+    ...((passedLimiterClient ?? sharedClient)
+      ? { redisClient: passedLimiterClient ?? sharedClient }
+      : {}),
+    ...(logger ? { logger } : {}),
+  };
+
+  const cacheStoreOptions: CacheStoreFactoryOptions = {
+    ...factoryOptions?.cacheStoreOptions,
+    ...((passedCacheClient ?? sharedClient)
+      ? { redisClient: passedCacheClient ?? sharedClient }
+      : {}),
+  };
+
+  const rateLimiter =
+    overrides?.rateLimiter ??
+    createRateLimiterFromConfig(config.rateLimit, rateLimiterOptions);
 
   let metrics: MetricsSink | undefined = overrides?.metrics;
   if (metrics === undefined && config.analytics.enabled) {
@@ -1107,10 +1189,7 @@ export function buildRuntimeOptions(
 
   let cache: RuntimeCacheOptions | undefined = overrides?.cache;
   if (cache === undefined && config.cache.enabled) {
-    const store = createCacheStoreFromConfig(
-      config.cache,
-      factoryOptions?.cacheStoreOptions,
-    );
+    const store = createCacheStoreFromConfig(config.cache, cacheStoreOptions);
     if (store) {
       cache = {
         store,
@@ -1161,4 +1240,91 @@ export function buildRuntimeOptions(
     maxResponseBytes:
       overrides?.maxResponseBytes ?? config.server.maxResponseBytes,
   };
+}
+
+export interface RateLimiterStartupHealth {
+  provider: "memory" | "redis";
+  reachability: "reachable" | "unreachable" | "local";
+  keyPrefix: string;
+  quotaSummary: {
+    globalQuota?: QuotaPolicyConfig | undefined;
+    globalConcurrency?: number | undefined;
+    tenantQuotaConfigured: boolean;
+    tenantConcurrencyConfigured: boolean;
+    toolQuotaCount: number;
+    toolConcurrencyCount: number;
+  };
+}
+
+export async function logRateLimiterStartup(
+  config: RateLimitConfig,
+  options?: {
+    logger?: Logger | undefined;
+    client?: RedisRateLimitClient | undefined;
+  },
+): Promise<RateLimiterStartupHealth | undefined> {
+  if (!config.enabled) {
+    return undefined;
+  }
+
+  const globalQuota =
+    config.globalQuota ??
+    (config.requestsPerMinute !== undefined
+      ? { maxRequests: config.requestsPerMinute, windowMs: 60_000 }
+      : undefined);
+  const globalConcurrency = config.globalConcurrency ?? config.concurrency;
+
+  const quotaSummary = {
+    globalQuota,
+    globalConcurrency,
+    tenantQuotaConfigured: config.tenantQuota !== undefined,
+    tenantConcurrencyConfigured: config.tenantConcurrency !== undefined,
+    toolQuotaCount: Object.keys(config.toolQuota ?? {}).length,
+    toolConcurrencyCount: Object.keys(config.toolConcurrency ?? {}).length,
+  };
+
+  if (config.provider === "memory") {
+    const health: RateLimiterStartupHealth = {
+      provider: "memory",
+      reachability: "local",
+      keyPrefix: "in-memory",
+      quotaSummary,
+    };
+    options?.logger?.info(
+      "Rate limiter initialized",
+      health as unknown as Record<string, unknown>,
+    );
+    return health;
+  }
+
+  let reachability: "reachable" | "unreachable" = "unreachable";
+  if (options?.client && typeof options.client.eval === "function") {
+    try {
+      await options.client.eval("return 1", [], []);
+      reachability = "reachable";
+    } catch {
+      reachability = "unreachable";
+    }
+  }
+
+  const health: RateLimiterStartupHealth = {
+    provider: "redis",
+    reachability,
+    keyPrefix: config.redis.keyPrefix,
+    quotaSummary,
+  };
+
+  if (reachability === "reachable") {
+    options?.logger?.info(
+      "Rate limiter initialized",
+      health as unknown as Record<string, unknown>,
+    );
+  } else {
+    options?.logger?.warn(
+      "Rate limiter initialized (Redis unreachable)",
+      health as unknown as Record<string, unknown>,
+    );
+  }
+
+  return health;
 }

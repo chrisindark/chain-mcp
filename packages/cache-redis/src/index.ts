@@ -55,7 +55,7 @@ export const DEFAULT_REDIS_COMMAND_TIMEOUT_MS = 1_000;
  * cache bypass or miss rather than an invocation failure.
  */
 export class RedisCacheStore implements CacheStore {
-  private readonly client: RedisCacheClient;
+  public readonly client: RedisCacheClient;
   private readonly keyPrefix: string;
   private readonly maxEntryBytes: number;
   private readonly maxTtlSeconds: number;

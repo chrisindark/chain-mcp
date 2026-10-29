@@ -44,6 +44,15 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- **RM-15 wire Redis rate limiter through CLI and config:**
+  - Made `createRateLimiterFromConfig` self-sufficient when `provider: "redis"`, auto-constructing zero-dependency RESP2 Redis clients from `options.redisClient`, `options.redisUrl`, `config.redis.url`, or `process.env.CHAINMCP_REDIS_URL`. If none is supplied, startup fails fast naming both keys.
+  - Added `rateLimit.redis.url` and `rateLimit.failurePolicy` (`fail-closed` | `fail-open`, default `fail-closed`) to `RateLimitConfigSchema` in `@chainmcp/config`.
+  - Added connection sharing between `@chainmcp/rate-limit` and `@chainmcp/cache-redis` in `buildRuntimeOptions` and `gatewayServeCommand` when both use Redis, eliminating redundant socket connections and connection pool exhaustion.
+  - Added `logRateLimiterStartup` connection health logging across `serveCommand`, `devCommand`, `gatewayServeCommand`, and generated server templates, logging provider, reachability (`reachable` | `unreachable` | `local`), key prefix, and quota summary with strict credential scrubbing.
+  - Implemented configurable outage failure policy in `DistributedRateLimiter` (`fail-closed` default throwing `UPSTREAM_FAILURE`, or `fail-open` permitting calls and logging warnings).
+  - Extended RESP parser in `@chainmcp/cache-redis` to support recursive RESP2 arrays and nested types, and added `eval` command support to `SimpleRedisClient`.
+  - Added unit and integration tests across `@chainmcp/config`, `@chainmcp/rate-limit`, `@chainmcp/cache-redis`, and `@chainmcp/cli`.
+  - Updated documentation in `docs/rate-limiting.md`, `CONFIGURATION.md`, `docs/deployment.md`, and `API_REFERENCE.md`.
 - **RM-14 wire ToolTracer into runtime and server:**
   - Added OpenTelemetry distributed tracing configuration to `@chainmcp/config`: `analytics.openTelemetry.tracing: { enabled: boolean, sampleRatio: number }` and optional `endpoint: string`.
   - Wired `ToolTracer` into `InMemoryToolRuntime` (`@chainmcp/core`), starting root spans named `tool.<name>` for resolved tool calls and emitting safe correlation attributes (`tool.name`, `mcp.tool_name`, `tenant.id`, `principal.id`, `mcp.request_id`, `contract.revision`, `outcome`, `duration_ms`, `cache.outcome`, `cached`).

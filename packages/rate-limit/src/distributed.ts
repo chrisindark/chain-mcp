@@ -85,7 +85,8 @@ interface ActiveConcurrencyCheck {
 }
 
 export class DistributedRateLimiter implements RateLimiter {
-  private readonly client: RedisRateLimitClient;
+  public readonly client: RedisRateLimitClient;
+  public readonly failurePolicy: "fail-closed" | "fail-open";
   private readonly options: DistributedRateLimiterOptions;
   private readonly keyPrefix: string;
   private readonly commandTimeoutMs: number;
@@ -106,6 +107,7 @@ export class DistributedRateLimiter implements RateLimiter {
     this.keyPrefix = options.keyPrefix ?? DEFAULT_KEY_PREFIX;
     this.commandTimeoutMs =
       options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
+    this.failurePolicy = options.failurePolicy ?? "fail-closed";
     this.now = options.now ?? (() => Date.now());
   }
 
@@ -196,6 +198,23 @@ export class DistributedRateLimiter implements RateLimiter {
       if (acquiredConcurrencyKeys.length > 0) {
         await this.rollbackConcurrency(acquiredConcurrencyKeys);
       }
+      if (this.failurePolicy === "fail-open") {
+        const errMessage =
+          error instanceof Error
+            ? error.cause instanceof Error
+              ? `${error.message}: ${error.cause.message}`
+              : error.message
+            : String(error);
+        this.options.logger?.warn(
+          "Redis rate limiter encountered an outage; failing open",
+          {
+            error: errMessage,
+            toolName,
+            tenantId: context.tenantId,
+          },
+        );
+        return { allowed: true };
+      }
       throw error;
     }
   }
@@ -285,7 +304,7 @@ export class DistributedRateLimiter implements RateLimiter {
       });
     }
 
-    if (this.options.tenantQuota) {
+    if (this.options.tenantQuota && context.tenantId) {
       const policy =
         typeof this.options.tenantQuota === "function"
           ? this.options.tenantQuota(context.tenantId)
@@ -340,7 +359,7 @@ export class DistributedRateLimiter implements RateLimiter {
       }
     }
 
-    if (this.options.tenantConcurrency !== undefined) {
+    if (this.options.tenantConcurrency !== undefined && context.tenantId) {
       const raw =
         typeof this.options.tenantConcurrency === "function"
           ? this.options.tenantConcurrency(context.tenantId)

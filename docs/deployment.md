@@ -224,6 +224,14 @@ Never hardcode credentials or secrets in `chainmcp.config.yaml` or repository fi
 2. **Pluggable Secret Stores:**
    Configure `auth.upstream` with `type: env`, `type: secretStore`, or `type: oauth` using authenticated AES-256-GCM encryption.
 
+### Shared Redis Topology
+
+For clustered deployments using Redis for distributed caching (`@chainmcp/cache-redis`) and distributed rate limiting (`@chainmcp/rate-limit`):
+
+- **Shared Client Instance:** When both caching and rate limiting are configured for Redis, the runtime shares a single client connection set across both subsystems to prevent redundant sockets and connection pool exhaustion.
+- **Key Partitioning:** Caching keys use the configured `cache.redis.keyPrefix` (default `chainmcp:cache:`) while rate limiter keys use `rateLimit.redis.keyPrefix` (default `chainmcp:ratelimit:`), allowing both subsystems to operate safely against the same Redis cluster without key collision.
+- **Outage Policy:** When Redis is degraded or unreachable, distributed caching fails open (bypassing the cache without failing the tool invocation), while rate limiting follows `rateLimit.failurePolicy` (failing closed with `UPSTREAM_FAILURE` by default to protect upstreams, or failing open if explicitly configured).
+
 ### Process Signals and Teardown
 
 `@chainmcp/server` listens for `SIGINT` (Ctrl+C) and `SIGTERM` signals:

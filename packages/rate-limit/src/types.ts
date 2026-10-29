@@ -73,4 +73,15 @@ export interface DistributedRateLimiterOptions extends RateLimitRules {
   commandTimeoutMs?: number;
   /** Clock provider for testing. Defaults to `Date.now`. */
   now?: () => number;
+  /**
+   * Outage failure policy when Redis is unreachable or commands fail.
+   * - "fail-closed": Throws RuntimeError("UPSTREAM_FAILURE") blocking calls (default).
+   * - "fail-open": Logs warning and permits execution without rate limiting.
+   */
+  failurePolicy?: "fail-closed" | "fail-open";
+  /** Optional logger for outage warnings and diagnostics. */
+  logger?: {
+    warn(message: string, context?: Record<string, unknown>): void;
+    error(message: string, context?: Record<string, unknown>): void;
+  };
 }
