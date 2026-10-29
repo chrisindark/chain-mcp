@@ -1143,8 +1143,48 @@ export interface RedisCacheStoreOptions {
   commandTimeoutMs?: number;
 }
 
+export interface SimpleRedisTlsOptions {
+  ca?: string | Buffer | undefined;
+  cert?: string | Buffer | undefined;
+  key?: string | Buffer | undefined;
+  rejectUnauthorized?: boolean | undefined;
+  servername?: string | undefined;
+}
+
+export interface SimpleRedisOptions {
+  url?: string | undefined;
+  host?: string | undefined;
+  port?: number | undefined;
+  username?: string | undefined;
+  password?: string | undefined;
+  database?: number | undefined;
+  timeoutMs?: number | undefined;
+  tls?: boolean | SimpleRedisTlsOptions | undefined;
+  ca?: string | Buffer | undefined;
+  cert?: string | Buffer | undefined;
+  key?: string | Buffer | undefined;
+  rejectUnauthorized?: boolean | undefined;
+  minConnections?: number | undefined;
+  maxConnections?: number | undefined;
+  maxRetries?: number | undefined;
+  retryBaseMs?: number | undefined;
+  retryCapMs?: number | undefined;
+  healthCheckOnCheckout?: boolean | undefined;
+}
+
+export interface SimpleRedisClientStatus {
+  totalConnections: number;
+  idleConnections: number;
+  activeConnections: number;
+  waitQueueLength: number;
+  isClosed: boolean;
+}
+
 export interface SimpleRedisClient extends RedisCacheClient {
   eval(script: string, keys: string[], args: string[]): Promise<unknown>;
+  close(): Promise<void>;
+  disconnect(): Promise<void>;
+  getStatus(): SimpleRedisClientStatus;
 }
 
 export function createSimpleRedisClient(
@@ -1152,6 +1192,8 @@ export function createSimpleRedisClient(
 ): SimpleRedisClient;
 
 export const createSimpleRedisCacheClient = createSimpleRedisClient;
+
+export function redactRedisUrl(urlString: string): string;
 
 export class RedisCacheStore implements CacheStore {
   constructor(options: RedisCacheStoreOptions);

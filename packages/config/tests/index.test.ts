@@ -450,6 +450,30 @@ describe("rateLimit configuration and factory", () => {
     }
   });
 
+  it("parses redis.tls options in RateLimitConfigSchema", () => {
+    const config = parseConfig({
+      version: 1,
+      name: "test",
+      rateLimit: {
+        enabled: true,
+        provider: "redis",
+        redis: {
+          url: "rediss://127.0.0.1:6380",
+          tls: {
+            rejectUnauthorized: false,
+            servername: "redis.example.com",
+            ca: "mock-ca",
+          },
+        },
+      },
+    });
+    expect(config.rateLimit.redis.tls).toEqual({
+      rejectUnauthorized: false,
+      servername: "redis.example.com",
+      ca: "mock-ca",
+    });
+  });
+
   it("shares the same Redis client instance between rateLimiter and cacheStore in buildRuntimeOptions", () => {
     const config = parseConfig({
       version: 1,
@@ -1070,6 +1094,24 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
           redis: { keyPrefix: "chainmcp:test:", commandTimeoutMs: 1_000 },
         }),
       ).toThrow(TypeError);
+    });
+
+    it("creates RedisCacheStore with URL and TLS in config", () => {
+      const store = createCacheStoreFromConfig({
+        enabled: true,
+        provider: "redis",
+        ttlSeconds: 300,
+        maxEntries: 1_000,
+        redis: {
+          url: "rediss://127.0.0.1:6380",
+          keyPrefix: "chainmcp:test:",
+          commandTimeoutMs: 1_000,
+          tls: { rejectUnauthorized: false },
+        },
+      });
+
+      expect(store).toBeInstanceOf(RedisCacheStore);
+      expect((store as RedisCacheStore).client).toBeDefined();
     });
 
     it("creates approximate tokenizer from config", () => {
