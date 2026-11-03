@@ -44,9 +44,7 @@ The compiler:
 - Maps declared responses as metadata: status keys, descriptions, the selected
   media type, and translated response schemas. OpenAPI 3.1 status ranges are
   supported; 3.0 ranges are rejected. Non-JSON-only content is recorded with a
-  warning and no schema. `headers` and `links` are not mapped.
-- Translates response schemas descriptively without generating or applying an
-  output validator: local `$ref`s are resolved, 3.0 nullability is translated,
+  warning and no schema. `headers` and `links` are not mapped.- Translates response schemas descriptively; the compiler itself applies no validator, and `@chainmcp/executor` enforces the compiled schema at runtime when `validateResponses` is enabled (`warn` by default, `enforce` optional): local `$ref`s are resolved, 3.0 nullability is translated,
   `writeOnly` properties are omitted, and composition keywords such as
   `oneOf`, `anyOf`, and `not` are preserved.
 - Preserves security schemes and OR/AND requirement structure, and derives an
@@ -167,7 +165,7 @@ Current status: the runtime-supported constraints listed above are preserved and
 
 Asserted `format` values are `date-time`, `date`, `time`, `email`, `hostname`, `ipv4`, `ipv6`, `uri`, and `uuid`. Other format strings are preserved as annotations, matching JSON Schema's default format-annotation behavior. `pattern` uses the linear-time `re2js` engine and is capped at 4,096 characters; invalid or unsupported regular expressions are rejected. `uniqueItems` uses a bounded structural comparison and fails closed when the comparison budget is exceeded.
 
-Response schemas are metadata, not a validation boundary. Their translation preserves composition and constraints that the runtime cannot enforce, because no output validator exists yet. When an output validator is added, it must reject or explicitly document those keywords rather than silently ignore them.
+Response schemas are enforced at runtime, not by the compiler. `@chainmcp/executor` validates upstream responses against the compiled schema when `validateResponses` is enabled, redacting response bodies from logs and error diagnostics. The translation preserves composition and constraints that the runtime validator does not support; those keywords remain metadata and are not enforced. Supporting them must reject or explicitly document them rather than silently ignore them.
 
 Use `auditInputSchema` from `@chainmcp/core` on every generated tool input schema. It returns the same diagnostics the runtime enforces at registration, including stable codes and JSON-path locations. Do not emit a tool while its audit result is unsupported.
 

@@ -16,6 +16,11 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Documentation
 
+- Add [`docs/limitations.md`](docs/limitations.md) as the consolidated catalog of deliberate boundaries, deferred features, defaults, and known gaps across all 15 packages, and link it from the documentation map, the product guide, and the OpenAPI support page.
+- Correct stale capability statements in `API_REFERENCE.md`, `docs/openapi-support.md`, and `docs/product-guide.md`: response-schema enforcement now runs in the executor, multipart/form-urlencoded/cookie request inputs and supported `style`/`explode` serialization exist, and the package map lists 15 packages.
+- Record the pre-1.0 release posture in `RELEASES.md` and `ROADMAP.md`, unchecking the 1.0 checklist items that are not true for a published artifact (pending changesets are not yet applied and Milestone 10's release is deferred).
+- Document the self-hosted declarative admin surface, including its bearer-token and tenant-scope model, routes, publication path, transport defenses, descriptor persistence with `DescriptorRevisionStore`, startup restore, and republish-based rollback, in `docs/declarative-admin.md`, `API_REFERENCE.md`, `ARCHITECTURE.md`, `SECURITY.md`, `ROADMAP.md`, `docs/README.md`, `docs/risk-register.md`, ADR 0029, and ADR 0030.
+- Document versioned declarative HTTP tool descriptors and their executor-backed execution guarantees in `docs/declarative-tools.md`, `API_REFERENCE.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `docs/README.md`, and ADR 0028.
 - Document Milestone 10 stable release gates, supported version matrix, operational troubleshooting, migration and rollback procedures, SBOM generation, and release provenance in `docs/supported-versions.md`, `docs/migration-and-rollback.md`, `docs/troubleshooting.md`, `RELEASES.md`, `ROADMAP.md`, `docs/risk-register.md`, and ADR 0027.
 - Document dynamic gateway architecture, versioned contract registry, atomic reloads, tenant policy binding, per-contract authentication and network policies, and rollback in `docs/dynamic-gateway.md`, `API_REFERENCE.md`, `ARCHITECTURE.md`, `ROADMAP.md`, ADR 0008 (accepted), and ADR 0026.
 - Document tool sources and code-first authoring, `@chainmcp/authoring`, `defineTool()`, schema lowering and audit, `chainmcp init --blank`, `chainmcp dev`, and policy parity in `docs/getting-started.md`, `API_REFERENCE.md`, `CONFIGURATION.md`, `ARCHITECTURE.md`, `ROADMAP.md`, ADR 0019 (accepted), and ADR 0025.
@@ -44,6 +49,33 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ### Implementation
 
+- **Post-1.0 descriptor persistence and rollback:**
+  - Add `DescriptorRevisionStore` with `candidate → active → superseded/failed` records keyed by tenant and contract, one active record per pair, and duplication, transition, revision-count, and byte-limit validation.
+  - Add `InMemoryDescriptorRevisionStore` as the default and `FileDescriptorRevisionStore`, which writes a versioned JSON snapshot through a `0600` temporary file, `fsync`, and atomic rename, validates the file schema on open, and enforces 10 MiB and 100-revision defaults. The file store is documented as single-writer.
+  - Give admin revisions durable `dset_…` ids distinct from gateway `rev_…` ids, and link both in revision metadata.
+  - Order publication as candidate write → gateway publish → activation so a store rejection prevents publication and a gateway rejection marks the candidate failed. Store failures return typed `ADMIN_STORE_FAILURE`, `ADMIN_REVISION_CONFLICT`, or `ADMIN_REVISION_UNKNOWN` responses.
+  - Add `POST .../rollback` to revalidate a stored superseded revision, republish it as a new gateway revision, and record a new admin revision with `rollbackOf`, so rollback survives a restart and keeps history append-only.
+  - Add `DeclarativeAdmin.restore()` to republish each bound contract's active stored revision after the gateway is constructed, reporting restored, skipped (`already_active`, `descriptors_invalid`), and failure entries instead of throwing.
+  - Revalidate persisted descriptors on restore and rollback so a tampered or stale store fails closed, and add the `admin_rollback` and `admin_restore` audit events with admin and gateway revision ids.
+  - Add console rollback-by-revision-id and tests for revision history, rollback, failed candidates, store rejection, tenant isolation, file permissions, snapshot versioning, restart restore, idempotent restore, and corrupt or oversized snapshots.
+- **Post-1.0 self-hosted declarative admin:**
+  - Add `@chainmcp/admin` with a Web-standard `DeclarativeAdmin.handle(Request)` handler and a loopback-first Node server (`startDeclarativeAdminServer`). Routes cover service metadata, health, bound contracts, active tools, revision history, validation, static preview, and publication.
+  - Authenticate operators with deployment-issued bearer tokens that carry a unique non-secret id and an explicit tenant scope. Tokens must be at least 16 characters, are compared in constant time over SHA-256 digests, and are never minted, logged, echoed, or persisted; tenant scope is enforced before contract binding lookup.
+  - Bind each tenant/contract pair to a destination policy, optional credential scheme map, optional credential provider, and limits. Descriptors may only reference configured schemes; they cannot add hosts, change the base URL, or carry credentials.
+  - Validate and statically preview descriptor sets with stable diagnostics, duplicate-name detection, and executor lowering, without contacting the upstream API or mutating the gateway.
+  - Publish by lowering a fresh `UpstreamExecutor` and `DeclarativeToolSource` and calling `DynamicGateway.publishContract({ tools })`, so tenant ownership, revision ids, activation, collision checks, runtime rebuild, and gateway audit are reused. The descriptor set and per-tool revisions are recorded in revision metadata.
+  - Serve a dependency-free operator console with a strict CSP, no inline script, same-origin requests only, and page-memory-only tokens.
+  - Add transport defenses before the handler runs: loopback default, refusal of non-loopback binds without `allowRemote`, `Host` allowlisting against DNS rebinding, and `Origin`/`Sec-Fetch-Site` same-origin enforcement; all responses are `no-store`.
+  - Add admin audit events (`admin_validate`, `admin_preview`, `admin_publish`, `admin_auth_failed`, `admin_request_rejected`) that exclude tokens, arguments, and credentials, plus request/descriptor caps (1 MiB body, 10 MiB ceiling, 1,000 descriptors).
+  - Add unit and integration tests for token authentication and scoping, diagnostics, previews, publication through the gateway, collisions, revision listing, malformed and oversized requests, CSP assets, Host/Origin rejection, loopback-only binding, and shutdown.
+- **Post-1.0 declarative HTTP tool descriptors:**
+  - Add `@chainmcp/declarative` with a closed `descriptorVersion: 1` JSON descriptor: tool name and description, audited object-root input schema, fixed HTTP method, relative path template, path/query/header/cookie parameter bindings, optional JSON request body, auth references, and policy (runtime scopes, read-only cache TTL, output field selection/token budget, timeout).
+  - Validate descriptors at load time with stable `DeclarativeDescriptorError` codes and issue paths. Reject absolute URLs, dot segments and unmatched placeholders, unsupported or permissive schemas, unbound input properties, non-primitive parameter types, transport-owned or reserved headers, unknown auth schemes, scopes on non-OAuth schemes, GET bodies, non-JSON body media types, and cache on non-read methods.
+  - Lower descriptors into `CompiledOperation` metadata for the existing `UpstreamExecutor`, preserving its exact host allowlist, address classification, DNS pinning and peer verification, same-host redirects, timeouts, response caps, credential injection, and JSON response handling.
+  - Add `DeclarativeToolSource`/`createDeclarativeToolSource()` to validate a descriptor collection, reject duplicate names, and bind tools with deterministic `sha256:` descriptor revisions as `contractRevision`.
+  - Add `parseDeclarativeToolDescriptor()` and `parseDeclarativeToolDescriptorJson()` (256 KiB cap) plus a deployment-supplied `DeclarativeAuthSchemeMap` that carries credential shape only; secrets stay in the executor's `UpstreamCredentialProvider`.
+  - Export `isReservedRequestHeader()` and `isValidRequestHeaderName()` from `@chainmcp/executor` so descriptor load-time validation cannot drift from the executor's request rules.
+  - Add deterministic unit and integration tests covering lowering, revision stability, path and schema rejection, auth references, output projection, credential injection, cancellation, duplicate names, and executor error mapping.
 - **RM-16 harden Redis client (TLS, ACL, pooling, reconnect):**
   - Fully parsed `redis://` and `rediss://` URLs with support for TLS encryption via `node:tls`, ACL username/password credentials, database index paths (`/0`, `/1`), and validated search query parameters (`timeoutMs`, `rejectUnauthorized`, `maxConnections`, `database`).
   - Added connection pooling (default 2–4 connections) to `createSimpleRedisClient` with lazy on-demand socket connection, checkout health verification (`PING`), exponential backoff with jitter and a cap on reconnects, and graceful pool draining on `close()` / `disconnect()`.
@@ -149,7 +181,7 @@ The project is pre-release. Versions and release dates must reflect actual publi
   - Document operational troubleshooting in `docs/troubleshooting.md` and deterministic migration and rollback workflows in `docs/migration-and-rollback.md`.
   - Add CycloneDX 1.5 JSON SBOM generation script (`scripts/generate-sbom.mjs`) with `pnpm sbom` and `pnpm sbom:check`.
   - Configure automated release workflow in `.github/workflows/release.yml` with cryptographic npm provenance (`--provenance`) and Changesets publishing.
-  - Satisfy all Version 1.0 exit criteria and release checklist items in `RELEASES.md`.
+  - Prepare all Version 1.0 exit criteria and release checklist items in `RELEASES.md`. The 1.0 release itself is withheld pending production validation and expanded test coverage; see [Release status](RELEASES.md#release-status).
   - Record ADR 0027: Stable 1.0 Release and Production Readiness.
 - Complete Milestone 9 (Dynamic gateway):
   - Add `@chainmcp/gateway` package providing `DynamicGateway`, `ContractRegistry`, `createGatewayServer`, and `connectGatewayServer`.

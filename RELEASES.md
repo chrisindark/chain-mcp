@@ -10,6 +10,16 @@ Use Semantic Versioning:
 
 Before 1.0, breaking changes are permitted but must be documented prominently.
 
+## Release status
+
+ChainMcp is **pre-1.0**. Milestones 0–9 are implemented and verified, and
+Milestone 10 tooling (supported-version matrix, SBOM, migration and rollback
+documentation, and the signed-release workflow) is in place, but no `1.0.0`
+artifact has been published. The project deliberately withholds 1.0 until the
+stack has been exercised in a real production deployment and test coverage has
+expanded. Pending changesets therefore target the next pre-1.0 minor release,
+and a checklist item stays unchecked until it is true for a published artifact.
+
 ## Release channels
 
 - `next`: prerelease validation.
@@ -34,8 +44,8 @@ Versioning is managed with [Changesets](https://github.com/changesets/changesets
 
 ## Release checklist
 
-- [x] Relevant roadmap acceptance criteria are met across all milestones.
-- [x] Every releasable change has a changeset, and pending changesets are applied.
+- [ ] Relevant roadmap acceptance criteria are met across all milestones (Milestones 0–9 verified; Milestone 10 gates prepared but release withheld, see [Release status](#release-status)).
+- [ ] Every releasable change has a changeset, and pending changesets are applied (changesets are present; they are applied by the release version PR).
 - [x] Root and package versions match (`pnpm version:check`).
 - [x] Changelog and release notes are updated (`CHANGELOG.md`).
 - [x] Documentation, supported version matrix, and migration/rollback notes are complete (`docs/supported-versions.md`, `docs/migration-and-rollback.md`).
@@ -61,9 +71,9 @@ Detailed version support matrix and lifecycle policy are documented in [`docs/su
 ## Version 1.0 exit criteria
 
 - [x] Public interfaces are stable and documented (`API_REFERENCE.md`).
-- [x] Compiler limitations and validation rules are explicit (`ARCHITECTURE.md`).
+- [x] Compiler limitations and validation rules are explicit (`ARCHITECTURE.md`, `docs/limitations.md`).
 - [x] Generated and dynamic modes pass integration and conformance tests.
 - [x] Authentication, SSRF, caching, tenant isolation, and rate limiting have comprehensive security test coverage.
 - [x] Failure behavior, error codes, and operational limits are documented (`docs/troubleshooting.md`).
 - [x] Migration and rollback procedures exist (`docs/migration-and-rollback.md`).
-- [x] All 10 roadmap milestones are implemented and verified.
+- [ ] All 10 roadmap milestones are implemented and verified (Milestones 0–9 are verified; Milestone 10 release gates are complete but the 1.0 release is deferred pending production validation).

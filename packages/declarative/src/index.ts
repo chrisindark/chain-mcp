@@ -1,0 +1,42 @@
+export { normalizeAuthSchemeMap } from "./auth-schemes.js";
+export {
+  declarativeToolPolicy,
+  parseDeclarativeToolDescriptor,
+  parseDeclarativeToolDescriptorJson,
+  type ParseDeclarativeDescriptorOptions,
+  type ParsedDeclarativeTool,
+} from "./descriptor.js";
+export {
+  DeclarativeToolSource,
+  createDeclarativeToolSource,
+  type DeclarativeToolSourceOptions,
+} from "./source.js";
+export {
+  DECLARATIVE_DESCRIPTOR_VERSION,
+  DeclarativeDescriptorError,
+  MAX_DECLARATIVE_AUTH_ALTERNATIVES,
+  MAX_DECLARATIVE_AUTH_SCHEMES,
+  MAX_DECLARATIVE_CACHE_TTL_SECONDS,
+  MAX_DECLARATIVE_DESCRIPTION_LENGTH,
+  MAX_DECLARATIVE_DESCRIPTORS,
+  MAX_DECLARATIVE_PARAMETERS,
+  MAX_DECLARATIVE_PROPERTIES,
+  MAX_DECLARATIVE_SCOPES,
+  MAX_DECLARATIVE_TIMEOUT_MS,
+  MAX_DESCRIPTOR_BYTES,
+  type DeclarativeAuthScheme,
+  type DeclarativeAuthSchemeMap,
+  type DeclarativeAuthenticationDescriptor,
+  type DeclarativeDescriptorErrorCode,
+  type DeclarativeDescriptorIssue,
+  type DeclarativeHttpMethod,
+  type DeclarativeParameterDescriptor,
+  type DeclarativeParameterLocation,
+  type DeclarativePolicyDescriptor,
+  type DeclarativeRequestBodyDescriptor,
+  type DeclarativeRequestDescriptor,
+  type DeclarativeSecurityAlternative,
+  type DeclarativeSecuritySchemeReference,
+  type DeclarativeToolDescriptor,
+  type NormalizedDeclarativePolicy,
+} from "./types.js";

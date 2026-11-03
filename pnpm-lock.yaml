@@ -106,6 +106,27 @@ importers:
         specifier: workspace:*
         version: link:../../packages/server
 
+  packages/admin:
+    dependencies:
+      "@chainmcp/auth":
+        specifier: workspace:*
+        version: link:../auth
+      "@chainmcp/core":
+        specifier: workspace:*
+        version: link:../core
+      "@chainmcp/declarative":
+        specifier: workspace:*
+        version: link:../declarative
+      "@chainmcp/executor":
+        specifier: workspace:*
+        version: link:../executor
+      "@chainmcp/gateway":
+        specifier: workspace:*
+        version: link:../gateway
+      zod:
+        specifier: ^4.1.12
+        version: 4.6.7
+
   packages/analytics:
     dependencies:
       "@chainmcp/core":
@@ -217,6 +238,21 @@ importers:
       re2js:
         specifier: ^2.9.0
         version: 2.9.0
+
+  packages/declarative:
+    dependencies:
+      "@chainmcp/compiler":
+        specifier: workspace:*
+        version: link:../compiler
+      "@chainmcp/core":
+        specifier: workspace:*
+        version: link:../core
+      "@chainmcp/executor":
+        specifier: workspace:*
+        version: link:../executor
+      zod:
+        specifier: ^4.1.12
+        version: 4.6.7
 
   packages/executor:
     dependencies:

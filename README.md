@@ -98,6 +98,8 @@ These are initial architectural choices and may change through documented archit
 - **`docs/README.md`**: Complete documentation index and topic map
 - `ROADMAP.md`: milestones and acceptance criteria
 - `docs/getting-started.md`: runnable end-to-end example and Inspector commands
+- `docs/declarative-tools.md`: versioned declarative HTTP tool descriptors and their execution guarantees
+- `docs/declarative-admin.md`: self-hosted admin API and console for validating, previewing, and publishing descriptors
 - `docs/supported-versions.md`: supported version matrix and lifecycle policy
 - `docs/migration-and-rollback.md`: upgrade and rollback procedures
 - `docs/troubleshooting.md`: error codes, diagnosis, and operational troubleshooting
@@ -115,12 +117,14 @@ These are initial architectural choices and may change through documented archit
 
 ChainMcp has implemented all milestones leading to the **1.0 release series** (currently version `0.1.0`), satisfying all release gates in `RELEASES.md`.
 
-The repository contains 13 fully verified workspace packages:
+The repository contains 15 fully verified workspace packages:
 
 - `@chainmcp/core`: in-memory tool registry, linear-time Re2 regex validation, output projection, token budgets, and cached execution.
 - `@chainmcp/config`: strict Zod configuration loader for `chainmcp.config.yaml` and `gateway.config.yaml`.
 - `@chainmcp/compiler`: OpenAPI 3.0/3.1 contract parser, deterministic manifests, and tool lowering.
 - `@chainmcp/authoring`: code-first tool authoring facade (`defineTool`) with Zod lowering.
+- `@chainmcp/declarative`: versioned declarative HTTP descriptors validated and executed through the bounded executor.
+- `@chainmcp/admin`: self-hosted, tenant-scoped admin API and console for validating, previewing, publishing, persisting, restoring, and rolling back descriptors through the dynamic gateway.
 - `@chainmcp/auth`: inbound caller authorization, operation scope verification, encrypted secret storage, and OAuth 2.0 client credentials.
 - `@chainmcp/executor`: outbound HTTP execution with strict SSRF defense, DNS pinning, private range blocking, and response byte caps.
 - `@chainmcp/rate-limit`: quota and concurrency rate limiters with in-memory and Redis backends.
