@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { parse as parseYaml } from "yaml";
 
 import { compileOpenApi } from "@chainmcp/compiler";
 import {
@@ -19,6 +18,7 @@ import { createUpstreamExecutor } from "@chainmcp/executor";
 import { createJsonNavigationTools } from "@chainmcp/json-navigation";
 import { serveStdio } from "@chainmcp/server";
 
+import { findConfigPath, loadServerConfigFile } from "../config-loader.js";
 import { loadSpec } from "../spec-loader.js";
 import type { DevOptions, DevResult } from "../types.js";
 
@@ -35,31 +35,14 @@ export async function devCommand(options: DevOptions): Promise<DevResult> {
   const cwd = options.cwd ?? process.cwd();
 
   // 1. Locate and parse configuration if present
-  let configPath = options.config
-    ? resolve(cwd, options.config)
-    : process.env.CHAINMCP_CONFIG
-      ? resolve(cwd, process.env.CHAINMCP_CONFIG)
-      : undefined;
-
-  if (!configPath) {
-    const candidateConfigs = [
-      resolve(cwd, "chainmcp.config.yaml"),
-      resolve(cwd, "chainmcp.config.yml"),
-      resolve(cwd, "chainmcp.config.json"),
-    ];
-    for (const cand of candidateConfigs) {
-      if (await fileExists(cand)) {
-        configPath = cand;
-        break;
-      }
-    }
-  }
+  const configPath = await findConfigPath({
+    explicit: options.config,
+    cwd,
+  });
 
   let config: ChainMcpConfig;
   if (configPath && (await fileExists(configPath))) {
-    const rawText = await readFile(configPath, "utf8");
-    const parsed = parseYaml(rawText);
-    config = parseConfig(parsed);
+    config = (await loadServerConfigFile(configPath)).config;
   } else {
     config = parseConfig({
       version: 1,

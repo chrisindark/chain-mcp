@@ -206,6 +206,7 @@ import {
   createNavigationLimitsFromConfig,
   logRateLimiterStartup,
   parseConfig,
+  resolveConfigSecrets,
   type RedisRateLimitClient,
 } from "@chainmcp/config";
 import { COMPILER_VERSION, compileOpenApi } from "@chainmcp/compiler";
@@ -246,7 +247,7 @@ export async function runServer(options?: RunServerOptions) {
     join(projectRoot, "chainmcp.config.yaml");
   const rawConfigText = await readFile(configPath, "utf8");
   const rawConfig = parseYaml(rawConfigText);
-  const config = parseConfig(rawConfig);
+  const config = parseConfig(resolveConfigSecrets(rawConfig).config);
 
   const runtimeOptions = buildRuntimeOptions(config);
   const runtime = new InMemoryToolRuntime(runtimeOptions);
@@ -736,7 +737,14 @@ Configuration is stored in \`chainmcp.config.yaml\`. You can customize:
 - Structured logging level (\`logging.level\`)
 - Upstream credentials (\`auth.upstream\`)
 
-Environment variable overrides:
+Credential fields accept \`\${VAR}\` and \`\${VAR:-default}\` environment
+references instead of literal secrets. Supported fields are inbound tokens and
+API keys (their record keys), \`auth.inbound.jwt.secret\`, static upstream
+credentials, OAuth \`clientSecret\`, \`secretStore\` encryption keys, and Redis
+URLs/TLS keys. A referenced variable that is unset and has no default stops
+startup with the field and variable named.
+
+Environment variables:
 - \`CHAINMCP_CONFIG\`: Path to custom configuration file.
 - \`CHAINMCP_LOG_LEVEL\`: Override log level (\`debug\`, \`info\`, \`warn\`, \`error\`, \`silent\`).
 

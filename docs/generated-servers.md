@@ -90,7 +90,7 @@ chainmcp build [--config <path>] [--spec <path|url>] [--out-dir <dir>] [--check]
 - `--check`: Verifies reproducibility against an existing `chainmcp.manifest.json`.
 - `--require-contract`: Require an OpenAPI contract and fail if absent.
 
-Emits `chainmcp.manifest.json` and `compiled-tools.json` for both contract-driven and code-first projects.
+Emits `chainmcp.manifest.json` and `compiled-tools.json` for both contract-driven and code-first projects. The manifest and compiled tool definitions are written to `--out-dir` and mirrored to the project root so a generated server can verify its build artifacts at startup (`dist/compiled-tools.json` plus the root manifest). Startup fails with a remediation message when the manifest is missing, the tool set differs, or the generator/compiler versions do not match; `--allow-manifest-drift` or `CHAINMCP_ALLOW_MANIFEST_DRIFT=1` downgrades this to a warning for development.
 
 ### 4. `chainmcp serve`
 

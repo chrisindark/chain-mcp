@@ -5,7 +5,7 @@ import type {
   CompileResult,
   ContractChange,
 } from "@chainmcp/compiler";
-import type { ChainMcpConfig } from "@chainmcp/config";
+import type { ChainMcpConfig, SecretResolutionSource } from "@chainmcp/config";
 import type { ToolDefinition } from "@chainmcp/core";
 
 export type { LoadSpecOptions, LoadedSpec } from "./spec-loader.js";
@@ -57,6 +57,23 @@ export interface InitResult {
   configPath: string;
   toolCount: number;
   createdFiles: readonly string[];
+  error?: string | undefined;
+}
+
+export interface ConfigExplainOptions {
+  config?: string | undefined;
+  cwd?: string | undefined;
+  /** Environment source for `${VAR}` resolution. Defaults to `process.env`. */
+  env?: Readonly<Record<string, string | undefined>> | undefined;
+}
+
+export interface ConfigExplainResult {
+  ok: boolean;
+  configPath?: string | undefined;
+  /** Resolved configuration with all credential fields redacted. */
+  config?: unknown;
+  /** Value-free provenance for every designated secret field. */
+  secretSources?: readonly SecretResolutionSource[] | undefined;
   error?: string | undefined;
 }
 

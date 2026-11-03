@@ -194,7 +194,14 @@ chainmcp serve --transport http --port 3333 # Serves Streamable HTTP / SSE endpo
 chainmcp dev                         # Fast authoring loop; loads dist/tools.js or src/tools.ts
 chainmcp gateway serve               # Starts dynamic multi-contract gateway server
 chainmcp export --output ./dist-srv --local-deps /path/to/chain-mcp  # Exports a portable standalone server
+chainmcp config explain              # Prints resolved config with secrets redacted
 ```
+
+> [!NOTE]
+> Credential fields in `chainmcp.config.yaml` accept `${VAR}` and
+> `${VAR:-default}` references. A missing variable stops startup with
+> `SECRET_UNRESOLVED` naming the field and variable, and resolved values are
+> never logged. See `CONFIGURATION.md` for the supported fields.
 
 > [!NOTE]
 > When authoring TypeScript code-first tools (`src/tools.ts`), `chainmcp dev` automatically loads TypeScript files when executed under `tsx` (e.g. `npx tsx @chainmcp/cli dev`) or when precompiled (`chainmcp build` / `tsc`).

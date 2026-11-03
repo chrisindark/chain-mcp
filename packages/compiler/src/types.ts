@@ -44,6 +44,7 @@ export type CompileDiagnosticCode =
   | "UNSUPPORTED_SERVERS"
   | "UNSUPPORTED_CALLBACKS"
   | "CONFIG_DEPRECATED"
+  | "SECRET_UNRESOLVED"
   | "INTERNAL_ERROR";
 
 export interface CompileDiagnostic {

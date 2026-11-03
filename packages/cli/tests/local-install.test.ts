@@ -20,6 +20,7 @@ import type { UpstreamTransport } from "@chainmcp/executor";
 import type { ConnectedMcpServer, Transport } from "@chainmcp/server";
 
 import { exportCommand } from "../src/commands/export.js";
+import { buildCommand } from "../src/commands/build.js";
 import { initCommand } from "../src/commands/init.js";
 import {
   CHAINMCP_PACKAGE_DEPENDENCIES,
@@ -283,6 +284,11 @@ describe("P0-1: local-clone dependency mode", () => {
         cwd: tempDir,
       });
       expect(result.ok).toBe(true);
+
+      // Generated servers verify build artifacts at startup. Produce the
+      // manifest and compiled tool definitions before compiling TypeScript.
+      const buildResult = await buildCommand({ cwd: projectDir });
+      expect(buildResult.ok).toBe(true);
 
       // Install from local packages only. Third-party packages come from the
       // existing pnpm store; no registry request is made.

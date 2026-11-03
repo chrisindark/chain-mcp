@@ -18,6 +18,7 @@ import {
   createTokenizerFromConfig,
   logRateLimiterStartup,
   parseGatewayConfig,
+  resolveConfigSecrets,
   type GatewayConfig,
   type RedisRateLimitClient,
 } from "@chainmcp/config";
@@ -86,7 +87,8 @@ export async function loadGatewayConfig(
 ): Promise<{ config: GatewayConfig; dir: string }> {
   const content = await readFile(configPath, "utf8");
   const parsed = parseYaml(content);
-  const config = parseGatewayConfig(parsed);
+  const resolved = resolveConfigSecrets(parsed);
+  const config = parseGatewayConfig(resolved.config);
   return { config, dir: path.dirname(configPath) };
 }
 
