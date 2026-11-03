@@ -70,6 +70,16 @@ import {
 } from "@chainmcp/analytics";
 import type { NavigationLimits } from "@chainmcp/json-navigation";
 
+export {
+  redactConfigSecrets,
+  resolveConfigSecrets,
+  SecretResolutionError,
+  type ResolvedConfigSecrets,
+  type ResolveConfigSecretsOptions,
+  type SecretResolutionFailure,
+  type SecretResolutionSource,
+} from "./secrets.js";
+
 /**
  * Strict schema for allowed upstream hosts.
  * Rejects schemes, ports, paths, queries, credentials, and wildcards.

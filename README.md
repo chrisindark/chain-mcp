@@ -1,6 +1,6 @@
 # ChainMcp
 
-**Turn API contracts into production-ready Model Context Protocol (MCP) servers.**
+**Turn API contracts into Model Context Protocol (MCP) servers.**
 
 ChainMcp
 is an open-source TypeScript/Node.js toolkit that converts API contracts into MCP tools and provides a shared runtime for security, caching, token accounting, rate limiting, and observability.
@@ -81,6 +81,10 @@ Open Claude Desktop or your AI IDE. Your API tools appear automatically in the t
 
 ## Quick Start (Registry, after publishing)
 
+This section is a preview of the published-package workflow. The
+`@chainmcp/*` packages are not on a registry yet, so these commands do not work
+until publishing happens; use the local-clone quick start above instead.
+
 ### 1. Initialize a Project from an API Spec
 
 ```bash
@@ -92,26 +96,27 @@ npx @chainmcp/cli init --spec https://api.example.com/openapi.yaml
 ### 2. Validate and Build
 
 ```bash
-chainmcp validate
-chainmcp build
+npx @chainmcp/cli validate
+npx @chainmcp/cli build
 ```
 
 ### 3. Connect to Claude Desktop or Your AI IDE
 
-Use the same `claude_desktop_config.json` entry shown above, with
-`"command": "chainmcp"` and `"args": ["serve"]`.
+Install the CLI globally (`npm install -g @chainmcp/cli`), then use the same
+`claude_desktop_config.json` entry shown above with `"command": "chainmcp"` and
+`"args": ["serve"]`.
 
 ## Core capabilities
 
 - **Contract compilation and execution:** OpenAPI 3.x to MCP tool definitions with bounded upstream HTTP.
 - **Generated servers:** Portable projects that run independently.
 - **Dynamic gateway:** Load and serve multiple versioned API contracts.
-- **Token accounting:** Token counts or explicitly labeled estimates.
+- **Token accounting:** Resource-bounded execution with token budgets; counts are labeled estimates unless an explicit `Tokenizer` is injected.
 - **Smart caching:** TTLs, authorization-aware cache keys, and response projection.
 - **Authentication:** Separate inbound MCP authorization from upstream API credentials.
 - **Rate limiting:** Tenant, principal, and tool-level quotas.
 - **Analytics:** Usage, latency, failures, cache performance, and token metrics.
-- **JSON navigation:** Bounded exploration of large JSON responses.
+- **JSON navigation:** Bounded pagination, path selection, shape inspection, and filtering of a JSON document supplied inline by the caller (no result handles).
 
 ## Product principles
 
@@ -128,12 +133,12 @@ Use the same `claude_desktop_config.json` entry shown above, with
 - pnpm workspaces
 - Official TypeScript MCP SDK
 - Zod for runtime validation
-- Hono for HTTP services where appropriate
-- Redis as an optional distributed cache
-- PostgreSQL as an optional metadata store
-- OpenTelemetry for observability
+- Node.js `http` for HTTP services
+- Redis as an optional distributed cache and rate-limit backend
+- The OpenTelemetry API for metrics and tracing (deployments bring their own
+  exporter and SDK; no exporter or Prometheus endpoint is bundled)
 
-These are initial architectural choices and may change through documented architecture decision records.
+These are initial architectural choices and may change through documented architecture decision records. PostgreSQL is not implemented and no database metadata store ships today; see `docs/limitations.md`.
 
 ## Repository documentation
 
@@ -159,9 +164,9 @@ These are initial architectural choices and may change through documented archit
 
 ## Project status
 
-ChainMcp has implemented all milestones leading to the **1.0 release series** (currently version `0.1.0`), satisfying all release gates in `RELEASES.md`.
+ChainMcp is pre-1.0 (currently version `0.1.0`). Milestones 0–9 are implemented and covered by the repository's test suite, but the **1.0 release is deliberately withheld**: `RELEASES.md` records release gates that are not yet complete, including long-running and production-traffic validation. Do not treat this repository as a 1.0 release.
 
-The repository contains 15 fully verified workspace packages:
+The repository contains 15 workspace packages:
 
 - `@chainmcp/core`: in-memory tool registry, linear-time Re2 regex validation, output projection, token budgets, and cached execution.
 - `@chainmcp/config`: strict Zod configuration loader for `chainmcp.config.yaml` and `gateway.config.yaml`.
@@ -194,17 +199,28 @@ chainmcp serve --transport http --port 3333 # Serves Streamable HTTP / SSE endpo
 chainmcp dev                         # Fast authoring loop; loads dist/tools.js or src/tools.ts
 chainmcp gateway serve               # Starts dynamic multi-contract gateway server
 chainmcp export --output ./dist-srv --local-deps /path/to/chain-mcp  # Exports a portable standalone server
+chainmcp config explain              # Prints resolved config with secrets redacted
 ```
 
+These examples assume `chainmcp` is installed (or linked) and on `PATH`. From a
+fresh clone without a global install, run the CLI as
+`node packages/cli/dist/bin.js <command>` instead.
+
 > [!NOTE]
-> When authoring TypeScript code-first tools (`src/tools.ts`), `chainmcp dev` automatically loads TypeScript files when executed under `tsx` (e.g. `npx tsx @chainmcp/cli dev`) or when precompiled (`chainmcp build` / `tsc`).
+> Credential fields in `chainmcp.config.yaml` accept `${VAR}` and
+> `${VAR:-default}` references. A missing variable stops startup with
+> `SECRET_UNRESOLVED` naming the field and variable, and resolved values are
+> never logged. See `CONFIGURATION.md` for the supported fields.
+
+> [!NOTE]
+> When authoring TypeScript code-first tools (`src/tools.ts`), `chainmcp dev` automatically loads TypeScript files when executed under `tsx` (e.g. `npx tsx packages/cli/dist/bin.js dev` from a clone) or when precompiled (`chainmcp build` / `tsc`).
 
 ## Transports and Inbound Authentication
 
 ChainMcp supports both standard MCP transport protocols:
 
 - **Stdio (`--transport stdio`):** Standard input/output for local desktop clients such as Claude Desktop and Cursor.
-- **Streamable HTTP (`--transport http`):** Modern HTTP/SSE server endpoint for containerized and remote deployments. Includes health probes (`/health`), CORS support, and graceful signal teardown.
+- **Streamable HTTP (`--transport http`):** Modern HTTP/SSE server endpoint for containerized and remote deployments. Includes health probes (`/health`), opt-in CORS with an explicit origin allowlist (disabled by default, and non-allowlisted browser origins are rejected), and drain-then-cancel signal teardown (late requests get `503`; in-flight calls drain for up to `server.shutdownTimeoutMs`).
 
 When running over HTTP, configure inbound caller authentication via `chainmcp.config.yaml`:
 

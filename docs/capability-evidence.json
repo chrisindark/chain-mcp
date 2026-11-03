@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "description": "Canonical registry of documented ChainMcp capabilities and their evidence. This file is the source of truth for `pnpm docs:check`; every documented capability that matters for correctness must have an entry that points to a real test file and/or a real exported API. Additions require the referenced artifact to exist first.",
+  "capabilities": [
+    {
+      "id": "contract-compile",
+      "readmeCapability": "Contract compilation and execution:",
+      "doc": "README.md",
+      "claim": "Contract compilation and execution:",
+      "source": "packages/compiler/src/index.ts",
+      "export": "compileOpenApi",
+      "test": "packages/compiler/tests/compile.test.ts",
+      "testNeedle": "compileOpenApi"
+    },
+    {
+      "id": "generated-servers",
+      "readmeCapability": "Generated servers:",
+      "doc": "README.md",
+      "claim": "Generated servers:",
+      "source": "packages/cli/src/commands/serve.ts",
+      "export": "serveCommand",
+      "test": "packages/cli/tests/commands.test.ts",
+      "testNeedle": "serveCommand"
+    },
+    {
+      "id": "dynamic-gateway",
+      "readmeCapability": "Dynamic gateway:",
+      "doc": "README.md",
+      "claim": "Dynamic gateway:",
+      "source": "packages/gateway/src/gateway.ts",
+      "export": "DynamicGateway",
+      "test": "packages/gateway/tests/gateway.test.ts",
+      "testNeedle": "DynamicGateway"
+    },
+    {
+      "id": "token-accounting",
+      "readmeCapability": "Token accounting:",
+      "doc": "README.md",
+      "claim": "Token accounting:",
+      "source": "packages/core/src/index.ts",
+      "export": "Tokenizer",
+      "test": "docs/token-accounting.md",
+      "testNeedle": "Tokenizer"
+    },
+    {
+      "id": "smart-caching",
+      "readmeCapability": "Smart caching:",
+      "doc": "README.md",
+      "claim": "Smart caching:",
+      "source": "packages/core/src/index.ts",
+      "export": "createCacheKey",
+      "test": "packages/cache-redis/tests/index.test.ts",
+      "testNeedle": "createCacheKey"
+    },
+    {
+      "id": "authentication",
+      "readmeCapability": "Authentication:",
+      "doc": "README.md",
+      "claim": "Authentication:",
+      "source": "packages/auth/src/index.ts",
+      "export": "OperationScopeAuthorizer",
+      "test": "packages/auth/tests/index.test.ts",
+      "testNeedle": "OperationScopeAuthorizer"
+    },
+    {
+      "id": "rate-limiting",
+      "readmeCapability": "Rate limiting:",
+      "doc": "README.md",
+      "claim": "Rate limiting:",
+      "source": "packages/rate-limit/src/in-memory.ts",
+      "export": "InMemoryRateLimiter",
+      "test": "packages/rate-limit/tests/in-memory.test.ts",
+      "testNeedle": "InMemoryRateLimiter"
+    },
+    {
+      "id": "analytics",
+      "readmeCapability": "Analytics:",
+      "doc": "README.md",
+      "claim": "Analytics:",
+      "source": "packages/analytics/src/index.ts",
+      "export": "StructuredLogger",
+      "test": "packages/analytics/tests/index.test.ts",
+      "testNeedle": "StructuredLogger"
+    },
+    {
+      "id": "json-navigation",
+      "readmeCapability": "JSON navigation:",
+      "doc": "README.md",
+      "claim": "JSON navigation:",
+      "source": "packages/json-navigation/src/tools.ts",
+      "export": "createJsonNavigationTools",
+      "test": "packages/json-navigation/tests/index.test.ts",
+      "testNeedle": "createJsonNavigationTools"
+    },
+    {
+      "id": "cors-default-disabled",
+      "doc": "README.md",
+      "claim": "opt-in CORS with an explicit origin allowlist (disabled by default",
+      "source": "packages/server/src/http.ts",
+      "export": "serveHttp",
+      "test": "API_REFERENCE.md",
+      "testNeedle": "CORS is disabled by default"
+    },
+    {
+      "id": "http-shutdown",
+      "doc": "README.md",
+      "claim": "drain-then-cancel signal teardown",
+      "source": "packages/server/src/http.ts",
+      "export": "serveHttp",
+      "test": "packages/server/tests/http.test.ts",
+      "testNeedle": "shutdown"
+    },
+    {
+      "id": "sql-not-implemented",
+      "doc": "README.md",
+      "claim": "PostgreSQL is not implemented and no database metadata store ships today",
+      "test": "docs/limitations.md",
+      "testNeedle": "PostgreSQL is not implemented",
+      "docOnly": true
+    }
+  ]
+}

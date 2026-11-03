@@ -737,6 +737,7 @@ export type CompileDiagnosticCode =
   | "UNSUPPORTED_SERVERS"
   | "UNSUPPORTED_CALLBACKS"
   | "CONFIG_DEPRECATED"
+  | "SECRET_UNRESOLVED"
   | "INTERNAL_ERROR";
 
 export interface CompileDiagnostic {
@@ -1582,6 +1583,43 @@ export function safeParseConfig(
   input: unknown,
 ): ReturnType<typeof ChainMcpConfigSchema.safeParse>;
 
+export class SecretResolutionError extends Error {
+  readonly code: "SECRET_UNRESOLVED";
+  readonly field: string;
+  readonly failure: "missing-variable" | "invalid-template";
+  readonly variable: string | undefined;
+}
+
+export interface SecretResolutionSource {
+  readonly field: string;
+  readonly variables: readonly string[];
+  readonly usesDefault: boolean;
+  readonly literal: boolean;
+}
+
+export interface ResolvedConfigSecrets<T = unknown> {
+  readonly config: T;
+  readonly sources: readonly SecretResolutionSource[];
+}
+
+export function resolveConfigSecrets<T = unknown>(
+  input: T,
+  options?: { env?: Readonly<Record<string, string | undefined>> },
+): ResolvedConfigSecrets<T>;
+
+export function redactConfigSecrets<T = unknown>(input: T): T;
+```
+
+`resolveConfigSecrets()` deep-copies the document, expands `${VAR}` /
+`${VAR:-default}` only in designated credential fields (inbound token and API-key
+record keys, `auth.inbound.jwt.secret`, static upstream credential values,
+OAuth `clientSecret`, `secretStore` keys, and Redis URLs/TLS keys), and returns
+value-free provenance. It throws `SecretResolutionError` (`SECRET_UNRESOLVED`)
+when a variable is unset with no default or a reference is malformed.
+`redactConfigSecrets()` replaces every designated secret field with
+`[REDACTED]` (map keys become `[REDACTED:<n>]`) and is safe to print or log.
+
+```ts
 export interface BuildExecutorOptionsOverrides extends Partial<UpstreamExecutorOptions> {
   baseUrl?: string;
 }
@@ -2377,7 +2415,19 @@ chainmcp serve [--config <path>] [--spec <path|url>] [--transport <stdio|http>] 
 chainmcp gateway serve [--config <path>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http] [--tenant <id>]
 chainmcp dev [--config <path>] [--spec <path|url>] [--base-url <url>] [--allow-http] [--tenant <id>]
 chainmcp export [--config <path>] [--spec <path|url>] [--output <dir>] [--allow-http] [--force] [--check] [--require-contract] [--local-deps <path>] [--workspace-deps]
+chainmcp config explain [--config <path>] [--json]
 ```
+
+### Configuration inspection
+
+`chainmcp config explain` loads the project configuration, resolves
+`${VAR}` / `${VAR:-default}` secret references, validates the result, and prints
+the resolved configuration with every credential field replaced by
+`[REDACTED]`. It also prints value-free provenance for each secret
+(`auth.inbound.tokens[#1]: ${INBOUND_TOKEN}`). `--json` emits
+`{ configPath, config, secretSources }`. A missing variable exits non-zero with
+`SECRET_UNRESOLVED` naming the field and variable; resolved values are never
+printed.
 
 ### Local dependency mode
 
@@ -2401,6 +2451,45 @@ required package fails before any files are written.
 
 ```ts
 export function runCli(args: string[], io?: CliIo): Promise<number>;
+
+export function configExplainCommand(
+  options: ConfigExplainOptions,
+): Promise<ConfigExplainResult>;
+
+export function findConfigPath(
+  options: FindConfigPathOptions,
+): Promise<string | undefined>;
+
+export function loadServerConfigFile(
+  configPath: string,
+  options?: { env?: Readonly<Record<string, string | undefined>> },
+): Promise<LoadedServerConfig>;
+
+export interface ConfigExplainOptions {
+  config?: string | undefined;
+  cwd?: string | undefined;
+  env?: Readonly<Record<string, string | undefined>> | undefined;
+}
+
+export interface ConfigExplainResult {
+  ok: boolean;
+  configPath?: string | undefined;
+  config?: unknown;
+  secretSources?: readonly SecretResolutionSource[] | undefined;
+  error?: string | undefined;
+}
+
+export interface FindConfigPathOptions {
+  explicit?: string | undefined;
+  cwd: string;
+  env?: Readonly<Record<string, string | undefined>>;
+}
+
+export interface LoadedServerConfig {
+  readonly config: ChainMcpConfig;
+  readonly rawConfig: Record<string, unknown> | undefined;
+  readonly secretSources: readonly SecretResolutionSource[];
+}
 
 export function initCommand(options: InitOptions): Promise<InitResult>;
 export function validateCommand(

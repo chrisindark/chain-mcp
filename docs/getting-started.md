@@ -134,9 +134,10 @@ The compiled input schemas enforce:
 
 Other JSON Schema `format` values are annotations and are not asserted.
 Unsupported composition (`oneOf`, `anyOf`, `not`, and conditional keywords) is
-rejected for tool inputs rather than silently weakened. Response schemas and
-authentication policies are compiled as metadata but are not enforced by the
-runtime or executor yet.
+rejected for tool inputs rather than silently weakened. The compiler maps response
+schemas and authentication policies into metadata, and the executor enforces response
+schemas when `server.validateResponses` is `warn` or `enforce`; authentication
+policies are not enforced by the compiler. See `docs/openapi-support.md`.
 
 ## Next steps
 
@@ -158,8 +159,9 @@ OpenAPI contracts are the default tool source, but not the only one. ChainMcp pr
 To create a new project without an OpenAPI document:
 
 ```bash
-chainmcp init --blank --name my-server --output ./my-server
+node packages/cli/dist/bin.js init --blank --name my-server --output ./my-server --local-deps "$PWD"
 cd my-server
+pnpm install
 ```
 
 This scaffolds:
@@ -248,7 +250,7 @@ You can author and serve Model Context Protocol servers in TypeScript without re
 ### 1. Scaffold a blank project
 
 ```bash
-chainmcp init --blank --output ./my-code-server
+node packages/cli/dist/bin.js init --blank --output ./my-code-server --local-deps "$PWD"
 cd ./my-code-server
 pnpm install
 ```
@@ -278,6 +280,9 @@ export const tools = [helloTool];
 ```
 
 ### 3. Validate, build, and serve
+
+From a clone without a globally installed CLI, replace each bare `chainmcp`
+command with `node packages/cli/dist/bin.js <command>`.
 
 ```bash
 # Validate project configuration and discover code-first tools

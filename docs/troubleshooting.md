@@ -85,6 +85,19 @@ ChainMcp maps internal exceptions to safe, stable error codes exposed across the
 
 ---
 
+### `SECRET_UNRESOLVED`
+
+Startup or `chainmcp validate` could not resolve a `${VAR}` reference in a
+credential field. The message names the configuration field and the environment
+variable (never the value).
+
+- Export the variable in the process running the server, or declare a fallback:
+  `clientSecret: "${OAUTH_CLIENT_SECRET:-dev-only}"`.
+- Empty environment values are treated as unset, so a blank variable still uses
+  the declared fallback.
+- Run `chainmcp config explain` to see which fields use environment references;
+  add `--json` for machine-readable output. Secrets are always redacted.
+
 ## 2. Network Security & SSRF Diagnoses
 
 ChainMcp's `@chainmcp/executor` enforces strict outbound network boundaries:

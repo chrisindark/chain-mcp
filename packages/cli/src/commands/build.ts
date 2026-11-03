@@ -127,6 +127,7 @@ export async function buildCommand(
       `${JSON.stringify(compiledTools, null, 2)}\n`,
       "utf8",
     );
+    await writeRootArtifacts(cwd, manifest, compiledTools);
 
     return {
       ok: true,
@@ -218,6 +219,7 @@ export async function buildCommand(
     `${JSON.stringify(compiled.tools, null, 2)}\n`,
     "utf8",
   );
+  await writeRootArtifacts(cwd, manifest, compiled.tools);
 
   return {
     ok: true,
@@ -227,4 +229,27 @@ export async function buildCommand(
     toolCount: compiled.tools.length,
     verifiedReproducible,
   };
+}
+
+/**
+ * Generated servers read `chainmcp.manifest.json` from the project root and
+ * `dist/compiled-tools.json` at startup. Build output stays in `outDir`, so
+ * mirror the root copies that `export` already writes and that the
+ * documentation promises for `chainmcp build`.
+ */
+async function writeRootArtifacts(
+  projectDir: string,
+  manifest: ProjectManifest,
+  tools: readonly unknown[],
+): Promise<void> {
+  await writeFile(
+    join(projectDir, "chainmcp.manifest.json"),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(projectDir, "compiled-tools.json"),
+    `${JSON.stringify(tools, null, 2)}\n`,
+    "utf8",
+  );
 }

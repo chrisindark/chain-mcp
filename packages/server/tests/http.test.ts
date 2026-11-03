@@ -1111,7 +1111,7 @@ describe("serveHttp transport and inbound auth", () => {
         warn: (message, meta) => warnings.push({ message, meta }),
       });
       try {
-        expect(warnings.length).toBe(2);
+        expect(warnings.length).toBe(1);
         const unauth = warnings.find(
           (w) => w.meta?.event === "unauthenticated_http_startup",
         );
@@ -1123,11 +1123,7 @@ describe("serveHttp transport and inbound auth", () => {
         const corsWarn = warnings.find(
           (w) => w.meta?.event === "cors_wildcard_warning",
         );
-        expect(corsWarn).toBeDefined();
-        expect(corsWarn?.message).toContain("[SECURITY WARNING]");
-        expect(corsWarn?.message).toContain(
-          "CORS is enabled with wildcard origin",
-        );
+        expect(corsWarn).toBeUndefined();
       } finally {
         await serverHandle.close();
       }

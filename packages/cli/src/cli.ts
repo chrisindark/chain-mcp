@@ -1,6 +1,8 @@
 import { parseArgs } from "node:util";
+import { stringify as stringifyYaml } from "yaml";
 
 import { buildCommand } from "./commands/build.js";
+import { configExplainCommand } from "./commands/config.js";
 import { devCommand } from "./commands/dev.js";
 import { diffCommand } from "./commands/diff.js";
 import { exportCommand } from "./commands/export.js";
@@ -26,6 +28,7 @@ Commands:
   gateway   Manage dynamic multi-contract MCP gateway (gateway serve)
   dev       Run local developer authoring loop (stdio)
   export    Export a self-contained, portable generated server project
+  config    Inspect resolved configuration (config explain)
 
 Options:
   --version, -v   Show CLI version
@@ -101,6 +104,10 @@ Command options:
     --force              Overwrite non-empty target directory
     --check              Verify deterministic reproducibility
     --require-contract   Require an OpenAPI contract specification
+
+  config explain:
+    --config <path>      Path to chainmcp.config.yaml
+    --json               Emit redacted configuration as JSON
 `;
 
 function asString(val: unknown): string | undefined {
@@ -662,6 +669,66 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       if (result.verifiedReproducible) {
         log(`Reproducibility: verified`);
       }
+      return 0;
+    }
+
+    case "config": {
+      const subCommand = positionals[1];
+      if (subCommand !== "explain") {
+        errLog(
+          `Unknown config subcommand: '${subCommand ?? ""}'. Expected 'chainmcp config explain'.`,
+        );
+        return 1;
+      }
+
+      const result = await configExplainCommand({
+        ...(asString(values.config) !== undefined
+          ? { config: asString(values.config) }
+          : {}),
+      });
+
+      if (!result.ok) {
+        errLog(`Config error: ${result.error ?? "Failed to explain config."}`);
+        return 1;
+      }
+
+      const secretSources = result.secretSources ?? [];
+
+      if (values.json) {
+        log(
+          JSON.stringify(
+            {
+              configPath: result.configPath,
+              config: result.config,
+              secretSources,
+            },
+            null,
+            2,
+          ),
+        );
+        return 0;
+      }
+
+      log(
+        `# Resolved configuration (secrets redacted): ${result.configPath ?? ""}`.trimEnd(),
+      );
+      if (secretSources.length === 0) {
+        log("# Secrets: none configured");
+      } else {
+        log("# Secrets:");
+        for (const source of secretSources) {
+          if (source.literal) {
+            log(`#   ${source.field}: literal value in config file (redacted)`);
+            continue;
+          }
+          const references = source.variables
+            .map((name) => `\${${name}}`)
+            .join(", ");
+          const fallback = source.usesDefault ? " (default allowed)" : "";
+          log(`#   ${source.field}: ${references}${fallback}`);
+        }
+      }
+      log(stringifyYaml(result.config).trimEnd());
       return 0;
     }
 

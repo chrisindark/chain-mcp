@@ -69,6 +69,8 @@ export interface HttpServeOptions {
   enableDnsRebindingProtection?: boolean | undefined;
   /** Request timeout in milliseconds (applied to HTTP server and body reads; default 15,000 ms). */
   requestTimeoutMs?: number | undefined;
+  /** Time to drain in-flight requests during shutdown (default 10,000 ms). */
+  shutdownTimeoutMs?: number | undefined;
   /** Install SIGINT/SIGTERM handlers and set standard process exit codes (default true). */
   handleProcessSignals?: boolean | undefined;
 }
@@ -83,6 +85,7 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PATH = "/mcp";
 const DEFAULT_MAX_REQUEST_BYTES = 1024 * 1024; // 1 MiB (1,048,576 bytes)
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 
 function normalizeHostname(hostOrUrl: string): string {
   const trimmed = hostOrUrl.trim().toLowerCase();
@@ -279,8 +282,10 @@ export async function serveHttp(
     if (corsEnabled) {
       if (httpOptions.allowedOrigins && httpOptions.allowedOrigins.length > 0) {
         corsAllowedOrigins = [...httpOptions.allowedOrigins];
-      } else if (loopback) {
-        corsAllowedOrigins = ["*"];
+      } else if (httpOptions.cors === true) {
+        // Explicit true with no origins -> disabled for safety
+        corsEnabled = false;
+        corsAllowedOrigins = [];
       }
     }
   } else if (httpOptions.cors && typeof httpOptions.cors === "object") {
@@ -296,9 +301,6 @@ export async function serveHttp(
     } else {
       if (corsAllowedOrigins.length > 0) {
         corsEnabled = true;
-      } else if (loopback) {
-        corsEnabled = true;
-        corsAllowedOrigins = ["*"];
       } else {
         corsEnabled = false;
       }
@@ -308,11 +310,9 @@ export async function serveHttp(
     if (httpOptions.allowedOrigins && httpOptions.allowedOrigins.length > 0) {
       corsEnabled = true;
       corsAllowedOrigins = [...httpOptions.allowedOrigins];
-    } else if (loopback) {
-      corsEnabled = true;
-      corsAllowedOrigins = ["*"];
     } else {
       corsEnabled = false;
+      corsAllowedOrigins = [];
     }
   }
 
@@ -357,6 +357,8 @@ export async function serveHttp(
     httpOptions.maxRequestBytes ?? DEFAULT_MAX_REQUEST_BYTES;
   const requestTimeoutMs =
     httpOptions.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const shutdownTimeoutMs =
+    httpOptions.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
 
   const hasExplicitAllowedHosts =
     httpOptions.allowedHosts !== undefined &&
@@ -455,9 +457,31 @@ export async function serveHttp(
     notifyClosed = resolve;
   });
 
+  let isShuttingDown = false;
+  const activeRequests = new Set<AbortController>();
+  const shutdownAbortController = new AbortController();
+
   const httpServer = http.createServer(async (req, res) => {
     // Request timeout protection: abort socket if read takes longer than requestTimeoutMs
     req.on("error", () => {});
+    if (isShuttingDown) {
+      if (!res.headersSent) {
+        res.statusCode = 503;
+        res.setHeader("Connection", "close");
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: {
+              code: -32000,
+              message: "Service Unavailable: server is shutting down",
+            },
+            id: null,
+          }),
+        );
+      }
+      return;
+    }
     req.setTimeout(requestTimeoutMs, () => {
       if (!res.headersSent) {
         res.statusCode = 408;
@@ -830,6 +854,7 @@ export async function serveHttp(
         method: req.method ?? "GET",
         headers: webHeaders,
         body: body ? new Uint8Array(body) : null,
+        signal: shutdownAbortController.signal,
       });
 
       // Invoke MCP handler with authInfo pass-through
@@ -891,6 +916,17 @@ export async function serveHttp(
   const close = async (): Promise<void> => {
     if (closePromise) return closePromise;
     closePromise = (async () => {
+      if (isShuttingDown) {
+        // Already shutting down, just wait
+      }
+      isShuttingDown = true;
+      try {
+        if (typeof httpServer.close === "function") {
+          httpServer.close(() => {});
+        }
+      } catch {
+        // ignore
+      }
       try {
         await mcpHandler.close().catch(() => {});
       } catch {
@@ -901,6 +937,31 @@ export async function serveHttp(
       } catch {
         // Ignored: server teardown errors should not block HTTP server closure
       }
+      // Drain with timeout
+      const drainTimeout = shutdownTimeoutMs;
+      if (drainTimeout > 0) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(() => {
+            resolve();
+          }, drainTimeout);
+          // Try to wait a bit for in-flight; simple approach
+          if (activeRequests.size === 0) {
+            clearTimeout(timer);
+            resolve();
+            return;
+          }
+          const check = () => {
+            if (activeRequests.size === 0) {
+              clearTimeout(timer);
+              resolve();
+            } else {
+              setTimeout(check, 10);
+            }
+          };
+          check();
+        });
+      }
+      shutdownAbortController.abort();
       if (httpServer.listening) {
         if (typeof httpServer.closeAllConnections === "function") {
           httpServer.closeAllConnections();
@@ -920,11 +981,17 @@ export async function serveHttp(
   const onAbort = () => {
     void close().catch(() => {});
   };
+  let sigintCalled = false;
+  let sigtermCalled = false;
   const onSigint = () => {
+    if (sigintCalled) return;
+    sigintCalled = true;
     process.exitCode = 130;
     void close().catch(() => {});
   };
   const onSigterm = () => {
+    if (sigtermCalled) return;
+    sigtermCalled = true;
     process.exitCode = 143;
     void close().catch(() => {});
   };
@@ -932,8 +999,8 @@ export async function serveHttp(
   const cleanup = () => {
     httpOptions.signal?.removeEventListener("abort", onAbort);
     if (handleProcessSignals) {
-      process.off("SIGINT", onSigint);
-      process.off("SIGTERM", onSigterm);
+      process.removeListener("SIGINT", onSigint);
+      process.removeListener("SIGTERM", onSigterm);
     }
   };
 
@@ -944,8 +1011,8 @@ export async function serveHttp(
   }
 
   if (handleProcessSignals) {
-    process.once("SIGINT", onSigint);
-    process.once("SIGTERM", onSigterm);
+    process.on("SIGINT", onSigint);
+    process.on("SIGTERM", onSigterm);
   }
 
   void closed.then(cleanup);

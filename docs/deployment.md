@@ -47,11 +47,16 @@ my-server/
 From the exported server directory:
 
 ```bash
-npm install
-npm run build
+pnpm install
+pnpm build
 ```
 
 This compiles TypeScript files from `src/` into `dist/`.
+
+If the generated project was scaffolded with `--local-deps`, it includes a
+`packageManager: pnpm@...` pin and a `pnpm-workspace.yaml` override; use pnpm.
+After the `@chainmcp/*` packages are published, a standard `npm install` or
+`pnpm install` without local-deps also works.
 
 ---
 
@@ -111,18 +116,18 @@ Exported servers include a multi-stage `Dockerfile` following container best pra
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci || npm install
+RUN pnpm install --frozen-lockfile
 COPY tsconfig*.json ./
 COPY spec ./spec
 COPY src ./src
-RUN npm run build
+RUN pnpm build
 
 # Stage 2: Production runner
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./
-RUN npm ci --only=production || npm install --production
+RUN pnpm install --frozen-lockfile --prod
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/spec ./spec
 COPY chainmcp.config.yaml ./
@@ -131,6 +136,11 @@ COPY chainmcp.manifest.json ./
 USER node
 ENTRYPOINT ["node", "dist/server.js"]
 ```
+
+The template assumes the generated server was scaffolded with local-deps and
+includes a `pnpm-workspace.yaml` override. After the `@chainmcp/*` packages are
+published, a standard `pnpm` or `npm` Dockerfile without the override also
+works; adjust the `RUN` lines accordingly.
 
 ### Building and Running Containers
 
@@ -202,7 +212,20 @@ When deploying servers or the dynamic gateway over Streamable HTTP (`--transport
    - Wildcard origin (`"*"`) is never permitted when `allowCredentials: true` is configured; this dangerous combination is rejected at config parse time and server startup.
    - `Access-Control-Allow-Headers` is dynamically computed from configured inbound verifier headers (such as custom `ApiKeyVerifierOptions.headerName`), standard defaults, and custom `allowedHeaders`.
    - `Vary: Origin` is always attached to HTTP responses whenever CORS is enabled.
-   - In production and non-loopback bindings, CORS defaults to disabled (`enabled: false`) unless explicitly configured. Loopback bindings (`127.0.0.1`) permit CORS for development with wildcard origin and emit a prominent security warning.
+   - CORS defaults to disabled on **every** bind host, including loopback. There is no implicit wildcard: enabling CORS requires an explicit `allowedOrigins` list, and `cors: true` without origins stays disabled. Explicit wildcard `"*"` is honoured but always emits a startup warning.
+   - Browser-origin validation is always on. A request with an `Origin` outside the effective allowlist (configured origins, or the bind-host defaults such as `localhost`, `127.0.0.1`, `[::1]`) is rejected with `403` before tools run, even when CORS headers are disabled. Requests without `Origin` (CLI clients) are unaffected.
+   - To use the MCP Inspector UI, opt in to its origin explicitly:
+
+     ```yaml
+     server:
+       cors:
+         enabled: true
+         allowedOrigins:
+           - http://localhost:6274
+           - http://127.0.0.1:6274
+     ```
+
+     The Inspector CLI uses stdio and sends no `Origin` header.
 
 4. **Timeouts (`server.requestTimeoutMs`):**
    - Default request timeout is 15,000 ms (15s). Ensure reverse proxy timeouts (`proxy_read_timeout`, `proxy_send_timeout`) are aligned to prevent hung connections.
@@ -217,12 +240,23 @@ When deploying servers or the dynamic gateway over Streamable HTTP (`--transport
 
 Never hardcode credentials or secrets in `chainmcp.config.yaml` or repository files. Use:
 
-1. **Environment Variables:**
-   ```bash
-   export CHAINMCP_AUTH_API_KEY="secret-api-token"
+1. **Environment references:** Credential fields accept `${VAR}` and
+   `${VAR:-default}`. A missing referenced variable stops startup with
+   `SECRET_UNRESOLVED` naming the field and variable:
+   ```yaml
+   auth:
+     upstream:
+       providers:
+         - type: oauth
+           tokenUrl: https://auth.example.com/oauth/token
+           clientId: chainmcp
+           clientSecret: "${OAUTH_CLIENT_SECRET}"
    ```
-2. **Pluggable Secret Stores:**
-   Configure `auth.upstream` with `type: env`, `type: secretStore`, or `type: oauth` using authenticated AES-256-GCM encryption.
+   See [`CONFIGURATION.md`](../CONFIGURATION.md#secret-references) for the full
+   field list.
+2. **Upstream credential providers:** Configure `auth.upstream` with
+   `type: env` (for example `CHAINMCP_AUTH_API_KEY`), `type: secretStore`, or
+   `type: oauth` using authenticated AES-256-GCM encryption.
 
 ### Shared Redis Topology
 
@@ -234,24 +268,53 @@ For clustered deployments using Redis for distributed caching (`@chainmcp/cache-
 
 ### Process Signals and Teardown
 
-`@chainmcp/server` listens for `SIGINT` (Ctrl+C) and `SIGTERM` signals:
+`@chainmcp/server` listens for `SIGINT` (Ctrl+C) and `SIGTERM` signals. Signal
+handling is idempotent: the first signal sets the conventional exit code (`130`
+for SIGINT, `143` for SIGTERM) and starts one shutdown; repeated or mixed
+signals share the same promise and do not run teardown twice.
 
-- Gracefully completes pending tool calls within their timeout budget.
-- Shuts down the stdio transport and removes stream event listeners.
-- Exits with conventional status codes (`130` on SIGINT, `143` on SIGTERM).
-- Automatically closes when standard input (`stdin`) reaches `EOF` (e.g. when the parent MCP client process terminates).
+**HTTP transport (`--transport http`)** shuts down drain-then-cancel:
+
+1. It marks the server as shutting down. Requests that arrive during the
+   window get `503` with `Connection: close`; the listener stays bound until the
+   drain ends so late clients receive a rejection rather than a reset.
+2. Work-bearing `POST` and `DELETE` requests drain for up to
+   `server.shutdownTimeoutMs` (default 10,000 ms; `0` skips the drain).
+   `GET`/`HEAD` streams such as SSE and health probes do not extend the budget.
+3. When the budget expires, it aborts the request cancellation signal. Tools
+   that bind `context.signal` to their I/O are cancelled cooperatively and
+   return `CANCELLED`; a tool that ignores the signal is abandoned, then its
+   socket is force-closed. Teardown cannot terminate user code for it.
+4. It closes the listener, tears down the MCP handler and server, and calls
+   `runtime.close()` once to flush analytics sinks and drain the shared Redis
+   client that `@chainmcp/config` created. Caller-supplied clients are not
+   closed.
+
+**Stdio transport** closes on application `AbortSignal`, `SIGINT`, `SIGTERM`,
+and automatically when standard input (`stdin`) reaches `EOF` (for example when
+the parent MCP client process terminates). It removes stream event listeners
+and releases runtime-owned clients on the same `runtime.close()` hook. A
+generated server inherits these defaults from `@chainmcp/server`.
 
 ---
 
 ## 6. Configuration Environment Variables
 
-| Variable                       | Description                                                          | Default                  |
-| ------------------------------ | -------------------------------------------------------------------- | ------------------------ |
-| `CHAINMCP_CONFIG`              | Path to `chainmcp.config.yaml` or custom configuration file          | `./chainmcp.config.yaml` |
-| `CHAINMCP_LOG_LEVEL`           | Log verbosity threshold (`debug`, `info`, `warn`, `error`, `silent`) | `info`                   |
-| `CHAINMCP_UPSTREAM_TIMEOUT_MS` | Override upstream request timeout in milliseconds                    | `15000`                  |
-| `CHAINMCP_REDIS_URL`           | Redis URL for distributed rate limiting or shared cache              | N/A                      |
-| `CHAINMCP_SECRET_PROVIDER`     | Configured secret store provider                                     | N/A                      |
+| Variable                        | Description                                                          | Default                  |
+| ------------------------------- | -------------------------------------------------------------------- | ------------------------ |
+| `CHAINMCP_CONFIG`               | Path to `chainmcp.config.yaml` or custom configuration file          | `./chainmcp.config.yaml` |
+| `CHAINMCP_GATEWAY_CONFIG`       | Path to the gateway configuration file                               | `./gateway.config.yaml`  |
+| `CHAINMCP_LOG_LEVEL`            | Log verbosity threshold (`debug`, `info`, `warn`, `error`, `silent`) | `info`                   |
+| `CHAINMCP_REDIS_URL`            | Redis URL for distributed rate limiting or shared cache              | N/A                      |
+| `CHAINMCP_ALLOW_MANIFEST_DRIFT` | Generated servers: warn instead of failing on artifact drift         | unset                    |
+| `CHAINMCP_AUTH_<SCHEME>`        | Upstream credential lookup for the `type: env` provider              | N/A                      |
+
+Credential fields in `chainmcp.config.yaml` also accept `${VAR}` and
+`${VAR:-default}` references; a missing variable fails startup with
+`SECRET_UNRESOLVED` naming the field and variable. See
+[`CONFIGURATION.md`](../CONFIGURATION.md#secret-references) for the exact field
+list. `chainmcp config explain` prints the resolved configuration with secrets
+redacted.
 
 ---
 

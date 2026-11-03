@@ -8,6 +8,8 @@ export type {
   BuildOptions,
   BuildResult,
   CliIo,
+  ConfigExplainOptions,
+  ConfigExplainResult,
   DevOptions,
   DevResult,
   DiffOptions,
@@ -38,6 +40,15 @@ export {
 } from "./code-first-loader.js";
 
 export { runCli } from "./cli.js";
+export { configExplainCommand } from "./commands/config.js";
+export {
+  DEFAULT_CONFIG_FILENAMES,
+  findConfigPath,
+  loadServerConfigFile,
+  pathExists,
+  type FindConfigPathOptions,
+  type LoadedServerConfig,
+} from "./config-loader.js";
 export { initCommand } from "./commands/init.js";
 export { validateCommand } from "./commands/validate.js";
 export { buildCommand } from "./commands/build.js";

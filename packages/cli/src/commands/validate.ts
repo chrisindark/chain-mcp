@@ -1,12 +1,12 @@
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { parse as parseYaml } from "yaml";
 
 import { compileOpenApi, type CompileDiagnostic } from "@chainmcp/compiler";
-import { parseConfig, type ChainMcpConfig } from "@chainmcp/config";
+import { SecretResolutionError, type ChainMcpConfig } from "@chainmcp/config";
 import { normalizeAllowedHost } from "@chainmcp/executor";
 
 import { loadCodeFirstTools } from "../code-first-loader.js";
+import { findConfigPath, loadServerConfigFile } from "../config-loader.js";
 import { loadSpec } from "../spec-loader.js";
 import type { ValidateOptions, ValidateResult } from "../types.js";
 
@@ -25,37 +25,18 @@ export async function validateCommand(
   const cwd = options.cwd ?? process.cwd();
 
   // 1. Locate configuration
-  let configPath = options.config
-    ? resolve(cwd, options.config)
-    : process.env.CHAINMCP_CONFIG
-      ? resolve(cwd, process.env.CHAINMCP_CONFIG)
-      : undefined;
-
-  if (!configPath) {
-    const candidateConfigs = [
-      resolve(cwd, "chainmcp.config.yaml"),
-      resolve(cwd, "chainmcp.config.yml"),
-      resolve(cwd, "chainmcp.config.json"),
-    ];
-    for (const cand of candidateConfigs) {
-      if (await fileExists(cand)) {
-        configPath = cand;
-        break;
-      }
-    }
-  }
+  const configPath = await findConfigPath({
+    explicit: options.config,
+    cwd,
+  });
 
   let config: ChainMcpConfig | undefined;
   let rawParsedConfig: Record<string, unknown> | undefined;
   if (configPath && (await fileExists(configPath))) {
     try {
-      const rawText = await readFile(configPath, "utf8");
-      const parsed = parseYaml(rawText);
-      rawParsedConfig =
-        typeof parsed === "object" && parsed !== null
-          ? (parsed as Record<string, unknown>)
-          : undefined;
-      config = parseConfig(parsed);
+      const loaded = await loadServerConfigFile(configPath);
+      rawParsedConfig = loaded.rawConfig;
+      config = loaded.config;
     } catch (err) {
       return {
         ok: false,
@@ -65,7 +46,10 @@ export async function validateCommand(
         diagnostics: [
           {
             severity: "error",
-            code: "DOCUMENT_INVALID",
+            code:
+              err instanceof SecretResolutionError
+                ? "SECRET_UNRESOLVED"
+                : "DOCUMENT_INVALID",
             message: `Failed to parse configuration: ${err instanceof Error ? err.message : String(err)}`,
           },
         ],
