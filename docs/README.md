@@ -7,6 +7,7 @@ Welcome to the ChainMcp documentation. Use the guide below based on what you wan
 ## 🌟 Start Here
 
 - **[Product & Architecture Guide](./product-guide.md):** The complete plain-English guide covering what ChainMcp is, why it exists, visual architecture diagrams, limitations, observability, caching, and quick adoption.
+- **[Limitations](./limitations.md):** The consolidated catalog of what ChainMcp does not do, with each boundary marked by design, deferred, or a known gap.
 - **[Getting Started](./getting-started.md):** End-to-end tutorial using the runnable example and the Model Context Protocol Inspector CLI.
 - **[Concepts & Core Model](./concepts.md):** High-level explanation of tools, contracts, execution stages, and tenant models.
 

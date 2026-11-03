@@ -148,7 +148,7 @@ flowchart LR
 
 ## 4. Package Map: What Each Part Does
 
-ChainMcp is organized into 13 modular workspace packages:
+ChainMcp is organized into 15 modular workspace packages:
 
 | Package                         | Purpose in One Sentence                                                                                                          |
 | :------------------------------ | :------------------------------------------------------------------------------------------------------------------------------- |
@@ -165,6 +165,8 @@ ChainMcp is organized into 13 modular workspace packages:
 | **`@chainmcp/json-navigation`** | AI helper tools that allow LLMs to paginate, slice, and query large JSON datasets without loading the whole file into context.   |
 | **`@chainmcp/config`**          | Validates `chainmcp.config.yaml` using strict Zod schemas.                                                                       |
 | **`@chainmcp/cli`**             | Command-line tool (`chainmcp init`, `validate`, `build`, `serve`, `export`, `diff`).                                             |
+| **`@chainmcp/declarative`**     | Validates versioned JSON HTTP tool descriptors and lowers them into the bounded executor (post-1.0).                             |
+| **`@chainmcp/admin`**           | Self-hosted operator API and console for validating, previewing, publishing, and rolling back descriptors (post-1.0).            |
 
 ---
 
@@ -173,10 +175,12 @@ ChainMcp is organized into 13 modular workspace packages:
 To ensure smooth adoption, understand what ChainMcp is **not**:
 
 - **Not an Agent Framework:** ChainMcp does not prompt LLMs or decide which tool to call. It is the tool execution layer used by Claude, OpenAI Assistants, LangChain, CrewAI, AutoGen, or Cursor.
-- **JSON Payloads Only in 1.0:** File uploads (multipart/form-data) and raw binary streams (audio/video generation chunks) are not supported in 1.0. Responses must be JSON.
+- **JSON Responses Only:** Request bodies may be JSON, `application/x-www-form-urlencoded`, or `multipart/form-data` for compiled operations, but upstream responses and all MCP payloads must be JSON. Streaming and raw binary responses are not supported. Declarative descriptors (post-1.0) accept JSON in and out only.
 - **SSRF Guard Blocks Localhost by Default:** You cannot point ChainMcp in production to `http://localhost:8080` or `127.0.0.1`. It strictly demands public, allowlisted hostnames. (In tests or development, use mock transports or explicit flags).
 - **No Hosted Cloud Dashboard Yet:** ChainMcp is 100% self-hosted open-source software. There is no hosted web UI control plane; administration is done via YAML files, CLI commands, or TypeScript gateway APIs.
 - **Stateless Tool Invocations:** The runtime does not store intermediate conversational state between tool calls; state lives in your AI agent.
+
+See [`docs/limitations.md`](./limitations.md) for the complete, per-package catalog of unsupported features, defaults, and deliberate deferrals.
 
 ---
 

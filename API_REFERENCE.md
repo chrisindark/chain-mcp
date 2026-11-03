@@ -947,7 +947,7 @@ The policy is compiler metadata, not enforcement. `operation.requiredScopes` rem
 
 The output is typed as `ContractDiffResult` (`schemaVersion: 1`), providing `summary: { breaking, potentiallyBreaking, nonBreaking }`, tool list sets (`addedTools`, `removedTools`, `changedTools`, `unchangedTools`), and categorized arrays (`changes`, `breaking`, `potentiallyBreaking`, `nonBreaking`).
 
-Known limitations: response schemas are unvalidated metadata and no output validator is generated; authentication policies are not enforced and no credentials are injected; no remote references; input `oneOf`, `anyOf`, `not`, conditional, dependent, and pattern composition is rejected; `allOf` supports object intersections only; only the listed runtime formats are asserted; `const` is not supported; no YAML merge-key support; and no regeneration command that reads/writes a manifest. The compiler is not wired into the CLI or generated-server flow yet. See `@chainmcp/executor` for the implemented upstream HTTP slice and `docs/getting-started.md` for the runnable example.
+Known limitations: the compiler maps response schemas but does not apply them — enforcement is performed by `@chainmcp/executor` when `validateResponses` is enabled (`warn` by default, `enforce` optional), and composition keywords the runtime validator does not support are preserved only as metadata; authentication policies are mapped but not enforced and no credentials are injected by the compiler (runtime enforcement and injection are executor concerns); no remote references; input `oneOf`, `anyOf`, `not`, conditional, dependent, and pattern composition is rejected; `allOf` supports object intersections only; only the listed runtime formats are asserted; `const` is not supported; no YAML merge-key support; and the compiler owns no regeneration command that reads/writes a manifest. Compilation is wired into the CLI `build`/`export` flow. See `@chainmcp/executor` for the implemented upstream HTTP slice and `docs/getting-started.md` for the runnable example.
 
 ## `@chainmcp/executor`
 
@@ -1100,7 +1100,7 @@ for (const tool of executor.createTools(result.tools)) runtime.register(tool);
 
 - Upstream credential injection supports static, env, secretStore, and OAuth client credentials.
 - Response schema validation validates upstream responses against compiled schemas (modes: `off`, `warn`, `enforce`), redacting response bodies in logs and error diagnostics.
-- No retries, no multipart/binary bodies, no OpenAPI `style`/`explode` serialization, no cookie parameters, and no per-operation `servers` resolution.
+- No retries, no streaming or binary response bodies, and no response decompression. Request bodies support JSON, `application/x-www-form-urlencoded`, and `multipart/form-data`; parameter serialization supports query `style: form` with `explode: true` and path/header `style: simple` with `explode: false`, with other styles rejected. Cookie parameters are supported. There is no per-operation `servers` resolution.
 - A custom `UpstreamTransport` is trusted adapter code. The executor rechecks response size and JSON shape, but cannot verify that an injected transport connected to the pinned address.
 - DNS resolution is not cancellable at the OS level; an aborted call stops waiting and aborts the HTTP request, but the resolver promise may settle later.
 
