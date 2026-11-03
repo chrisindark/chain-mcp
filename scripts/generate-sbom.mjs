@@ -16,6 +16,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = resolve(__dirname, "..");
 
 const WORKSPACE_PACKAGES = [
+  "packages/admin/package.json",
   "packages/analytics/package.json",
   "packages/auth/package.json",
   "packages/authoring/package.json",
@@ -24,6 +25,7 @@ const WORKSPACE_PACKAGES = [
   "packages/compiler/package.json",
   "packages/config/package.json",
   "packages/core/package.json",
+  "packages/declarative/package.json",
   "packages/executor/package.json",
   "packages/gateway/package.json",
   "packages/json-navigation/package.json",

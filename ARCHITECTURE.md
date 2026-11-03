@@ -2,17 +2,20 @@
 
 ## 1. Overview
 
-The architecture consists of tool sources, a shared runtime, MCP adapters, infrastructure adapters, and two delivery modes. The workspace contains 13 fully implemented packages: `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, `@chainmcp/server`, `@chainmcp/analytics`, `@chainmcp/json-navigation`, `@chainmcp/cli`, `@chainmcp/authoring`, and `@chainmcp/gateway`. OpenAPI compilation is one tool source; tools may also be registered from application code through the authoring facade.
+The architecture consists of tool sources, a shared runtime, MCP adapters, infrastructure adapters, and two delivery modes. The workspace contains 15 fully implemented packages: `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, `@chainmcp/server`, `@chainmcp/analytics`, `@chainmcp/json-navigation`, `@chainmcp/cli`, `@chainmcp/authoring`, `@chainmcp/declarative`, `@chainmcp/admin`, and `@chainmcp/gateway`. OpenAPI compilation is one tool source; tools may also be registered from application code through the authoring facade or from versioned declarative descriptors.
 
 ```mermaid
 flowchart TD
     subgraph Sources["Tool Sources"]
         Contract["OpenAPI 3.0 / 3.1 Contract"] --> Compiler["@chainmcp/compiler"]
         Code["Code-Defined Tools"] --> Authoring["@chainmcp/authoring"]
+        Descriptor["Declarative Descriptors"] --> Declarative["@chainmcp/declarative"]
     end
 
     Compiler --> Tools["Audited Tool Definitions"]
     Authoring --> Tools
+    Declarative --> Executor
+    Declarative --> Tools
 
     subgraph Modes["Deployment Modes"]
         Tools --> Srv["Generated Server (@chainmcp/cli)"]
@@ -45,13 +48,15 @@ flowchart TD
 
 ## 3. Monorepo package boundaries
 
-Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, `@chainmcp/server`, `@chainmcp/analytics`, `@chainmcp/json-navigation`, `@chainmcp/cli`, `@chainmcp/authoring`, and `@chainmcp/gateway`. Remaining rows describe planned boundaries; no empty packages are created for them.
+Currently implemented workspace packages are `@chainmcp/core`, `@chainmcp/config`, `@chainmcp/auth`, `@chainmcp/cache-redis`, `@chainmcp/compiler`, `@chainmcp/executor`, `@chainmcp/rate-limit`, `@chainmcp/server`, `@chainmcp/analytics`, `@chainmcp/json-navigation`, `@chainmcp/cli`, `@chainmcp/authoring`, `@chainmcp/declarative`, `@chainmcp/admin`, and `@chainmcp/gateway`. Remaining rows describe planned boundaries; no empty packages are created for them.
 
 | Package                     | Responsibility                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `@chainmcp/core`            | Runtime interfaces, registry, execution pipeline, errors                                               |
 | `@chainmcp/compiler`        | OpenAPI parsing, validation, tool generation                                                           |
 | `@chainmcp/authoring`       | Code-first tool definitions, schema lowering, and scaffold support                                     |
+| `@chainmcp/declarative`     | Versioned declarative HTTP descriptors, validation, and executor lowering                              |
+| `@chainmcp/admin`           | Self-hosted operator API and console for validating and publishing descriptors                         |
 | `@chainmcp/server`          | Official MCP SDK tool adapter and local stdio transport                                                |
 | `@chainmcp/cache-redis`     | Optional shared Redis cache adapter; cache interfaces remain in core                                   |
 | `@chainmcp/auth`            | Identity, authorization, and credential abstractions, including the default operation-scope authorizer |
@@ -115,14 +120,59 @@ registers into the shared runtime pipeline:
   definition time, and every invocation passes through the exact same authorization,
   validation, cache, rate-limit, timeout, cancellation, and output-policy pipeline
   as compiled tools.
-- **Declarative source (post-1.0).** A versioned descriptor executed by the
-  bounded HTTP executor, with no user-supplied code evaluation.
+- **Declarative source (`@chainmcp/declarative`, post-1.0 slice).** A versioned
+  JSON descriptor (name, audited schema, method, relative path, auth
+  references, policy) is validated at load time and lowered into a
+  `CompiledOperation` for the same bounded executor. No user-supplied code is
+  evaluated. The self-hosted admin surface publishes descriptor sets through
+  the dynamic gateway, so tenant ownership, revision history, activation, and
+  audit are shared rather than re-implemented; durable persistence remains
+  open (ADR 0028, ADR 0029).
 
 Compiled tools preserve deterministic manifests and contract hashes. Manual
 tools are application code owned by the deploying developer and are not covered
 by a contract manifest; they remain subject to the same runtime policy. No
 source may bypass registration audits, and no source evaluates user-supplied
 source code.
+
+## 4.2 Declarative admin plane
+
+`@chainmcp/admin` is an operator-facing HTTP surface, separate from the
+caller-facing MCP listener. It authenticates deployment-issued bearer tokens,
+scopes them to tenants, validates descriptor sets, and publishes them through
+`DynamicGateway.publishContract({ tools })`:
+
+1. Tenant scope is checked before the tenant/contract binding is resolved, so
+   a scoped token cannot enumerate other tenants' contracts.
+2. The binding supplies the destination policy, credential scheme map,
+   credential provider, and limits. Descriptor input cannot widen them.
+3. Validation and preview parse every descriptor with
+   `@chainmcp/declarative` and reuse the deployment scheme map. Preview is
+   static lowering and makes no upstream request.
+4. Publish lowers a fresh `UpstreamExecutor` and `DeclarativeToolSource`, then
+   hands the tools to the gateway, which owns revision ids, tenant stamps,
+   activation, collision checks, runtime rebuild, and audit.
+5. Descriptor revisions and the submitted set are recorded by the descriptor
+   store and mirrored in revision metadata, so revision listings can show
+   descriptor provenance.
+
+Descriptor revisions are stored behind `DescriptorRevisionStore` with
+`candidate → active → superseded/failed` transitions, one active record per
+tenant/contract, and admin revision ids (`dset_…`) distinct from gateway
+revisions (`rev_…`). Publication writes a candidate, publishes to the gateway,
+then activates the record; a gateway rejection marks the candidate failed, and
+a store rejection prevents publication. Rollback republishes a stored
+superseded revision as a new revision, so it survives a restart and keeps
+history append-only. `DeclarativeAdmin.restore()` republishes each bound
+contract's active record at startup because the gateway registry is in memory.
+The default store is in-memory; `FileDescriptorRevisionStore` writes a
+versioned JSON snapshot with `0600` permissions, fsync, and atomic rename, and
+is single-writer with byte and revision caps.
+
+The Node transport defaults to loopback and adds a `Host` allowlist (DNS
+rebinding) plus same-origin `Origin`/`Sec-Fetch-Site` checks before the admin
+handler runs. The bundled console is same-origin with a strict CSP, keeps the
+presented token in page memory, and never persists it.
 
 ## 5. OpenAPI compiler
 

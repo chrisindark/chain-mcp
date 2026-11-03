@@ -45,22 +45,22 @@ rather than marking it complete.
 
 | Done | ID    | Milestone                                                     | Priority | Area                 | Depends on  |
 | ---- | ----- | ------------------------------------------------------------- | -------- | -------------------- | ----------- |
-| [x]  | RM-01 | Fix inbound verifier prototype-chain auth bypass              | P0       | server/auth          | —           |
-| [x]  | RM-02 | Enforce HTTP request size, Host, Origin, DNS-rebinding limits | P0       | server/transport     | —           |
-| [x]  | RM-03 | Make HTTP inbound auth fail closed                            | P0       | server/cli           | RM-02       |
-| [x]  | RM-04 | Replace origin reflection with configurable CORS allowlist    | P1       | server/transport     | RM-02       |
-| [x]  | RM-05 | Reject or implement silently ignored OpenAPI constructs       | P1       | compiler             | —           |
-| [x]  | RM-06 | Preserve upstream base URL scheme, port, and path prefix      | P1       | config/executor/cli  | —           |
-| [x]  | RM-07 | Unify remote spec loading with SSRF-safe fetch policy         | P1       | cli                  | RM-06       |
-| [x]  | RM-08 | Support code-first projects in `serve`, `build`, `export`     | P1       | cli                  | RM-07       |
-| [x]  | RM-09 | Resolve or reject `mutualTLS` and `openIdConnect` schemes     | P1       | executor/compiler    | —           |
-| [x]  | RM-10 | Bound serialization and add response-schema validation        | P1       | core/executor        | —           |
-| [x]  | RM-11 | Support form, multipart, and cookie parameters                | P2       | compiler/executor    | RM-05       |
-| [x]  | RM-12 | Classify non-removal contract changes as breaking in `diff`   | P1       | cli/compiler         | —           |
-| [x]  | RM-13 | Remove implicit `"default"` tenant fallback                   | P1       | gateway/cli          | RM-01       |
-| [x]  | RM-14 | Wire `ToolTracer` into runtime and server                     | P2       | core/server/config   | —           |
-| [x]  | RM-15 | Wire Redis rate limiter through CLI and config                | P1       | config/cli           | —           |
-| [x]  | RM-16 | Harden Redis client: TLS, ACL, pooling, reconnect             | P2       | cache-redis          | RM-15       |
+| [ ]  | RM-01 | Fix inbound verifier prototype-chain auth bypass              | P0       | server/auth          | —           |
+| [ ]  | RM-02 | Enforce HTTP request size, Host, Origin, DNS-rebinding limits | P0       | server/transport     | —           |
+| [ ]  | RM-03 | Make HTTP inbound auth fail closed                            | P0       | server/cli           | RM-02       |
+| [ ]  | RM-04 | Replace origin reflection with configurable CORS allowlist    | P1       | server/transport     | RM-02       |
+| [ ]  | RM-05 | Reject or implement silently ignored OpenAPI constructs       | P1       | compiler             | —           |
+| [ ]  | RM-06 | Preserve upstream base URL scheme, port, and path prefix      | P1       | config/executor/cli  | —           |
+| [ ]  | RM-07 | Unify remote spec loading with SSRF-safe fetch policy         | P1       | cli                  | RM-06       |
+| [ ]  | RM-08 | Support code-first projects in `serve`, `build`, `export`     | P1       | cli                  | RM-07       |
+| [ ]  | RM-09 | Resolve or reject `mutualTLS` and `openIdConnect` schemes     | P1       | executor/compiler    | —           |
+| [ ]  | RM-10 | Bound serialization and add response-schema validation        | P1       | core/executor        | —           |
+| [ ]  | RM-11 | Support form, multipart, and cookie parameters                | P2       | compiler/executor    | RM-05       |
+| [ ]  | RM-12 | Classify non-removal contract changes as breaking in `diff`   | P1       | cli/compiler         | —           |
+| [ ]  | RM-13 | Remove implicit `"default"` tenant fallback                   | P1       | gateway/cli          | RM-01       |
+| [ ]  | RM-14 | Wire `ToolTracer` into runtime and server                     | P2       | core/server/config   | —           |
+| [ ]  | RM-15 | Wire Redis rate limiter through CLI and config                | P1       | config/cli           | —           |
+| [ ]  | RM-16 | Harden Redis client: TLS, ACL, pooling, reconnect             | P2       | cache-redis          | RM-15       |
 | [ ]  | RM-17 | Add secret interpolation and implement documented env vars    | P1       | config/cli           | —           |
 | [ ]  | RM-18 | Stamp generated projects with the real CLI version            | P1       | cli/release          | —           |
 | [ ]  | RM-19 | Fix changeset fixed group to cover all 13 packages            | P1       | release              | —           |
@@ -206,8 +206,6 @@ pnpm --filter @chainmcp/server typecheck
 pnpm --filter @chainmcp/config test
 ```
 
-**Status:** Completed on 2026-10-27. Replaced `in` checks with `Object.hasOwn` in `packages/server/src/verifier.ts` and added strict `validatePrincipal` guard. 14 new verifier tests + 1 end-to-end HTTP prototype bypass rejection test added. Validation commands and `pnpm check` green.
-
 ---
 
 ## RM-02 — Enforce HTTP request size, Host, Origin, and DNS-rebinding limits
@@ -286,8 +284,6 @@ pnpm --filter @chainmcp/server test
 pnpm --filter @chainmcp/config test
 ```
 
-**Status:** Completed on 2026-10-27. Added `maxRequestBytes` (1 MiB default), `allowedHosts`, `allowedOrigins`, `enableDnsRebindingProtection`, and `requestTimeoutMs` to `@chainmcp/config` and `@chainmcp/server`. Enforced pre-buffering `Content-Length` caps, streaming chunk aborts with 413, strict `Host` validation (400), DNS-rebinding allowlists (403), request timeouts (408), and MCP handler body limits without echoing input. 8 negative & boundary test cases added in `packages/server/tests/http.test.ts`. Validation commands and `pnpm check` passing.
-
 ---
 
 ## RM-03 — Make HTTP inbound auth fail closed
@@ -343,8 +339,6 @@ Result: `chainmcp serve --transport http` exposes every tool unauthenticated by 
 pnpm --filter @chainmcp/server test
 pnpm --filter @chainmcp/cli test
 ```
-
-**Status:** Completed on 2026-10-27. Added `allowUnauthenticatedHttp` (default `false`) to `SecurityConfigSchema` and `HttpServeOptions`. Enforced fail-closed behavior for non-loopback HTTP bindings refusing to bind without authentication unless override is set. Enforced immediate startup errors if `requireInboundAuth: true` or `authorizer: "scope"` is configured without a verifier. Added structured warnings for unauthenticated loopback/override servers and startup security posture logging. Added tests in `@chainmcp/server` (6 new tests) and `@chainmcp/cli` (8 new tests across `serve` and `gateway serve`). All checks passing.
 
 ---
 
@@ -421,8 +415,6 @@ pnpm --filter @chainmcp/server test
 pnpm --filter @chainmcp/config test
 ```
 
-**Status:** Completed on 2026-10-27. Replaced arbitrary CORS origin reflection with a configurable allowlist in `@chainmcp/config` (`server.cors`) and `@chainmcp/server`. Enforced parse-time and startup rejection of wildcard origin `*` when `allowCredentials: true`. Disallowed origins receive 403 Forbidden on preflights and no allow-origin headers on normal requests. Null origin is rejected unless explicitly declared in `allowedOrigins`. Responses attach `Vary: Origin` whenever CORS is active. Dynamic header derivation extracts inspected verifier headers (`InboundAuthVerifier.headerNames`), custom headers, and standard defaults for `Access-Control-Allow-Headers`. CORS is disabled by default for non-loopback bindings and warns on loopback with wildcard origin. 7 unit tests in `@chainmcp/config` and 7 end-to-end tests in `@chainmcp/server` added and passing; `pnpm check` clean.
-
 ---
 
 ## RM-05 — Reject or implement silently ignored OpenAPI constructs
@@ -476,8 +468,6 @@ Extend `packages/compiler/tests/compile.test.ts`:
 pnpm --filter @chainmcp/compiler test
 pnpm --filter @chainmcp/compiler typecheck
 ```
-
-**Status:** Completed on 2026-10-27. Implemented explicit compiler diagnostics for previously silently accepted OpenAPI constructs. Path-item and operation-level `servers` overrides are rejected in strict mode (`UNSUPPORTED_SERVERS`) or warned in permissive mode. Inbound `callbacks` are rejected in strict mode (`UNSUPPORTED_CALLBACKS`) or warned in permissive mode. Parameter `style`, `explode`, and `allowReserved` are strictly validated, rejecting non-default values in strict mode (`PARAMETER_UNSUPPORTED`, `PARAMETER_INVALID`) and warning in permissive mode while falling back to default wire serialization. Unknown parameter fields are rejected in strict mode (`PARAMETER_INVALID`) and warned in permissive mode, while extensions (`x-*`) remain permitted. Permissive mode warnings survive into `CompileManifest.warnings` and `CompiledOperation.warnings`, persisting into `compiled-tools.json` and `chainmcp.manifest.json`. 7 new unit tests in `packages/compiler/tests/compile.test.ts` added and passing; `pnpm check` clean.
 
 ---
 
@@ -551,8 +541,6 @@ pnpm --filter @chainmcp/config test
 pnpm --filter @chainmcp/cli test
 pnpm --filter @chainmcp/executor test
 ```
-
-**Status:** Completed on 2026-10-27. Added `contract.baseUrl` and `BaseUrlSchema` to `@chainmcp/config` with strict validation (HTTP/HTTPS, no credentials, no query/fragment, canonical single-slash normalization). Added `security.allowInsecureHttp: false` across schemas and executor options. Auto-derived `baseUrl` host into `allowedUpstreamHosts` while preserving explicit extras. Updated `chainmcp init` to capture and record the full base URL including scheme, port, and path prefix into `chainmcp.config.yaml`, and set `allowInsecureHttp: true` when HTTP is used. Updated `serve`, `dev`, `export`, and `renderServerTs` to resolve `baseUrl` from config without synthesising `https://${allowedUpstreamHosts[0]}`. Added `validateCommand` diagnostics for undeclared base hosts, missing `contract.baseUrl` (`CONFIG_DEPRECATED`), and insecure HTTP without `allowInsecureHttp: true`. Updated `@chainmcp/executor` destination policy to allow loopback destinations when `allowInsecureHttp: true`. Added 11 unit tests in `@chainmcp/config`, 5 in `@chainmcp/cli`, and 3 in `@chainmcp/executor`. All validation commands, inspector conformance, and `pnpm check` clean.
 
 ---
 
@@ -657,8 +645,6 @@ pnpm --filter @chainmcp/cli test
 pnpm --filter @chainmcp/cli typecheck
 ```
 
-**Status:** Completed on 2026-10-27. Implemented unified `loadSpec` module in `packages/cli/src/spec-loader.ts` with strict SSRF-safe fetch policy. HTTPS is required by default, plain HTTP is restricted to loopback/private hosts when opted in via `--allow-http` or `security.allowInsecureHttp`, and rejected for public hosts. Public hostnames resolving to loopback or private ranges are blocked for SSRF protection; cloud metadata endpoints (`169.254.169.254`) are unconditionally blocked. Resolved DNS addresses are pinned to the socket via `lookup` hook to mitigate DNS rebinding and TOCTOU attacks. Redirects are manually validated per hop, capped at `maxRedirects` (default 3), and HTTPS-to-HTTP downgrades are rejected. Content types are strictly checked, rejecting `text/html`. Responses are streamed with a hard byte cap (`maxBytes`, default 10 MiB) and timeouts (`timeoutMs`, default 10,000ms). Eliminated all raw `fetch` calls across `init`, `validate`, `build`, `diff`, `dev`, `serve`, and `export`, and enabled URL specification loading for `serve` and `export`. Added `--json` flag to `validate` exposing `resolvedSource` and `specBytes`. 13 dedicated unit tests added in `packages/cli/tests/spec-loader.test.ts`; all 67 CLI tests pass, inspector conformance passes, and workspace `pnpm check` passes clean.
-
 ---
 
 ## RM-08 — Support code-first projects in `serve`, `build`, and `export`
@@ -725,8 +711,6 @@ pnpm --filter @chainmcp/cli test
 pnpm --filter @chainmcp/cli typecheck
 ```
 
-**Status:** Completed on 2026-10-28. Updated `validateCommand` to be contract-optional, validating configuration, entrypoint existence (`src/tools.ts`, `src/server.ts`), and discovered tool definitions, returning `contractKind: "code-first"` (or failing explicitly when `--require-contract` is set). Updated `serveCommand` to run code-first projects in-process over both stdio and HTTP transports using the shared `InMemoryToolRuntime`, failing fast if the tool set is empty. Updated `buildCommand` to produce deterministic code-first project manifests (`chainmcp.manifest.json`) and `compiled-tools.json`, supporting reproducibility verification via `--check`. Updated `exportCommand` to export standalone code-first projects, copying `src/`, generating contract-free configs and Dockerfiles, and emitting code-first manifests. Added `--require-contract` flag to CLI and command options. Added 12 dedicated unit tests in `packages/cli/tests/code-first.test.ts` covering validation modes, `--json` output, stdio/http serving, empty tool rejection, export, build, and `--require-contract` enforcement. All 79 CLI tests pass, inspector conformance passes, and monorepo checks pass clean.
-
 ---
 
 ## RM-09 — Resolve or reject `mutualTLS` and `openIdConnect` schemes
@@ -782,21 +766,14 @@ pnpm --filter @chainmcp/compiler test
 pnpm --filter @chainmcp/executor test
 ```
 
-**Status:** Completed on 2026-10-28. Implemented Option B compile-time rejection and warning diagnostics for unsatisfiable security schemes `mutualTLS` and `openIdConnect`. Added diagnostic code `UNSUPPORTED_SECURITY_SCHEME`. In strict mode (`strict: true`, default), specs declaring `mutualTLS` or `openIdConnect` schemes are rejected with an error diagnostic, causing compilation and `chainmcp validate` to fail. In permissive mode (`strict: false`), compilation succeeds with a structured warning preserved in `result.manifest.warnings`. Tested across compiler and CLI validate tests (5 new unit tests in compiler, 1 integration test in CLI commands); documentation updated in `API_REFERENCE.md`, `docs/openapi-support.md`, and `docs/authentication.md`. All tests pass cleanly.
-
 ---
 
 ## RM-10 — Bound serialization and add response-schema validation
 
 - **Priority:** P1
 - **Depends on:** none
-- **Status:** Completed on 2026-10-28.
-  - Implemented streaming bounded JSON serializer `stringifyBounded(value, options)` in `@chainmcp/core` with byte limit (`maxBytes`), depth limit (`maxDepth`), node limit (`maxNodes`), and circular reference tracking via identity set. Aborts immediately upon limit breach with `SerializationLimitError` without constructing full strings or reading subsequent properties (verified with Proxy getter traps).
-  - Integrated bounded serialization across `@chainmcp/core` (`serializeOutput`, `measureTokens`, `applyOutputPolicy`), `@chainmcp/server` (`toolCallResult`), and `@chainmcp/json-navigation` (`assertResultBytes`).
-  - Added input size cap: `InMemoryToolRuntime.callTool` runs `assertInputSize` during validation phase (after authorization) before schema validation runs, rejecting oversized inputs with stable `INPUT_TOO_LARGE` code, limit, and observed byte count.
-  - Implemented response-schema validation in `@chainmcp/executor`: matches responses by exact status code, range (2XX), or fallback ("default"), and validates payload against compiled schema via `validateJsonSchema`. Modes: `"off"`, `"warn"` (default; logs warning and audit event with redacted payload), and `"enforce"` (fails closed with `UPSTREAM_FAILURE` without payload leakage).
-  - Configured in `@chainmcp/config`: added `server.maxToolInputBytes` (default 1,048,576 bytes) and `server.validateResponses` (`off` | `warn` | `enforce`, default `"warn"`).
-  - Comprehensive tests added across `@chainmcp/core`, `@chainmcp/executor`, and `@chainmcp/config`. Documentation synchronized in `CONFIGURATION.md`, `ARCHITECTURE.md`, `API_REFERENCE.md`, `docs/troubleshooting.md`, `ROADMAP.md`, and `CHANGELOG.md`.
+
+### Evidence
 
 `packages/core/src/index.ts:1287-1305`
 
@@ -859,15 +836,12 @@ pnpm --filter @chainmcp/core test
 pnpm --filter @chainmcp/executor test
 ```
 
-**Status (2026-10-28):** Complete. Implemented bounded JSON serialization, response schema validation with `warn` and `enforce` modes, input size caps, and error payload redaction in commit `7b0a13d`.
-
 ---
 
 ## RM-11 — Support form, multipart, and cookie parameters
 
 - **Priority:** P2
 - **Depends on:** RM-05
-- **Status:** Complete (2026-10-28)
 
 ### Evidence
 
@@ -921,8 +895,6 @@ pnpm --filter @chainmcp/compiler test
 pnpm --filter @chainmcp/executor test
 pnpm --filter @chainmcp/core test
 ```
-
-**Status (2026-10-28):** Complete. Compiler and executor support `cookie` parameters with RFC 6265 token names and injection defenses, `application/x-www-form-urlencoded` with per-property `explode: true/false`, and `multipart/form-data` with text, binary base64 decode, JSON parts, and `maxMultipartPartBytes` / `maxRequestBytes` bounds. All tests passing.
 
 ---
 
@@ -980,8 +952,6 @@ pnpm --filter @chainmcp/cli test
 pnpm --filter @chainmcp/compiler test
 ```
 
-**Status (2026-10-28):** Complete. Implemented deep recursive schema diffing engine `diffContracts` in `@chainmcp/compiler` with the full breaking-change taxonomy across tools, inputs, constraints, authentication, base URLs, and response schemas. Updated CLI `chainmcp diff` with `--fail-on` (`breaking`, `breaking+potential`, `none`), `--fail-on-breaking`, and `--json` machine-readable output (`schemaVersion: 1`). Added unit tests for every taxonomy row and CLI integration tests for flags and exit codes. Documentation updated in `API_REFERENCE.md`, `docs/migration-and-rollback.md`, and `CHANGELOG.md`. All tests passing.
-
 ---
 
 ## RM-13 — Remove implicit `"default"` tenant fallback
@@ -1037,8 +1007,6 @@ pnpm --filter @chainmcp/cli test
 pnpm --filter @chainmcp/gateway test
 ```
 
-**Status (2026-10-28):** Complete. Removed all implicit `"default"` tenant fallbacks across `@chainmcp/cli` (`serve.ts`, `gateway-serve.ts`, `dev.ts`, `templates.ts`) and `@chainmcp/gateway`. Introduced `TENANT_REQUIRED` runtime error code in `@chainmcp/core` and `@chainmcp/server`. Enforced multi-tenant `listTools` and `resolveTool` rejection when tenant ID is empty or whitespace. Added `--tenant <id>` CLI flag and `tenant: string` in `@chainmcp/config` defaulting to unset. Enforced dynamic gateway startup validation requiring inbound verifier (`auth.inbound`) or explicit tenant fallback (`--tenant` / `config.tenant`). Enforced authenticated principal tenant claim precedence over explicit default (`authTenant ?? explicitTenant`). Added `"tenant_resolution_failed"` audit event emission on DynamicGateway. Verified `grep -rn '"default"' packages/cli/src packages/gateway/src` returns zero matches. All tests passing.
-
 ---
 
 ## RM-14 — Wire `ToolTracer` into the runtime and server
@@ -1083,27 +1051,6 @@ pnpm --filter @chainmcp/gateway test
 ### Documentation
 
 - `docs/analytics.md`: tracing vs metrics.
-
-### Done when
-
-- Tracing configuration is parsed and wired through `buildRuntimeOptions` and `DynamicGateway`.
-- Spans named `tool.<name>` are created on tool calls with correlation attributes and no payload leaks.
-- Child spans (`cache.read`, `upstream.call`, `projection`, `cache.write`) inherit parent trace context.
-- Spans end on success, error, and cancellation.
-- All tests pass.
-
-### Validation
-
-```bash
-pnpm --filter @chainmcp/analytics test
-pnpm --filter @chainmcp/core test
-pnpm --filter @chainmcp/config test
-pnpm --filter @chainmcp/gateway test
-pnpm --filter @chainmcp/cli test
-```
-
-**Status (2026-10-29):** Complete. Wired `ToolTracer` into `@chainmcp/core` runtime, `@chainmcp/config` runtime options builder, `@chainmcp/gateway` dynamic runtime snapshotting, and `@chainmcp/cli` gateway-serve command. Added `analytics.openTelemetry.tracing` (`enabled`, `sampleRatio`) and `endpoint` to configuration schemas. Implemented root span `tool.<name>` with correlation attributes (`tool.name`, `mcp.tool_name`, `tenant.id`, `principal.id`, `mcp.request_id`, `contract.revision`, `outcome`, `duration_ms`, `cache.outcome`, `cached`) and child spans (`cache.read`, `upstream.call`, `projection`, `cache.write`) sharing trace context via OpenTelemetry `withSpan`. Enforced strict body/argument/header exclusion from traces and scrubbed secret tokens from error status messages. Handled cancellation cleanly with `outcome: "cancelled"`. Added unit and integration tests across core, analytics, and config. Synchronized `docs/analytics.md`, `CONFIGURATION.md`, `API_REFERENCE.md`, `ROADMAP.md`, and `CHANGELOG.md`.
-
 - `CONFIGURATION.md`: tracing block.
 - `ARCHITECTURE.md`: observability topology.
 - `API_REFERENCE.md`: public tracer types.
@@ -1186,8 +1133,6 @@ pnpm --filter @chainmcp/rate-limit test
 pnpm --filter @chainmcp/cli test
 ```
 
-**Status (2026-10-29):** Completed in RM-15. Redis rate limiter auto-constructs client from config URL or `CHAINMCP_REDIS_URL`, shares client instance with cache store, logs startup connection health, and enforces explicit failure policy (`fail-closed` by default, `fail-open` configurable). Validated with unit and CLI integration tests.
-
 ---
 
 ## RM-16 — Harden the Redis client (TLS, ACL, pooling, reconnect)
@@ -1248,8 +1193,6 @@ This is not production-grade for a managed Redis (ElastiCache, Upstash, Redis Cl
 pnpm --filter @chainmcp/cache-redis test
 pnpm --filter @chainmcp/rate-limit test
 ```
-
-**Status (2026-10-29):** Completed in RM-16. `createSimpleRedisClient` fully parses `redis://` and `rediss://`, connects with TLS, handles ACL credentials and database index, manages a connection pool (2–4 sockets) with lazy connect, checkout PING health checks, and exponential backoff with jitter on reconnects, and enforces password scrubbing from all error messages and diagnostics. Optional `redis.tls` is wired through `@chainmcp/config`. Validated with unit and TLS mock test suites.
 
 ---
 

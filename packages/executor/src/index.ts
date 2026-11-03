@@ -11,6 +11,8 @@ export {
   MAX_RESPONSE_BYTES_LIMIT,
   MAX_TIMEOUT_MS,
   createUpstreamExecutor,
+  isReservedRequestHeader,
+  isValidRequestHeaderName,
   serializeFormUrlEncoded,
   serializeMultipartFormData,
   type SerializedMultipartBody,

@@ -17,6 +17,8 @@ Welcome to the ChainMcp documentation. Use the guide below based on what you wan
 - **[OpenAPI Contract Support](./openapi-support.md):** Supported OpenAPI 3.0/3.1 subset, schema constraints, and linear-time regex audits.
 - **[Generated Servers](./generated-servers.md):** Exporting portable, self-contained TypeScript server projects.
 - **[Code-First Authoring (`@chainmcp/authoring`)](./getting-started.md#code-first-authoring-workflow):** Authoring tools in TypeScript using Zod schemas (`defineTool`).
+- **[Declarative HTTP Tools (`@chainmcp/declarative`)](./declarative-tools.md):** Versioned JSON descriptors for HTTP tools, executed through the bounded executor.
+- **[Declarative Admin (`@chainmcp/admin`)](./declarative-admin.md):** Self-hosted API and console for validating, previewing, and publishing descriptors with tenant scoping.
 - **[Field Projection & Token Budgets](./field-projection.md):** Trimming large API responses so LLMs don't burn tokens or exceed context windows.
 - **[JSON Navigation & Search Tools](./json-navigation.md):** Helper tools that allow LLMs to paginate, slice, and inspect large JSON payloads.
 
@@ -46,4 +48,4 @@ Welcome to the ChainMcp documentation. Use the guide below based on what you wan
 - **[Supported Versions & Compatibility](./supported-versions.md):** Runtime matrix (Node.js, OpenAPI, MCP SDK, Redis).
 - **[Migration & Rollback Procedures](./migration-and-rollback.md):** Safe upgrade and rollback steps for servers and gateways.
 - **[Troubleshooting & Operational Runbook](./troubleshooting.md):** Diagnosing runtime error codes, SSRF blocks, and safe log inspection.
-- **[Architecture Decision Records (ADR)](./adr/README.md):** Architectural decision records (ADR 0001–0027).
+- **[Architecture Decision Records (ADR)](./adr/README.md):** Architectural decision records (ADR 0001–0030).

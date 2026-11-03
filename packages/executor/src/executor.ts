@@ -95,6 +95,19 @@ const RESERVED_REQUEST_HEADERS = new Set([
 ]);
 const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
+/**
+ * True when a header name is owned by the transport or by credentials and may
+ * not be supplied as a tool input parameter.
+ */
+export function isReservedRequestHeader(name: string): boolean {
+  return RESERVED_REQUEST_HEADERS.has(name.toLowerCase());
+}
+
+/** Validates RFC 7230 header field-name syntax for an input parameter. */
+export function isValidRequestHeaderName(name: string): boolean {
+  return HEADER_NAME.test(name);
+}
+
 interface NormalizedExecutorOptions {
   baseUrl: URL;
   policy: DestinationPolicy;

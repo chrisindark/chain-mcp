@@ -145,6 +145,40 @@ These controls are covered by unit tests, executor credential/egress tests, and
 an opt-in real-Redis integration suite; they have not had a production security
 review.
 
+### Declarative admin surface
+
+- Treat the admin listener as a separate trust boundary from the caller-facing MCP listener; never mount admin routes on the MCP server.
+- Require operator authentication with deployment-issued bearer tokens, constant-time comparison, and an explicit tenant scope checked before any contract lookup.
+- Bind loopback by default. Require an explicit opt-in to bind beyond loopback, and place an authenticating proxy in front in that mode.
+- Validate `Host` (DNS rebinding) and reject cross-origin `Origin`/`Sec-Fetch-Site` before the handler runs.
+- Never accept credentials, absolute URLs, transport-owned headers, or code from descriptors; destination policy, limits, and credential providers come from deployment bindings.
+- Store descriptor revisions without credentials, in an operator-controlled location, with bounded size and history; revalidate stored descriptors before republishing them.
+- Audit admin actions without tokens, descriptor arguments, or credentials.
+
+Current implementation: `@chainmcp/admin` authenticates static bearer tokens
+with SHA-256 digest comparison in constant time, requires at least 16
+characters, and scopes each token to explicit tenants. Tenant scope is enforced
+before the contract binding lookup, so a scoped token cannot enumerate other
+tenants. The bundled Node transport binds `127.0.0.1` unless `allowRemote` is
+set and rejects a `Host` outside the bound/loopback names, an `Origin` that
+does not equal the request's `Host`, and `Sec-Fetch-Site` values other than
+`same-origin`/`none`, all before the admin handler runs. The console is
+same-origin under `default-src 'none'` with `script-src 'self'`, serves no
+inline script, keeps the token in page memory only, and all responses are
+`no-store`. Publication lowers descriptors through the same bounded executor
+and hands the tools to the dynamic gateway, so SSRF, redirect, timeout, cap,
+tenant isolation, authorization, rate-limit, cache, projection, and redaction
+behavior are shared with compiled tools rather than reimplemented. Audit
+records carry token id, tenant, contract, admin and gateway revision ids, tool
+count, and reason codes, never tokens or credentials. Persisted descriptor
+records live behind `DescriptorRevisionStore`; the file store writes a
+versioned JSON snapshot with `0600` permissions through fsync and atomic
+rename, caps bytes and revision count, validates its schema on open, and
+revalidates descriptors on restore and rollback so a tampered file fails
+closed. The file store is single-writer and contains no credentials. These
+controls are covered by unit and HTTP integration tests; they have not had a
+production security review.
+
 ### Caching
 
 - Partition entries by tenant, principal or authorization context, tool, contract revision, and relevant arguments.

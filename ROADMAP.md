@@ -359,7 +359,7 @@ ADR 0008 is accepted, and ADR 0026 is recorded.
 - [x] Configure signed releases and software bill of materials.
 - [x] Meet all 1.0 release gates in `RELEASES.md`.
 
-Public APIs across all 13 workspace packages are reviewed and stabilized with
+Public APIs across all 15 workspace packages are reviewed and stabilized with
 strict TypeScript definitions and ESM entrypoints.
 The supported-version matrix and lifecycle policy are published in
 `docs/supported-versions.md`, documenting Node.js (>=20.11, 20 and 22 LTS),
@@ -379,7 +379,7 @@ Migration and rollback procedures for standalone generated servers and the
 dynamic gateway are documented in `docs/migration-and-rollback.md` and
 troubleshooting guides in `docs/troubleshooting.md`.
 Software Bill of Materials (SBOM) generator script (`scripts/generate-sbom.mjs`)
-produces CycloneDX 1.5 JSON metadata (`dist/sbom.cdx.json`) capturing all 13
+produces CycloneDX 1.5 JSON metadata (`dist/sbom.cdx.json`) capturing all 15
 workspace packages and 315 transitive dependency components from `pnpm-lock.yaml`.
 Automated release workflow (`.github/workflows/release.yml`) configures signed
 releases with npm provenance (`--provenance`) and Changesets publishing.
@@ -394,11 +394,78 @@ registry. It must reopen the persistence and control-plane decisions recorded
 as ENT-04/ENT-05 in `docs/risk-register.md`, and it requires an ADR before
 implementation.
 
-- [ ] Define a versioned declarative tool descriptor (name, schema, method, URL, auth reference, policy) executed by the bounded HTTP executor.
-- [ ] Add a self-hosted admin API and local UI for creating, validating, previewing, and publishing descriptors.
-- [ ] Persist descriptors with tenant ownership, revision history, and rollback.
+- [x] Define a versioned declarative tool descriptor (name, schema, method, URL, auth reference, policy) executed by the bounded HTTP executor.
+- [x] Add a self-hosted admin API and local UI for creating, validating, previewing, and publishing descriptors.
+- [x] Persist descriptors with tenant ownership, revision history, and rollback.
 - [ ] Route descriptor-backed tools through the same policy, SSRF, redaction, and audit paths as compiled tools.
 - [ ] Exclude arbitrary code upload, hosted SaaS control plane, and unaudited execution.
+
+**Status (2026-11-02):** the descriptor, self-hosted admin, persistence, and
+rollback slices are implemented and covered by tests; the shared-policy audit
+and scope exclusions remain open.
+`@chainmcp/declarative` defines a closed `descriptorVersion: 1` JSON document
+containing the tool name and description, an audited object-root input schema
+with `additionalProperties: false`, a fixed HTTP method, a relative path
+template with path/query/header/cookie parameter bindings, an optional JSON
+body, auth references (OR alternatives of AND scheme names, with OAuth scopes),
+and a policy (runtime scopes, read-only cache TTL, output field selection and
+token budget, timeout). Parsing rejects absolute URLs, transport-owned headers,
+unbound or non-primitive input properties, unsupported schema constructs,
+unbalanced or unmatched path placeholders, unknown auth schemes, scopes on
+non-OAuth schemes, and cache on non-read methods, with stable
+diagnostic codes and issue paths. Credential shape is supplied by the
+deployment (`DeclarativeAuthSchemeMap`); secrets remain in the executor's
+`UpstreamCredentialProvider` and are never accepted from descriptor input.
+
+`DeclarativeToolSource` lowers each descriptor to a `CompiledOperation` and
+binds it through the deployment's `UpstreamExecutor`, so descriptor-backed
+tools inherit the exact host allowlist, HTTPS default, DNS pinning and peer
+verification, same-host redirect revalidation, timeout, response cap, and
+response JSON checks of the executor, plus the shared runtime's validation,
+authorization, rate-limit, cache, and output stages. Each tool carries a
+deterministic `sha256` descriptor revision as its `contractRevision`.
+Descriptor version 1 supports JSON request bodies and JSON responses only.
+ADR 0028 records the decision; `docs/declarative-tools.md` documents usage
+and limitations.
+
+`@chainmcp/admin` adds the self-hosted operator surface for that descriptor
+format. It authenticates deployment-issued bearer tokens (constant-time
+comparison, minimum length, explicit tenant scope) and exposes
+`/api/v1/tenants/{tenant}/contracts/{contract}/` routes for validation,
+static preview, publication, active-tool listing, and revision history, plus a
+dependency-free console at `/` with a strict CSP. Tenant scope is enforced
+before contract binding lookup, so a scoped token cannot enumerate other
+tenants. Validation and preview re-use the deployment's `DeclarativeAuthSchemeMap`
+and never contact the upstream API. Publication lowers a fresh
+`UpstreamExecutor` and `DeclarativeToolSource`, then calls
+`DynamicGateway.publishContract({ tools })`, inheriting tenant ownership,
+revision ids, activation, collision checks, runtime rebuild, and audit; the
+descriptor set and per-tool revisions are stored in revision metadata. The
+Node transport binds loopback by default, refuses non-loopback binds without
+`allowRemote`, and validates `Host`, `Origin`, and `Sec-Fetch-Site` before the
+handler runs. Admin audit events record token id, tenant, contract, revision,
+tool count, and reason codes without tokens, arguments, or credentials.
+Descriptor documents and revisions are persisted through a
+`DescriptorRevisionStore`. The default is in-memory;
+`FileDescriptorRevisionStore` writes a versioned JSON snapshot with `0600`
+permissions, fsync, and atomic rename, caps the file at 10 MiB and history at
+100 revisions per contract, and is single-writer. Publication records a
+`candidate`, publishes to the gateway, then marks it `active` and the previous
+record `superseded`; a gateway rejection marks the candidate `failed`, and a
+store rejection prevents publication. Admin revision ids (`dset_…`) are
+distinct from gateway revision ids (`rev_…`), and both are recorded. Rollback
+(`POST .../rollback` with a stored revision id) revalidates the stored
+descriptors, republishes them as a new gateway and admin revision with
+`rollbackOf` set, and therefore survives a restart while keeping history
+append-only. `DeclarativeAdmin.restore()` republishes each bound contract's
+active stored revision at startup, since the gateway registry is in memory; it
+reports restored, skipped (`already_active`, `descriptors_invalid`), and
+failure entries instead of throwing. Store records contain no credentials and
+are revalidated on restore and rollback, so a tampered file fails closed.
+There is still no database adapter, cross-process writer lock, retention
+pruning, or CLI entry point.
+ADR 0029 and ADR 0030 record the decisions; `docs/declarative-admin.md`
+documents routes, persistence, recovery, and security posture.
 
 **Exit criteria:** a self-hosted operator can publish a declarative HTTP tool through an admin surface without editing code, and the tool is indistinguishable from a compiled tool at invocation time.
 
