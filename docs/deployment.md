@@ -217,12 +217,23 @@ When deploying servers or the dynamic gateway over Streamable HTTP (`--transport
 
 Never hardcode credentials or secrets in `chainmcp.config.yaml` or repository files. Use:
 
-1. **Environment Variables:**
-   ```bash
-   export CHAINMCP_AUTH_API_KEY="secret-api-token"
+1. **Environment references:** Credential fields accept `${VAR}` and
+   `${VAR:-default}`. A missing referenced variable stops startup with
+   `SECRET_UNRESOLVED` naming the field and variable:
+   ```yaml
+   auth:
+     upstream:
+       providers:
+         - type: oauth
+           tokenUrl: https://auth.example.com/oauth/token
+           clientId: chainmcp
+           clientSecret: "${OAUTH_CLIENT_SECRET}"
    ```
-2. **Pluggable Secret Stores:**
-   Configure `auth.upstream` with `type: env`, `type: secretStore`, or `type: oauth` using authenticated AES-256-GCM encryption.
+   See [`CONFIGURATION.md`](../CONFIGURATION.md#secret-references) for the full
+   field list.
+2. **Upstream credential providers:** Configure `auth.upstream` with
+   `type: env` (for example `CHAINMCP_AUTH_API_KEY`), `type: secretStore`, or
+   `type: oauth` using authenticated AES-256-GCM encryption.
 
 ### Shared Redis Topology
 
@@ -245,13 +256,21 @@ For clustered deployments using Redis for distributed caching (`@chainmcp/cache-
 
 ## 6. Configuration Environment Variables
 
-| Variable                       | Description                                                          | Default                  |
-| ------------------------------ | -------------------------------------------------------------------- | ------------------------ |
-| `CHAINMCP_CONFIG`              | Path to `chainmcp.config.yaml` or custom configuration file          | `./chainmcp.config.yaml` |
-| `CHAINMCP_LOG_LEVEL`           | Log verbosity threshold (`debug`, `info`, `warn`, `error`, `silent`) | `info`                   |
-| `CHAINMCP_UPSTREAM_TIMEOUT_MS` | Override upstream request timeout in milliseconds                    | `15000`                  |
-| `CHAINMCP_REDIS_URL`           | Redis URL for distributed rate limiting or shared cache              | N/A                      |
-| `CHAINMCP_SECRET_PROVIDER`     | Configured secret store provider                                     | N/A                      |
+| Variable                        | Description                                                          | Default                  |
+| ------------------------------- | -------------------------------------------------------------------- | ------------------------ |
+| `CHAINMCP_CONFIG`               | Path to `chainmcp.config.yaml` or custom configuration file          | `./chainmcp.config.yaml` |
+| `CHAINMCP_GATEWAY_CONFIG`       | Path to the gateway configuration file                               | `./gateway.config.yaml`  |
+| `CHAINMCP_LOG_LEVEL`            | Log verbosity threshold (`debug`, `info`, `warn`, `error`, `silent`) | `info`                   |
+| `CHAINMCP_REDIS_URL`            | Redis URL for distributed rate limiting or shared cache              | N/A                      |
+| `CHAINMCP_ALLOW_MANIFEST_DRIFT` | Generated servers: warn instead of failing on artifact drift         | unset                    |
+| `CHAINMCP_AUTH_<SCHEME>`        | Upstream credential lookup for the `type: env` provider              | N/A                      |
+
+Credential fields in `chainmcp.config.yaml` also accept `${VAR}` and
+`${VAR:-default}` references; a missing variable fails startup with
+`SECRET_UNRESOLVED` naming the field and variable. See
+[`CONFIGURATION.md`](../CONFIGURATION.md#secret-references) for the exact field
+list. `chainmcp config explain` prints the resolved configuration with secrets
+redacted.
 
 ---
 

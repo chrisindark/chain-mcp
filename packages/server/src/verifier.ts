@@ -306,7 +306,10 @@ export function createJwtVerifier(
             ? payload.tenantId
             : typeof payload.tid === "string"
               ? payload.tid
-              : "default";
+              : undefined;
+        if (!tenantId || tenantId.trim() === "") {
+          return undefined;
+        }
         const principalId =
           typeof payload.sub === "string"
             ? payload.sub

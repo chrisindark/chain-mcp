@@ -103,6 +103,21 @@ source guard test rejects `0.1.0` and literal `version: "x.y.z"` in
 
 ### P0-4 — Keep secrets out of `chainmcp.config.yaml`
 
+**Status: done (2026-11-03).** Credential fields accept `${VAR}` and
+`${VAR:-default}`; `@chainmcp/config` exposes `resolveConfigSecrets` and
+`redactConfigSecrets`, and the CLI (`validate`, `serve`, `dev`,
+`gateway serve`) plus generated server templates resolve references before
+schema validation. A missing variable fails with `SECRET_UNRESOLVED` naming the
+field and variable, empty values fall back to the declared default, non-secret
+fields are never interpolated, and resolved values are never logged.
+`chainmcp config explain` prints the resolved configuration with secrets
+redacted and value-free provenance (`--json` supported). The unimplemented
+`CHAINMCP_DATABASE_URL`, `CHAINMCP_UPSTREAM_TIMEOUT_MS`, and
+`CHAINMCP_SECRET_PROVIDER` variables were removed from all documentation.
+Positive, negative, and redaction tests live in
+`packages/config/tests/secrets.test.ts` and
+`packages/cli/tests/config-explain.test.ts`.
+
 **Problem.** Inbound tokens, API keys, and OAuth `clientSecret` must be literal values in the config file. `CONFIGURATION.md:141-143` documents three environment variables that are not implemented anywhere in `packages/` or `scripts/`:
 
 - `CHAINMCP_DATABASE_URL` (no database exists in this architecture)

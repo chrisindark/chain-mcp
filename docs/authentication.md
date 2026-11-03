@@ -145,6 +145,41 @@ const credentialProvider = new CompositeCredentialProvider([
 ]);
 ```
 
+### Secret references in configuration
+
+The CLI and generated servers resolve `${VAR}` and `${VAR:-default}` in
+designated credential fields before schema validation. This is the only
+credential-source mechanism built into the configuration schema; the `type: env`
+upstream provider remains available for scheme-based lookup.
+
+```yaml
+auth:
+  inbound:
+    tokens:
+      "${INBOUND_TOKEN}":
+        tenantId: tenant-1
+        principalId: client-1
+    jwt:
+      secret: "${JWT_SECRET}"
+  upstream:
+    providers:
+      - type: oauth
+        tokenUrl: https://auth.example.com/oauth/token
+        clientId: chainmcp
+        clientSecret: "${OAUTH_CLIENT_SECRET}"
+```
+
+Supported fields are the keys of `auth.inbound.tokens` and
+`auth.inbound.apiKeys`, `auth.inbound.jwt.secret`, static upstream credential
+values, `auth.upstream.providers[].clientSecret`,
+`auth.upstream.providers[].keys.*`, `cache.redis.url`, `rateLimit.redis.url`,
+and their `redis.tls.key`. Other fields are never interpolated.
+
+A missing variable with no default fails startup with `SECRET_UNRESOLVED` and
+names the field and variable; an empty environment value is treated as unset.
+Resolved values are never logged. `chainmcp config explain` prints the resolved
+configuration with secrets replaced by `[REDACTED]`.
+
 ## 5. OAuth 2.0 & Token Lifecycle
 
 `OAuthClientCredentialsProvider` handles upstream APIs requiring OAuth 2.0:

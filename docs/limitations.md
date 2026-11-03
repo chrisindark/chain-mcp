@@ -132,6 +132,11 @@ These are deliberate boundaries, not defects:
 - **Secret storage is local encryption.** `EncryptedSecretStore` is AES-256-GCM
   with key rotation support but no KMS or HSM integration, so key custody is the
   deployment's responsibility.
+- **Config secret references are environment-only.** `${VAR}` and
+  `${VAR:-default}` resolve from the process environment (or the explicit `env`
+  passed to `resolveConfigSecrets`). There are no `{ file: ... }` references and
+  no KMS/HSM integration, so mounted secret files must be exported into the
+  environment by the deployment.
 - **Inbound verifiers are limited** to static bearer tokens, API keys, and
   HS256/RS256/ES256 JWTs. There is no built-in SSO or external authorization
   adapter, though custom verifiers can be injected.

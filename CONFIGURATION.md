@@ -99,7 +99,7 @@ analytics:
       sampleRatio: 0.1
 ```
 
-The implemented `@chainmcp/config` package exports `ChainMcpConfigSchema`, `parseConfig`, `safeParseConfig`, and wiring helpers. The supported sections are `version`, `name`, `contract`, `server`, `security`, `rateLimit`, `auth`, `logging`, `jsonNavigation`, and `analytics`. Unknown keys are rejected with Zod `.strict()`.
+The implemented `@chainmcp/config` package exports `ChainMcpConfigSchema`, `parseConfig`, `safeParseConfig`, `resolveConfigSecrets`, `redactConfigSecrets`, and wiring helpers. The supported sections are `version`, `name`, `contract`, `server`, `security`, `rateLimit`, `auth`, `logging`, `jsonNavigation`, and `analytics`. Unknown keys are rejected with Zod `.strict()`.
 
 - **`tenant`:** (Optional `string`, min length 1; default unset) Declares the tenant ID for the server or gateway deployment. For single-tenant servers, pins the runtime to this tenant ID. For dynamic gateways, provides an explicit fallback tenant for unauthenticated development invocations. If unset and no inbound verifier is present, gateway mode refuses to start. When inbound authentication is active, the authenticated principal's tenant claim takes precedence over this value (`authTenant ?? explicitTenant`).
 - **`contract`:** (Optional) Declares the OpenAPI specification file (`contract.source`), compilation mode (`contract.strict`), and target upstream base URL (`contract.baseUrl`). For code-first projects authored with `@chainmcp/authoring`, the `contract` section is omitted.
@@ -135,12 +135,59 @@ The implemented `@chainmcp/config` package exports `ChainMcpConfigSchema`, `pars
 
 ## 3. Environment variables
 
-- `CHAINMCP_CONFIG`: configuration file path.
-- `CHAINMCP_LOG_LEVEL`: log verbosity.
-- `CHAINMCP_REDIS_URL`: Redis connection.
-- `CHAINMCP_DATABASE_URL`: metadata database.
-- `CHAINMCP_UPSTREAM_TIMEOUT_MS`: upstream timeout override.
-- `CHAINMCP_SECRET_PROVIDER`: configured credential provider.
+Implemented variables:
+
+- `CHAINMCP_CONFIG`: configuration file path (server commands).
+- `CHAINMCP_GATEWAY_CONFIG`: gateway configuration file path (`chainmcp gateway serve`).
+- `CHAINMCP_LOG_LEVEL`: log verbosity (`debug`, `info`, `warn`, `error`, `silent`).
+- `CHAINMCP_REDIS_URL`: Redis connection used by the cache and rate limiter when neither `cache.redis.url` nor `rateLimit.redis.url` is set.
+- `CHAINMCP_ALLOW_MANIFEST_DRIFT`: generated servers only. Set to `1` (or start with `--allow-manifest-drift`) to warn instead of failing when build artifacts do not match.
+- `CHAINMCP_AUTH_<SCHEME>`: upstream credential lookup performed by the `type: env` upstream provider (prefix configurable with `auth.upstream.providers[].prefix`).
+
+### Secret references
+
+Credential fields accept `${VAR}` and `${VAR:-default}` instead of literal values.
+Resolution happens after YAML parsing and before schema validation:
+
+```yaml
+auth:
+  inbound:
+    tokens:
+      "${INBOUND_TOKEN}":
+        tenantId: tenant-1
+        principalId: client-1
+  upstream:
+    providers:
+      - type: oauth
+        tokenUrl: https://auth.example.com/oauth/token
+        clientId: chainmcp
+        clientSecret: "${OAUTH_CLIENT_SECRET}"
+cache:
+  provider: redis
+  redis:
+    url: "redis://:${REDIS_PASSWORD}@cache.internal:6379/0"
+```
+
+- **Supported fields:** keys of `auth.inbound.tokens` and `auth.inbound.apiKeys`,
+  `auth.inbound.jwt.secret`, static upstream credential values (`value`,
+  `token`, `username`, `password`), `auth.upstream.providers[].clientSecret`,
+  `auth.upstream.providers[].keys.*`, `cache.redis.url`,
+  `rateLimit.redis.url`, and their `redis.tls.key`.
+- **Other fields are never interpolated.** A `contract.source` or `name`
+  containing `${...}` stays literal.
+- **Missing value:** startup fails with code `SECRET_UNRESOLVED` and names both
+  the secret field and the environment variable. An empty environment value is
+  treated as unset, so `${VAR:-fallback}` applies.
+- **No recursion:** a resolved value that itself contains `${...}` is used
+  verbatim.
+- **No leakage:** resolved values never appear in logs, validation diagnostics,
+  or `chainmcp config explain` output.
+- **Literal values remain supported** for backward compatibility, but storing
+  them in `chainmcp.config.yaml` is discouraged.
+
+Run `chainmcp config explain` to print the fully resolved configuration with
+every credential field replaced by `[REDACTED]`, plus the environment variable
+provenance for each secret. Add `--json` for machine-readable output.
 
 Production encryption keys should generally come from a managed secret or key-management service. Never print environment variable values.
 
