@@ -1,7 +1,17 @@
 import { createHash } from "node:crypto";
 import { COMPILER_VERSION, type CompileResult } from "@chainmcp/compiler";
 import type { ToolDefinition } from "@chainmcp/core";
-import { CLI_VERSION, type ProjectManifest } from "./types.js";
+import type { ProjectManifest } from "./types.js";
+
+export interface ManifestOptions {
+  /** Generator (CLI) version, read at runtime rather than hardcoded. */
+  generatorVersion: string;
+  generatedAt?: string | undefined;
+}
+
+export interface CodeFirstManifestOptions extends ManifestOptions {
+  sourceHash?: string | undefined;
+}
 
 /**
  * Computes a SHA-256 hexadecimal hash of the given UTF-8 content.
@@ -17,11 +27,11 @@ export function sha256(content: string | Uint8Array): string {
 export function buildProjectManifest(
   projectName: string,
   compiled: CompileResult,
-  options?: { generatedAt?: string },
+  options: ManifestOptions,
 ): ProjectManifest {
   return {
     manifestVersion: 1,
-    generatorVersion: CLI_VERSION,
+    generatorVersion: options.generatorVersion,
     compilerVersion: COMPILER_VERSION,
     openapiVersion: compiled.manifest.openapiVersion,
     projectName,
@@ -46,7 +56,7 @@ export function buildProjectManifest(
 export function buildCodeFirstManifest(
   projectName: string,
   tools: readonly ToolDefinition[],
-  options?: { sourceHash?: string; generatedAt?: string },
+  options: CodeFirstManifestOptions,
 ): ProjectManifest {
   const toolEntries = tools.map((t) => {
     const canonical = JSON.stringify({
@@ -65,7 +75,7 @@ export function buildCodeFirstManifest(
 
   return {
     manifestVersion: 1,
-    generatorVersion: CLI_VERSION,
+    generatorVersion: options.generatorVersion,
     compilerVersion: COMPILER_VERSION,
     projectName,
     sourceHash: options?.sourceHash ?? sha256("code-first"),

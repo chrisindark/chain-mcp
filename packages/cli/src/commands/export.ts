@@ -4,18 +4,21 @@ import { dirname, join, resolve } from "node:path";
 import { compileOpenApi } from "@chainmcp/compiler";
 
 import { loadCodeFirstTools } from "../code-first-loader.js";
+import { resolveLocalDependencySpecs } from "../local-deps.js";
 import {
   buildCodeFirstManifest,
   buildProjectManifest,
   verifyProjectManifest,
 } from "../manifest.js";
 import { loadSpec } from "../spec-loader.js";
+import { getCliVersion } from "../version.js";
 import {
   renderConfigYaml,
   renderDockerfile,
   renderDockerignore,
   renderGitignore,
   renderPackageJson,
+  renderPnpmWorkspaceYaml,
   renderReadme,
   renderServerTs,
   renderToolsTs,
@@ -52,6 +55,47 @@ export async function exportCommand(
       ? dirname(resolve(process.cwd(), options.config))
       : process.cwd());
   const outputDir = resolve(cwd, options.output ?? "./generated-server");
+  const version = options.version ?? (await getCliVersion());
+
+  if (
+    options.localDeps !== undefined &&
+    options.workspaceDependencies === true
+  ) {
+    return {
+      ok: false,
+      outputDir,
+      manifest: {} as ProjectManifest,
+      filesWritten: [],
+      error:
+        "Choose either --local-deps (file: dependencies) or --workspace-deps (workspace:*), not both.",
+    };
+  }
+
+  let dependencySpecs: Record<string, string> | undefined;
+  if (options.localDeps !== undefined) {
+    const local = await resolveLocalDependencySpecs({
+      repoRoot: options.localDeps,
+      projectDir: outputDir,
+    });
+    if (!local.ok) {
+      return {
+        ok: false,
+        outputDir,
+        manifest: {} as ProjectManifest,
+        filesWritten: [],
+        error: local.error,
+      };
+    }
+    dependencySpecs = local.specs;
+  }
+  const localDependencies = dependencySpecs !== undefined;
+  const dependencyOptions = {
+    ...(dependencySpecs !== undefined ? { dependencySpecs } : {}),
+    ...(localDependencies ? { localDependencies: true } : {}),
+    ...(options.workspaceDependencies === true
+      ? { workspaceDependencies: true }
+      : {}),
+  };
 
   // 1. Validate configuration and contract
   const validation = await validateCommand({
@@ -100,7 +144,9 @@ export async function exportCommand(
       injectedTools: options.tools,
     });
 
-    const manifest = buildCodeFirstManifest(projectName, loaded.tools);
+    const manifest = buildCodeFirstManifest(projectName, loaded.tools, {
+      generatorVersion: version,
+    });
 
     await mkdir(outputDir, { recursive: true });
     await mkdir(join(outputDir, "src"), { recursive: true });
@@ -151,7 +197,7 @@ export async function exportCommand(
     if (!hasServerTs) {
       await writeFile(
         join(outputDir, "src", "server.ts"),
-        renderServerTs(),
+        renderServerTs({ version }),
         "utf8",
       );
       filesWritten.push("src/server.ts");
@@ -166,14 +212,49 @@ export async function exportCommand(
       filesWritten.push("src/tools.ts");
     }
 
+    // Compiled tools artifact for verified startup
+    const codeFirstCompiledToolsPath = join(
+      outputDir,
+      "dist",
+      "compiled-tools.json",
+    );
+    await mkdir(join(outputDir, "dist"), { recursive: true });
+    const compiledToolsForExport = loaded.tools.map((t) => ({
+      name: t.name,
+      description: t.description ?? "",
+      inputSchema: t.inputSchema ?? {},
+    }));
+    await writeFile(
+      codeFirstCompiledToolsPath,
+      `${JSON.stringify(compiledToolsForExport, null, 2)}\n`,
+      "utf8",
+    );
+    filesWritten.push("dist/compiled-tools.json");
+    await writeFile(
+      join(outputDir, "compiled-tools.json"),
+      `${JSON.stringify(compiledToolsForExport, null, 2)}\n`,
+      "utf8",
+    );
+    filesWritten.push("compiled-tools.json");
+
     // package.json
     const packageJson = renderPackageJson({
       name: projectName,
-      workspaceDependencies: options.workspaceDependencies,
+      version,
+      ...dependencyOptions,
       dependencyOverrides: options.dependencyOverrides,
     });
     await writeFile(join(outputDir, "package.json"), packageJson, "utf8");
     filesWritten.push("package.json");
+
+    if (dependencySpecs !== undefined) {
+      await writeFile(
+        join(outputDir, "pnpm-workspace.yaml"),
+        renderPnpmWorkspaceYaml({ overrides: dependencySpecs }),
+        "utf8",
+      );
+      filesWritten.push("pnpm-workspace.yaml");
+    }
 
     // TypeScript configs
     await writeFile(
@@ -211,6 +292,7 @@ export async function exportCommand(
       renderReadme({
         name: projectName,
         toolCount: manifest.toolCount,
+        ...(localDependencies ? { localDependencies: true } : {}),
       }),
       "utf8",
     );
@@ -221,6 +303,7 @@ export async function exportCommand(
       const recompiledManifest = buildCodeFirstManifest(
         projectName,
         loaded.tools,
+        { generatorVersion: version },
       );
       const verification = verifyProjectManifest(manifest, recompiledManifest);
       if (!verification.match) {
@@ -282,7 +365,9 @@ export async function exportCommand(
   }
 
   // 4. Build deterministic manifest
-  const manifest = buildProjectManifest(projectName, compiled);
+  const manifest = buildProjectManifest(projectName, compiled, {
+    generatorVersion: version,
+  });
 
   // 5. Ensure directory structure
   await mkdir(outputDir, { recursive: true });
@@ -322,11 +407,21 @@ export async function exportCommand(
   // package.json
   const packageJson = renderPackageJson({
     name: projectName,
-    workspaceDependencies: options.workspaceDependencies,
+    version,
+    ...dependencyOptions,
     dependencyOverrides: options.dependencyOverrides,
   });
   await writeFile(join(outputDir, "package.json"), packageJson, "utf8");
   filesWritten.push("package.json");
+
+  if (dependencySpecs !== undefined) {
+    await writeFile(
+      join(outputDir, "pnpm-workspace.yaml"),
+      renderPnpmWorkspaceYaml({ overrides: dependencySpecs }),
+      "utf8",
+    );
+    filesWritten.push("pnpm-workspace.yaml");
+  }
 
   // TypeScript configs
   await writeFile(
@@ -345,12 +440,29 @@ export async function exportCommand(
   // Standalone server source
   await writeFile(
     join(outputDir, "src", "server.ts"),
-    renderServerTs(),
+    renderServerTs({ version }),
     "utf8",
   );
   filesWritten.push("src/server.ts");
   await writeFile(join(outputDir, "src", "tools.ts"), renderToolsTs(), "utf8");
   filesWritten.push("src/tools.ts");
+
+  // Compiled tools artifact for verified startup
+  const compiledToolsPath = join(outputDir, "dist", "compiled-tools.json");
+  await mkdir(join(outputDir, "dist"), { recursive: true });
+  await writeFile(
+    compiledToolsPath,
+    `${JSON.stringify(compiled.tools, null, 2)}\n`,
+    "utf8",
+  );
+  filesWritten.push("dist/compiled-tools.json");
+  // Also copy to root for compatibility
+  await writeFile(
+    join(outputDir, "compiled-tools.json"),
+    `${JSON.stringify(compiled.tools, null, 2)}\n`,
+    "utf8",
+  );
+  filesWritten.push("compiled-tools.json");
 
   // Docker templates & ignores
   await writeFile(join(outputDir, "Dockerfile"), renderDockerfile(), "utf8");
@@ -371,6 +483,7 @@ export async function exportCommand(
       name: projectName,
       toolCount: compiled.tools.length,
       contractRevision: compiled.contractRevision,
+      ...(localDependencies ? { localDependencies: true } : {}),
     }),
     "utf8",
   );
@@ -382,7 +495,11 @@ export async function exportCommand(
     const recompilation = compileOpenApi(specContent, {
       strict: validation.config?.contract?.strict ?? true,
     });
-    const recompiledManifest = buildProjectManifest(projectName, recompilation);
+    const recompiledManifest = buildProjectManifest(
+      projectName,
+      recompilation,
+      { generatorVersion: version },
+    );
     const verification = verifyProjectManifest(manifest, recompiledManifest);
     if (!verification.match) {
       return {

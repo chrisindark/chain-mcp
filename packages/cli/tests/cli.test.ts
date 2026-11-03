@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { runCli } from "../src/cli.js";
-import { CLI_VERSION } from "../src/types.js";
+import { getCliVersion } from "../src/version.js";
 
 const MINIMAL_SPEC = `
 openapi: "3.1.0"
@@ -47,11 +47,10 @@ describe("CLI entry point (runCli)", () => {
   };
 
   it("handles --version", async () => {
+    const version = await getCliVersion();
     const code = await runCli(["--version"], io);
     expect(code).toBe(0);
-    expect(outLogs.some((l) => l.includes(`chainmcp v${CLI_VERSION}`))).toBe(
-      true,
-    );
+    expect(outLogs.some((l) => l.includes(`chainmcp v${version}`))).toBe(true);
   });
 
   it("handles --help", async () => {

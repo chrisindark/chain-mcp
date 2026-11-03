@@ -26,6 +26,32 @@ pnpm build
 The example lives in `examples/petstore/`. Its contract declares two operations:
 `getItem` and `createItem`.
 
+## Scaffold a project from the local clone
+
+The `@chainmcp/*` packages are not published to a registry yet. Generate a
+standalone project that links the packages from this checkout:
+
+```bash
+node packages/cli/dist/bin.js init \
+  --spec ./examples/petstore/openapi.yaml \
+  --output ../my-mcp-server \
+  --local-deps "$PWD"
+
+cd ../my-mcp-server
+pnpm install
+pnpm build
+pnpm start
+```
+
+`--local-deps` records the repository root explicitly, writes relative `file:`
+dependency specifiers, and adds a `pnpm-workspace.yaml` override block. The
+override is required because linked workspace packages declare their siblings as
+`workspace:*`, which pnpm cannot resolve outside the monorepo.
+
+Local mode never infers a repository from the current working directory: pass
+the clone root with `--local-deps`. Use `--workspace-deps` instead when the
+generated project lives inside the monorepo and should keep `workspace:*`.
+
 ## Inspect the tools
 
 The MCP Inspector CLI is the reference client for this check:

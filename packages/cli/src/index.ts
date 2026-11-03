@@ -1,4 +1,9 @@
-export { CLI_VERSION } from "./types.js";
+export { getCliVersion } from "./version.js";
+export {
+  resolveLocalDependencySpecs,
+  type LocalDependencyOptions,
+  type LocalDependencyResult,
+} from "./local-deps.js";
 export type {
   BuildOptions,
   BuildResult,
@@ -47,15 +52,19 @@ export {
   buildProjectManifest,
   sha256,
   verifyProjectManifest,
+  type CodeFirstManifestOptions,
+  type ManifestOptions,
   type ManifestVerificationResult,
 } from "./manifest.js";
 
 export {
+  CHAINMCP_PACKAGE_DEPENDENCIES,
   renderConfigYaml,
   renderDockerfile,
   renderDockerignore,
   renderGitignore,
   renderPackageJson,
+  renderPnpmWorkspaceYaml,
   renderReadme,
   renderServerTs,
   renderToolsTs,
@@ -63,5 +72,7 @@ export {
   renderTsconfigJson,
   type ConfigYamlOptions,
   type PackageJsonOptions,
+  type PnpmWorkspaceOptions,
   type ReadmeOptions,
+  type ServerTsOptions,
 } from "./templates.js";

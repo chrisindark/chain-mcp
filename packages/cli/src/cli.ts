@@ -8,7 +8,8 @@ import { gatewayServeCommand } from "./commands/gateway-serve.js";
 import { initCommand } from "./commands/init.js";
 import { serveCommand } from "./commands/serve.js";
 import { validateCommand } from "./commands/validate.js";
-import { CLI_VERSION, type CliIo } from "./types.js";
+import { getCliVersion } from "./version.js";
+import type { CliIo } from "./types.js";
 
 const HELP_TEXT = `
 ChainMcp CLI - Turn API contracts into production-ready Model Context Protocol (MCP) servers.
@@ -37,6 +38,8 @@ Command options:
     --output <dir>       Target project directory (default: .)
     --name <name>        Project name
     --base-url <url>     Upstream base URL
+    --local-deps <path>  Link @chainmcp/* from a cloned repository (file: deps)
+    --workspace-deps     Use workspace:* dependencies (project inside the monorepo)
     --force              Overwrite existing configuration if present
 
   validate:
@@ -93,6 +96,8 @@ Command options:
     --config <path>      Path to chainmcp.config.yaml
     --spec <path>        Path to OpenAPI contract
     --output <dir>       Output directory for generated server (default: ./generated-server)
+    --local-deps <path>  Link @chainmcp/* from a cloned repository (file: deps)
+    --workspace-deps     Use workspace:* dependencies (project inside the monorepo)
     --force              Overwrite non-empty target directory
     --check              Verify deterministic reproducibility
     --require-contract   Require an OpenAPI contract specification
@@ -137,13 +142,15 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       "allow-http": { type: "boolean", default: false },
       "allow-unauthenticated-http": { type: "boolean", default: false },
       "require-contract": { type: "boolean", default: false },
+      "local-deps": { type: "string" },
+      "workspace-deps": { type: "boolean", default: false },
     },
     allowPositionals: true,
     strict: false,
   });
 
   if (values.version) {
-    log(`chainmcp v${CLI_VERSION}`);
+    log(`chainmcp v${await getCliVersion()}`);
     return 0;
   }
 
@@ -176,6 +183,12 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
           : {}),
         ...(asBoolean(values.force) !== undefined
           ? { force: asBoolean(values.force) }
+          : {}),
+        ...(asString(values["local-deps"]) !== undefined
+          ? { localDeps: asString(values["local-deps"]) }
+          : {}),
+        ...(values["workspace-deps"] === true
+          ? { workspaceDependencies: true }
           : {}),
       });
 
@@ -623,6 +636,12 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
           : {}),
         ...(asBoolean(values["require-contract"]) !== undefined
           ? { requireContract: asBoolean(values["require-contract"]) }
+          : {}),
+        ...(asString(values["local-deps"]) !== undefined
+          ? { localDeps: asString(values["local-deps"]) }
+          : {}),
+        ...(values["workspace-deps"] === true
+          ? { workspaceDependencies: true }
           : {}),
       });
 

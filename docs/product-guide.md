@@ -290,6 +290,12 @@ Open your terminal in any directory and run:
 npx @chainmcp/cli init --spec https://petstore.swagger.io/v2/swagger.json
 ```
 
+> [!NOTE]
+> The registry-hosted `npx` form becomes available after publishing. To use a
+> local clone today, run `node packages/cli/dist/bin.js init --spec <spec>
+--local-deps <clone-root>` from the repository root and install the generated
+> project with `pnpm install`.
+
 This inspects your API, creates an audited tool definition, and creates a clean `chainmcp.config.yaml`.
 
 ### Step 2: Build & Verify
