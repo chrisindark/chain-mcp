@@ -119,9 +119,12 @@ registers the tools in the shared runtime, and serves them over stdio. The MCP
 Inspector CLI lists and calls those tools; `pnpm conformance:inspector` asserts
 both operations and runs in CI.
 
-Input union composition, an output validator, authentication enforcement, and
-generated-server/CLI wiring remain open. They are documented limitations, not
-part of this milestone's exit criteria.
+Input union composition remains open. Response validation is implemented in
+`@chainmcp/executor` (`validateResponses`, default `warn`, optional `enforce`)
+rather than in the compiler, and compilation is wired into the CLI `build` and
+`export` flow. Compiled authentication policies are mapped by the compiler but
+enforced at runtime, not by the compiler. Remaining gaps are recorded in
+`docs/limitations.md` rather than left implicit here.
 
 ## Milestone 4 — Smart caching and token accounting
 
@@ -357,7 +360,7 @@ ADR 0008 is accepted, and ADR 0026 is recorded.
 - [x] Add load, resilience, and fault-injection tests.
 - [x] Document migration and rollback procedures.
 - [x] Configure signed releases and software bill of materials.
-- [x] Meet all 1.0 release gates in `RELEASES.md`.
+- [ ] Meet all 1.0 release gates in `RELEASES.md` (tooling and evidence are in place; the release itself is withheld).
 
 Public APIs across all 15 workspace packages are reviewed and stabilized with
 strict TypeScript definitions and ESM entrypoints.
@@ -383,8 +386,15 @@ produces CycloneDX 1.5 JSON metadata (`dist/sbom.cdx.json`) capturing all 15
 workspace packages and 315 transitive dependency components from `pnpm-lock.yaml`.
 Automated release workflow (`.github/workflows/release.yml`) configures signed
 releases with npm provenance (`--provenance`) and Changesets publishing.
-All 1.0 exit criteria and release checklist items in `RELEASES.md` are met.
+All 1.0 tooling and release evidence described above is in place, and
 ADR 0027 is recorded.
+
+**Status (2026-11-03):** the 1.0 release is intentionally deferred. The
+workspace stays pre-1.0 on one unified version, and the open gate is evidence
+from a real production deployment plus expanded test coverage, not missing
+implementation. `RELEASES.md` records the unchecked checklist items and
+`docs/limitations.md` records the capability boundaries operators should
+expect.
 
 ## Post-1.0 — Declarative tool builder and admin UI
 

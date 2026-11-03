@@ -8,12 +8,19 @@
   "ignore": [],
   "fixed": [
     [
+      "@chainmcp/admin",
+      "@chainmcp/analytics",
       "@chainmcp/auth",
+      "@chainmcp/authoring",
       "@chainmcp/cache-redis",
+      "@chainmcp/cli",
       "@chainmcp/compiler",
-      "@chainmcp/core",
       "@chainmcp/config",
+      "@chainmcp/core",
+      "@chainmcp/declarative",
       "@chainmcp/executor",
+      "@chainmcp/gateway",
+      "@chainmcp/json-navigation",
       "@chainmcp/rate-limit",
       "@chainmcp/server"
     ]
