@@ -271,80 +271,130 @@ export async function runServer(options?: RunServerOptions) {
     const compiledToolsPath = join(projectRoot, "dist", "compiled-tools.json");
     const manifestPath = join(projectRoot, "chainmcp.manifest.json");
 
-    let usedCompiledArtifacts = false;
     let contractRevision: string | undefined;
     let baseUrl =
       options?.baseUrl ??
       config.contract?.baseUrl ??
       (config.security.allowedUpstreamHosts[0]
-        ? \`https://\${config.security.allowedUpstreamHosts[0]}\`
+        ? "https://" + config.security.allowedUpstreamHosts[0]
         : undefined);
 
-    if (baseUrl && !options?.transport && !options?.resolveHost) {
-      // Try to load from precompiled artifacts first
-      try {
-        const [compiledToolsRaw, manifestRaw] = await Promise.all([
-          readFile(compiledToolsPath, "utf8"),
-          readFile(manifestPath, "utf8"),
-        ]);
-        const manifest = JSON.parse(manifestRaw) as any;
-        const compiledTools = JSON.parse(compiledToolsRaw) as any[];
+    try {
+      const [compiledToolsRaw, manifestRaw] = await Promise.all([
+        readFile(compiledToolsPath, "utf8"),
+        readFile(manifestPath, "utf8"),
+      ]);
+      const manifest = JSON.parse(manifestRaw) as any;
+      const compiledTools = JSON.parse(compiledToolsRaw) as any[];
 
-        const mismatches: string[] = [];
-        if (manifest.manifestVersion !== 1) {
-          mismatches.push(
-            \`Manifest schema version mismatch: expected 1, got \${manifest.manifestVersion}\`,
-          );
-        }
-        if (
-          manifest.generatorVersion &&
-          manifest.generatorVersion !== ${JSON.stringify(options.version)}
-        ) {
-          mismatches.push(
-            \`Generator version mismatch: expected ${options.version}, got \${manifest.generatorVersion}\`,
-          );
-        }
-        if (manifest.compilerVersion && manifest.compilerVersion !== COMPILER_VERSION) {
-          mismatches.push(
-            \`Compiler version mismatch: expected \${COMPILER_VERSION}, got \${manifest.compilerVersion}\`,
-          );
-        }
-        if (typeof manifest.toolCount !== "number") {
-          mismatches.push("Manifest missing toolCount");
-        } else if (manifest.toolCount !== compiledTools.length) {
-          mismatches.push(
-            \`Tool count mismatch: manifest \${manifest.toolCount}, compiled-tools \${compiledTools.length}\`,
-          );
-        }
-        if (Array.isArray(manifest.tools)) {
-          const manifestTools = new Map(
-            manifest.tools.map((t: any) => [t.name, t.hash]),
-          );
-          for (const tool of compiledTools) {
-            if (!manifestTools.has(tool.name)) {
-              mismatches.push(\`Tool '\${tool.name}' missing from manifest\`);
-            }
-          }
-          if (manifestTools.size !== compiledTools.length) {
-            mismatches.push("Tool set mismatch between manifest and compiled-tools.json");
+      const mismatches: string[] = [];
+      if (manifest.manifestVersion !== 1) {
+        mismatches.push(
+          "Manifest schema version mismatch: expected 1, got " + manifest.manifestVersion,
+        );
+      }
+      const expectedGeneratorVersion = ${JSON.stringify(options.version)};
+      if (manifest.generatorVersion !== expectedGeneratorVersion) {
+        mismatches.push(
+          "Generator version mismatch: expected " + expectedGeneratorVersion + ", got " + manifest.generatorVersion,
+        );
+      }
+      if (manifest.compilerVersion && manifest.compilerVersion !== COMPILER_VERSION) {
+        mismatches.push(
+          "Compiler version mismatch: expected " + COMPILER_VERSION + ", got " + manifest.compilerVersion,
+        );
+      }
+      if (typeof manifest.toolCount !== "number") {
+        mismatches.push("Manifest missing toolCount");
+      } else if (manifest.toolCount !== compiledTools.length) {
+        mismatches.push(
+          "Tool count mismatch: manifest " + manifest.toolCount + ", compiled-tools " + compiledTools.length,
+        );
+      }
+      if (Array.isArray(manifest.tools)) {
+        const manifestTools = new Map(
+          manifest.tools.map((t: any) => [t.name, t.hash]),
+        );
+        for (const tool of compiledTools) {
+          if (!manifestTools.has(tool.name)) {
+            mismatches.push("Tool '" + tool.name + "' missing from manifest");
           }
         }
+        if (manifestTools.size !== compiledTools.length) {
+          mismatches.push("Tool set mismatch between manifest and compiled-tools.json");
+        }
+      }
 
-        if (mismatches.length > 0) {
-          if (allowManifestDrift) {
-            console.warn(
-              "[WARN] Manifest drift detected (--allow-manifest-drift): " +
-                mismatches.join("; "),
+      if (mismatches.length > 0) {
+        if (allowManifestDrift) {
+          console.warn(
+            "[WARN] Manifest drift detected (--allow-manifest-drift): " +
+              mismatches.join("; "),
+          );
+        } else {
+          console.error(
+            "[ERROR] Build artifact verification failed: " +
+              mismatches.join("; ") +
+              ". Rebuild with chainmcp build or run with --allow-manifest-drift.",
+          );
+          process.exit(1);
+        }
+      }
+
+      contractRevision = manifest.contractRevision ?? manifest.sourceHash;
+
+      if (!baseUrl) {
+        console.error(
+          "[ERROR] No baseUrl configured in contract.baseUrl or options, and security.allowedUpstreamHosts is empty.",
+        );
+        process.exit(1);
+      }
+
+      const executorOverrides: Parameters<typeof buildExecutorOptions>[1] = {
+        baseUrl,
+        contractRevision,
+        ...(options?.transport !== undefined ? { transport: options.transport } : {}),
+        ...(options?.resolveHost !== undefined
+          ? { resolveHost: options.resolveHost }
+          : {}),
+      };
+
+      const executorOptions = buildExecutorOptions(config, executorOverrides);
+      const executor = createUpstreamExecutor(executorOptions);
+
+      for (const tool of executor.createTools(compiledTools as any)) {
+        runtime.register(tool);
+      }
+    } catch (error) {
+      if (allowManifestDrift || process.env.NODE_ENV === "development") {
+        const contractSource = await readFile(effectiveContractPath, "utf8");
+        const { compileOpenApi } = await import("@chainmcp/compiler");
+        const compiled = compileOpenApi(contractSource, {
+          strict: config.contract?.strict ?? true,
+        });
+
+        if (!compiled.ok) {
+          for (const diagnostic of compiled.diagnostics) {
+            const loc = diagnostic.location ? " at " + diagnostic.location : "";
+            console.error(
+              "[" + diagnostic.severity.toUpperCase() + "] " + diagnostic.code + ": " + diagnostic.message + loc,
             );
-          } else {
-                                                console.error("[ERROR] Build artifact verification failed: " + mismatches.join("; ") + ". Rebuild with chainmcp build or run with --allow-manifest-drift.");
           }
+          process.exit(1);
         }
 
-        contractRevision = manifest.contractRevision ?? manifest.sourceHash;
+        contractRevision = compiled.contractRevision;
+
+        if (!baseUrl) {
+          console.error(
+            "[ERROR] No baseUrl configured in contract.baseUrl or options, and security.allowedUpstreamHosts is empty.",
+          );
+          process.exit(1);
+        }
+
         const executorOverrides: Parameters<typeof buildExecutorOptions>[1] = {
           baseUrl,
-          contractRevision,
+          contractRevision: compiled.contractRevision,
           ...(options?.transport !== undefined ? { transport: options.transport } : {}),
           ...(options?.resolveHost !== undefined
             ? { resolveHost: options.resolveHost }
@@ -354,115 +404,17 @@ export async function runServer(options?: RunServerOptions) {
         const executorOptions = buildExecutorOptions(config, executorOverrides);
         const executor = createUpstreamExecutor(executorOptions);
 
-        // Reconstruct tools from compiled artifacts
-        for (const tool of compiledTools) {
-          const toolDef: any = {
-            name: tool.name,
-            description: tool.description ?? "",
-            inputSchema: tool.inputSchema ?? {},
-            ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
-            execute: async (input: unknown, ctx: any) => {
-              // Load and execute via executor if possible - but we need the compiled tool definitions
-              // For now, use the executor's tool creation approach isn't possible without full compile
-              // Fallback to recompiling if needed
-              throw new RuntimeError(
-                "CONTRACT_INVALID",
-                "Precompiled artifacts require full executor setup",
-              );
-            },
-          };
+        for (const tool of executor.createTools(compiled.tools)) {
+          runtime.register(tool);
         }
-
-        // Use executor with compiled tools if available
-        // Try to use the compiled tools directly via a simpler path
-        const { compileOpenApi } = await import("@chainmcp/compiler");
-        // We need to reconstruct - better to load and compile but verify against manifest
-        usedCompiledArtifacts = true;
-      } catch (error) {
-        // Fall through to recompilation
-      }
-    }
-
-    if (!usedCompiledArtifacts) {
-      const contractSource = await readFile(effectiveContractPath, "utf8");
-      const compiled = compileOpenApi(contractSource, {
-        strict: config.contract?.strict ?? true,
-      });
-
-      if (!compiled.ok) {
-        for (const diagnostic of compiled.diagnostics) {
-          console.error(
-            \`[\${diagnostic.severity.toUpperCase()}] \${diagnostic.code}: \${diagnostic.message}\${diagnostic.location ? \` at \${diagnostic.location}\` : ""}\`,
-          );
-        }
-        process.exit(1);
-      }
-
-      contractRevision = compiled.contractRevision;
-
-      if (!baseUrl) {
+      } else {
         console.error(
-          "[ERROR] No baseUrl configured in contract.baseUrl or options, and security.allowedUpstreamHosts is empty.",
+          "[ERROR] Build artifact verification failed: " + (error as Error).message + ". Rebuild with chainmcp build or run with --allow-manifest-drift.",
         );
         process.exit(1);
-      }
-
-      const executorOverrides: Parameters<typeof buildExecutorOptions>[1] = {
-        baseUrl,
-        contractRevision: compiled.contractRevision,
-        ...(options?.transport !== undefined ? { transport: options.transport } : {}),
-        ...(options?.resolveHost !== undefined
-          ? { resolveHost: options.resolveHost }
-          : {}),
-      };
-
-      const executorOptions = buildExecutorOptions(config, executorOverrides);
-      const executor = createUpstreamExecutor(executorOptions);
-
-      for (const tool of executor.createTools(compiled.tools)) {
-        runtime.register(tool);
-      }
-    } else {
-      // If we loaded artifacts, we still need to set up executor properly
-      const contractSource = await readFile(effectiveContractPath, "utf8");
-      const compiled = compileOpenApi(contractSource, {
-        strict: config.contract?.strict ?? true,
-      });
-
-      if (!compiled.ok) {
-        for (const diagnostic of compiled.diagnostics) {
-          console.error(
-            \`[\${diagnostic.severity.toUpperCase()}] \${diagnostic.code}: \${diagnostic.message}\${diagnostic.location ? \` at \${diagnostic.location}\` : ""}\`,
-          );
-        }
-        process.exit(1);
-      }
-
-      if (!baseUrl) {
-        console.error(
-          "[ERROR] No baseUrl configured in contract.baseUrl or options, and security.allowedUpstreamHosts is empty.",
-        );
-        process.exit(1);
-      }
-
-      const executorOverrides: Parameters<typeof buildExecutorOptions>[1] = {
-        baseUrl,
-        contractRevision: contractRevision ?? compiled.contractRevision,
-        ...(options?.transport !== undefined ? { transport: options.transport } : {}),
-        ...(options?.resolveHost !== undefined
-          ? { resolveHost: options.resolveHost }
-          : {}),
-      };
-
-      const executorOptions = buildExecutorOptions(config, executorOverrides);
-      const executor = createUpstreamExecutor(executorOptions);
-
-      for (const tool of executor.createTools(compiled.tools)) {
-        runtime.register(tool);
       }
     }
   }
-
   // Register code-defined tools
   for (const customTool of tools) {
     runtime.register(customTool);
