@@ -2369,15 +2369,33 @@ The `@chainmcp/cli` package implements developer commands and generated server s
 Exported as the `chainmcp` executable (`dist/bin.js`).
 
 ```bash
-chainmcp init [--spec <path|url>] [--blank] [--output <dir>] [--name <name>] [--base-url <url>] [--allow-http] [--force]
+chainmcp init [--spec <path|url>] [--blank] [--output <dir>] [--name <name>] [--base-url <url>] [--allow-http] [--force] [--local-deps <path>] [--workspace-deps]
 chainmcp validate [--config <path>] [--spec <path|url>] [--strict] [--json] [--allow-http] [--require-contract]
 chainmcp build [--config <path>] [--spec <path|url>] [--out-dir <dir>] [--allow-http] [--check] [--require-contract]
 chainmcp diff [--config <path>] [--spec <path|url>] [--against <target>] [--fail-on <breaking|breaking+potential|none>] [--fail-on-breaking] [--json] [--allow-http]
 chainmcp serve [--config <path>] [--spec <path|url>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http] [--allow-http] [--base-url <url>] [--tenant <id>] [--require-contract]
 chainmcp gateway serve [--config <path>] [--transport <stdio|http>] [--port <number>] [--host <string>] [--path <string>] [--allow-unauthenticated-http] [--tenant <id>]
 chainmcp dev [--config <path>] [--spec <path|url>] [--base-url <url>] [--allow-http] [--tenant <id>]
-chainmcp export [--config <path>] [--spec <path|url>] [--output <dir>] [--allow-http] [--force] [--check] [--require-contract]
+chainmcp export [--config <path>] [--spec <path|url>] [--output <dir>] [--allow-http] [--force] [--check] [--require-contract] [--local-deps <path>] [--workspace-deps]
 ```
+
+### Local dependency mode
+
+The workspace packages are unpublished. `init` and `export` accept two explicit
+modes for dependency specifiers:
+
+- `--local-deps <path>`: `path` must be the root of a cloned ChainMcp
+  repository. Every `@chainmcp/*` dependency becomes a relative `file:`
+  specifier, and the generated project receives a `pnpm-workspace.yaml` whose
+  `overrides` map each internal package back to the same local directory. The
+  override block is required because linked packages declare `workspace:*`
+  siblings. Install generated projects with pnpm.
+- `--workspace-deps`: keeps `workspace:*` specifiers for projects generated
+  inside the monorepo.
+
+The two flags are mutually exclusive. The repository root is never inferred
+from the current working directory. Passing a directory that is missing any
+required package fails before any files are written.
 
 ### Programmatic API
 
@@ -2420,16 +2438,45 @@ export interface LoadedSpec {
   contentType?: string | undefined;
 }
 
+/**
+ * Reads the CLI's own version from its package.json at runtime. The value is
+ * cached after the first successful read.
+ */
+export function getCliVersion(): Promise<string>;
+
+export interface LocalDependencyOptions {
+  /** Explicit path to the cloned ChainMcp repository root. */
+  repoRoot: string;
+  /** Directory that will contain the generated project's package.json. */
+  projectDir: string;
+}
+
+export interface LocalDependencyResult {
+  ok: boolean;
+  /** Relative `file:` specifier for every required @chainmcp package. */
+  specs: Record<string, string>;
+  repoRoot: string;
+  error?: string | undefined;
+}
+
+export function resolveLocalDependencySpecs(
+  options: LocalDependencyOptions,
+): Promise<LocalDependencyResult>;
+
 export function buildProjectManifest(
   projectName: string,
   compiled: CompileResult,
-  options?: { generatedAt?: string },
+  options: { generatorVersion: string; generatedAt?: string },
 ): ProjectManifest;
 
 export function buildCodeFirstManifest(
   projectName: string,
   tools: readonly ToolDefinition[],
-  options?: { sourceHash?: string; generatedAt?: string },
+  options: {
+    generatorVersion: string;
+    sourceHash?: string;
+    generatedAt?: string;
+  },
 ): ProjectManifest;
 
 export function verifyProjectManifest(

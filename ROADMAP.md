@@ -1,6 +1,7 @@
 # ChainMcp Roadmap
 
-This roadmap is the delivery plan and source of truth for project progress.
+This roadmap is the historical delivery record. Active, ordered work lives in
+`PRIORITIES.md`; do not add new items here.
 
 A checkbox may be marked complete only after implementation, tests, documentation, and acceptance criteria have been verified.
 

@@ -11,6 +11,7 @@ import {
 } from "../manifest.js";
 import { loadSpec } from "../spec-loader.js";
 import type { BuildOptions, BuildResult, ProjectManifest } from "../types.js";
+import { getCliVersion } from "../version.js";
 import { validateCommand } from "./validate.js";
 
 async function fileExists(path: string): Promise<boolean> {
@@ -33,6 +34,7 @@ export async function buildCommand(
   const outDir = options.outDir
     ? resolve(cwd, options.outDir)
     : resolve(cwd, "dist");
+  const version = await getCliVersion();
 
   // 1. Run validation
   const validation = await validateCommand({
@@ -82,7 +84,9 @@ export async function buildCommand(
       };
     }
 
-    const manifest = buildCodeFirstManifest(projectName, loaded.tools);
+    const manifest = buildCodeFirstManifest(projectName, loaded.tools, {
+      generatorVersion: version,
+    });
 
     let verifiedReproducible: boolean | undefined;
     if (options.check) {
@@ -173,7 +177,9 @@ export async function buildCommand(
   }
 
   // 3. Build project manifest
-  const manifest = buildProjectManifest(projectName, compiled);
+  const manifest = buildProjectManifest(projectName, compiled, {
+    generatorVersion: version,
+  });
 
   // 4. Reproducibility check if requested
   let verifiedReproducible: boolean | undefined;

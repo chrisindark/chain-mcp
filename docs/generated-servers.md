@@ -11,8 +11,8 @@ Generated servers provide portable, self-contained Model Context Protocol (MCP) 
 Generated servers use the shared runtime (`@chainmcp/core`), upstream executor (`@chainmcp/executor`), and server adapter (`@chainmcp/server`).
 
 - Rather than generating monolithic, bespoke policy or dispatch logic into code, the compiler emits deterministic operation metadata, pinned contract revisions, and validated input schemas.
-- The generated project references published packages (`@chainmcp/core`, `@chainmcp/executor`, `@chainmcp/server`, `@chainmcp/config`, `@chainmcp/analytics`, `@chainmcp/json-navigation`, `@chainmcp/auth`, `@chainmcp/rate-limit`).
-- Output is byte-identical for identical contracts and compiler/generator versions.
+- The generated project references the shared packages (`@chainmcp/core`, `@chainmcp/executor`, `@chainmcp/server`, `@chainmcp/config`, `@chainmcp/analytics`, `@chainmcp/json-navigation`, `@chainmcp/auth`, `@chainmcp/rate-limit`) at the generator's version. Until those packages are published, use `--local-deps <clone-root>` to emit relative `file:` specifiers instead of a registry range.
+- Output is byte-identical for identical contracts, generator/compiler versions, and project location.
 
 ---
 
@@ -50,7 +50,7 @@ chainmcp <command> [options]
 Scaffolds a new ChainMcp project or adds configuration to an existing OpenAPI specification.
 
 ```bash
-chainmcp init [--spec <path|url>] [--blank] [--output <dir>] [--name <name>] [--base-url <url>] [--allow-http] [--force]
+chainmcp init [--spec <path|url>] [--blank] [--output <dir>] [--name <name>] [--base-url <url>] [--allow-http] [--force] [--local-deps <path>] [--workspace-deps]
 ```
 
 - `--spec <path|url>`: Path or HTTPS URL to OpenAPI contract.
@@ -60,6 +60,8 @@ chainmcp init [--spec <path|url>] [--blank] [--output <dir>] [--name <name>] [--
 - `--base-url <url>`: Upstream API base URL (defaults to spec `servers[0].url`).
 - `--allow-http`: Permit plain HTTP base URLs and remote specs for private/loopback hosts.
 - `--force`: Overwrite existing files if target directory is not empty.
+- `--local-deps <path>`: Emit relative `file:` dependency specifiers pointing at a cloned ChainMcp repository and write a `pnpm-workspace.yaml` override block. Install the generated project with pnpm.
+- `--workspace-deps`: Keep `workspace:*` specifiers for projects generated inside the monorepo. Mutually exclusive with `--local-deps`.
 
 ### 2. `chainmcp validate`
 
@@ -107,13 +109,14 @@ chainmcp serve [--config <path>] [--spec <path|url>] [--transport <stdio|http>] 
 Exports a clean, portable standalone server project with a pinned manifest.
 
 ```bash
-chainmcp export [--config <path>] [--spec <path|url>] [--output <dir>] [--force] [--check] [--allow-http] [--require-contract]
+chainmcp export [--config <path>] [--spec <path|url>] [--output <dir>] [--force] [--check] [--allow-http] [--require-contract] [--local-deps <path>] [--workspace-deps]
 ```
 
 - For contract-driven projects: pins `spec/openapi.yaml`, generates server code and manifest.
 - For code-first projects: copies `src/`, generates `chainmcp.config.yaml`, `package.json`, code-first `chainmcp.manifest.json`, and Dockerfile without `spec` references.
 - `--check`: Asserts byte-for-byte reproducibility against recompilation.
 - `--require-contract`: Require an OpenAPI contract and fail if absent.
+- `--local-deps <path>` / `--workspace-deps`: Same dependency modes as `init`.
 
 ---
 
@@ -166,7 +169,8 @@ my-server/
 ├── src/
 │   ├── server.ts           # Standalone entry point using shared runtime
 │   └── tools.ts            # Pinned tool metadata
-├── package.json            # Pinned package dependencies
+├── package.json            # Generator-versioned or local file: dependencies
+├── pnpm-workspace.yaml     # Local-clone mode only: overrides for workspace:* siblings
 ├── tsconfig.json           # Base TypeScript configuration
 ├── tsconfig.build.json     # Production build configuration
 ├── Dockerfile              # Multi-stage production container build
@@ -179,7 +183,7 @@ my-server/
 
 ## Acceptance Criteria Verification
 
-- **Independent Execution:** Generated projects build with standard `npm run build` and run with `npm start` without relying on monorepo tooling.
+- **Independent Execution:** Generated projects build and run without the generator process. Registry mode uses npm; local-clone mode (`--local-deps`) uses pnpm so the generated override block resolves the linked `workspace:*` siblings.
 - **Client Protocol Conformance:** Exercised end to end with the official MCP Client (`@modelcontextprotocol/client`) over linked in-memory and stdio transports, discovering tools (`tools/list`) and executing operations (`tools/call`).
 - **Reproducibility:** Re-exporting an identical contract produces byte-identical files and matching cryptographic hashes (`verifyProjectManifest`).
 - **SSRF and Egress Protection:** Upstream calls enforce `security.allowedUpstreamHosts`, DNS pinning, private IP range blocking, and response size caps.

@@ -4,21 +4,22 @@ Contributions should improve ChainMcp without compromising its security or porta
 
 ## Before contributing
 
-Read `ROADMAP.md`, `ARCHITECTURE.md`, `DEVELOPMENT.md`, and `SECURITY.md`.
+Read `PRIORITIES.md`, `ARCHITECTURE.md`, `DEVELOPMENT.md`, and `SECURITY.md`.
+`PRIORITIES.md` is the active, ordered work queue; `ROADMAP.md` is the
+historical milestone record.
 
 For changes that affect public interfaces or system design, propose an architecture decision record before implementation.
 
 ## Issue intake
 
-Triaged issues from other projects are evidence of failure modes, not a
-roadmap. An item enters `ROADMAP.md` or the active backlog only when at least
-one is true:
+Active work is ordered in `PRIORITIES.md`. An item enters that file only when at
+least one is true:
 
 1. It is reproducible in this repository with a failing test.
 2. It blocks the current vertical slice or the golden path (one runnable
    example an MCP client can use).
 
-Everything else goes to `docs/risk-register.md` with a status and a
+Everything else stays in `docs/risk-register.md` with a status and a
 re-evaluation trigger. Do not assign priority from a source tracker's severity;
 priority is derived from this gate.
 

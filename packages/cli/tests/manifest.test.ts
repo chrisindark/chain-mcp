@@ -6,7 +6,7 @@ import {
   sha256,
   verifyProjectManifest,
 } from "../src/manifest.js";
-import { CLI_VERSION } from "../src/types.js";
+const GENERATOR_VERSION = "9.9.9";
 
 const VALID_SPEC = `
 openapi: "3.1.0"
@@ -34,9 +34,11 @@ describe("Manifest creation and verification", () => {
     const compiled = compileOpenApi(VALID_SPEC);
     expect(compiled.ok).toBe(true);
 
-    const manifest = buildProjectManifest("test-api", compiled);
+    const manifest = buildProjectManifest("test-api", compiled, {
+      generatorVersion: GENERATOR_VERSION,
+    });
     expect(manifest.manifestVersion).toBe(1);
-    expect(manifest.generatorVersion).toBe(CLI_VERSION);
+    expect(manifest.generatorVersion).toBe(GENERATOR_VERSION);
     expect(manifest.compilerVersion).toBe(COMPILER_VERSION);
     expect(manifest.projectName).toBe("test-api");
     expect(manifest.contractRevision).toBe(compiled.contractRevision);
@@ -50,8 +52,12 @@ describe("Manifest creation and verification", () => {
     const compiled1 = compileOpenApi(VALID_SPEC);
     const compiled2 = compileOpenApi(VALID_SPEC);
 
-    const m1 = buildProjectManifest("test-api", compiled1);
-    const m2 = buildProjectManifest("test-api", compiled2);
+    const m1 = buildProjectManifest("test-api", compiled1, {
+      generatorVersion: GENERATOR_VERSION,
+    });
+    const m2 = buildProjectManifest("test-api", compiled2, {
+      generatorVersion: GENERATOR_VERSION,
+    });
 
     const result = verifyProjectManifest(m1, m2);
     expect(result.match).toBe(true);
@@ -62,8 +68,12 @@ describe("Manifest creation and verification", () => {
     const compiled1 = compileOpenApi(VALID_SPEC);
     const compiled2 = compileOpenApi(VALID_SPEC + "\n# comment");
 
-    const m1 = buildProjectManifest("test-api", compiled1);
-    const m2 = buildProjectManifest("test-api", compiled2);
+    const m1 = buildProjectManifest("test-api", compiled1, {
+      generatorVersion: GENERATOR_VERSION,
+    });
+    const m2 = buildProjectManifest("test-api", compiled2, {
+      generatorVersion: GENERATOR_VERSION,
+    });
 
     const result = verifyProjectManifest(m1, m2);
     expect(result.match).toBe(false);
@@ -74,7 +84,9 @@ describe("Manifest creation and verification", () => {
 
   it("detects tool mismatches", () => {
     const compiled = compileOpenApi(VALID_SPEC);
-    const m1 = buildProjectManifest("test-api", compiled);
+    const m1 = buildProjectManifest("test-api", compiled, {
+      generatorVersion: GENERATOR_VERSION,
+    });
     const m2 = {
       ...m1,
       tools: [{ name: "getItems", hash: "tampered_hash" }],

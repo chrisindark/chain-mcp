@@ -428,14 +428,14 @@ components:
     });
 
     it("asserts the emitted baseUrl logic in renderServerTs", () => {
-      const serverSource = renderServerTs();
+      const serverSource = renderServerTs({ version: "0.1.0" });
       expect(serverSource).toContain("options?.baseUrl ??");
       expect(serverSource).toContain("config.contract?.baseUrl ??");
       expect(serverSource).not.toContain("api.example.com");
     });
 
     it("asserts renderServerTs does not fallback to default tenant", () => {
-      const serverSource = renderServerTs();
+      const serverSource = renderServerTs({ version: "0.1.0" });
       expect(serverSource).not.toContain('?? "default"');
       expect(serverSource).not.toContain("?? 'default'");
       expect(serverSource).toContain("TENANT_REQUIRED");

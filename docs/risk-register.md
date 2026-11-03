@@ -7,11 +7,12 @@ mistaken for commitments.
 
 ## Provenance
 
-The raw material is a condensed triage of open issues in OSS MCP servers and
-clients, recorded in `ISSUES.md`. Issue trackers over-represent edge cases from
-large deployments, so they are useful as a list of failure modes and test
-fixtures, not as a priority list. Severity labels copied from a source tracker
-are not our priority.
+The raw material was a condensed triage of open issues in OSS MCP servers and
+clients. Issue trackers over-represent edge cases from large deployments, so they
+are useful as a list of failure modes and test fixtures, not as a priority list.
+Severity labels copied from a source tracker are not our priority. The raw
+triage and the remediation work queue have been retired; active work lives in
+`PRIORITIES.md`.
 
 ## Intake gate
 
@@ -57,8 +58,8 @@ Notes:
 - `SEC-06` includes loopback, private, link-local, multicast, and metadata
   ranges; redirect revalidation; DNS-rebinding pinning; no scheme or port
   escalation; and explicit proxy configuration.
-- `SEC-06b` from the raw triage (dependency and secret scanning) is Milestone 0
-  process work; completed in CI (audit check, Dependabot, Gitleaks, and dependency review).
+- Dependency and secret scanning is Milestone 0 process work; completed in CI
+  (audit check, Dependabot, Gitleaks, and dependency review).
 
 ## Phase 2 — Tool generation
 

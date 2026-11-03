@@ -6,9 +6,9 @@ Treat repository documentation as the product specification. Do not invent compl
 
 ## Before making changes
 
-1. Read `README.md`, `ROADMAP.md`, `ARCHITECTURE.md`, and the relevant feature documents.
+1. Read `README.md`, `PRIORITIES.md`, `ARCHITECTURE.md`, and the relevant feature documents.
 2. Inspect the actual code and tests.
-3. Identify the roadmap milestone and its acceptance criteria.
+3. Identify the priority item and its acceptance criteria.
 4. Write a short plan for changes involving multiple files.
 5. Identify security and compatibility implications.
 
@@ -42,12 +42,12 @@ Update relevant documentation whenever implementation changes:
 - `API_REFERENCE.md` for public APIs.
 - `CONFIGURATION.md` for configuration changes.
 - `ARCHITECTURE.md` and an ADR for significant design changes.
-- `ROADMAP.md` for verified milestone progress.
+- `PRIORITIES.md` for verified priority progress (`ROADMAP.md` is the historical record).
 - `CHANGELOG.md` for user-visible changes.
 
 ## Scope control
 
-Implement one milestone or clearly bounded vertical slice at a time. Do not attempt to finish the entire roadmap in a single task unless explicitly requested.
+Implement one priority item or clearly bounded vertical slice at a time. Do not attempt to finish the entire priority list in a single task unless explicitly requested.
 
 Do not introduce a hosted SaaS control plane into the open-source MVP unless requested.
 

@@ -13,7 +13,7 @@ import {
   type HostResolver,
 } from "@chainmcp/executor";
 
-import { CLI_VERSION } from "./types.js";
+import { getCliVersion } from "./version.js";
 
 export const DEFAULT_SPEC_TIMEOUT_MS = 10_000;
 export const DEFAULT_SPEC_MAX_BYTES = 10 * 1024 * 1024; // 10 MiB
@@ -171,7 +171,7 @@ type HopResult =
       contentType?: string | undefined;
     };
 
-function fetchOneHop(options: HopFetchOptions): Promise<HopResult> {
+async function fetchOneHop(options: HopFetchOptions): Promise<HopResult> {
   const {
     url,
     pinnedAddress,
@@ -183,6 +183,7 @@ function fetchOneHop(options: HopFetchOptions): Promise<HopResult> {
   } = options;
   const isHttps = url.protocol === "https:";
   const port = url.port ? Number(url.port) : isHttps ? 443 : 80;
+  const cliVersion = await getCliVersion();
 
   return new Promise<HopResult>((resolve, reject) => {
     let settled = false;
@@ -236,7 +237,7 @@ function fetchOneHop(options: HopFetchOptions): Promise<HopResult> {
       headers: {
         accept:
           "application/yaml, application/json, text/yaml, text/plain, */*",
-        "user-agent": `chainmcp/${CLI_VERSION}`,
+        "user-agent": `chainmcp/${cliVersion}`,
       },
       agent: false,
       signal: abortController.signal,

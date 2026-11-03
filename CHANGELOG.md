@@ -6,6 +6,15 @@ The project is pre-release. Versions and release dates must reflect actual publi
 
 ## Unreleased
 
+### Added
+
+- **Local-clone dependency mode:** `chainmcp init` and `chainmcp export` accept `--local-deps <repo-root>`, emitting relative `file:` specifiers and a generated `pnpm-workspace.yaml` override block so the unpublished `@chainmcp/*` packages install from a cloned checkout with no registry access. `--workspace-deps` is now exposed on the CLI for in-repo projects; the two modes are mutually exclusive.
+- **Runtime version stamping:** generated dependency ranges, the generated server's advertised version, and `manifest.generatorVersion` now come from the CLI's own `package.json` through `getCliVersion()` instead of the hardcoded `0.1.0`.
+
+### Changed
+
+- **Breaking for embedders:** `@chainmcp/cli` no longer exports `CLI_VERSION`; use `getCliVersion()`. `buildProjectManifest` and `buildCodeFirstManifest` now require a `generatorVersion` option.
+
 ### Security
 
 - **RM-13 remove implicit default tenant fallback & multi-tenant isolation:** Removed implicit `"default"` tenant fallback across `@chainmcp/cli` (`serve`, `dev`, `gateway serve`, and generated server templates) and `@chainmcp/gateway`. Introduced `TENANT_REQUIRED` runtime error code in `@chainmcp/core` and `@chainmcp/server`. Calls requiring tenant context reject with `TENANT_REQUIRED` instead of guessing or falling back to a default tenant. Dynamic gateway mode verifies tenant resolution at startup, refusing to start without an inbound verifier (`auth.inbound`) or explicit tenant fallback (`--tenant` / `config.tenant`). Authenticated tenant claims strictly take precedence over CLI/config defaults (`authTenant ?? explicitTenant`). Gateway emits `tenant_resolution_failed` audit events when tenant resolution fails.

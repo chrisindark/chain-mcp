@@ -8,8 +8,6 @@ import type {
 import type { ChainMcpConfig } from "@chainmcp/config";
 import type { ToolDefinition } from "@chainmcp/core";
 
-export const CLI_VERSION = "0.1.0";
-
 export type { LoadSpecOptions, LoadedSpec } from "./spec-loader.js";
 
 /**
@@ -42,6 +40,12 @@ export interface InitOptions {
   allowHttp?: boolean | undefined;
   blank?: boolean | undefined;
   force?: boolean | undefined;
+  /** Override the generator version (tests and embedders only). */
+  version?: string | undefined;
+  /** Keep `workspace:*` specifiers for projects inside the monorepo. */
+  workspaceDependencies?: boolean | undefined;
+  /** Explicit path to a cloned ChainMcp repository for `file:` dependencies. */
+  localDeps?: string | undefined;
   cwd?: string | undefined;
 }
 
@@ -231,7 +235,11 @@ export interface ExportOptions {
   output?: string | undefined;
   force?: boolean | undefined;
   check?: boolean | undefined;
+  /** Override the generator version (tests and embedders only). */
+  version?: string | undefined;
   workspaceDependencies?: boolean | undefined;
+  /** Explicit path to a cloned ChainMcp repository for `file:` dependencies. */
+  localDeps?: string | undefined;
   dependencyOverrides?: Record<string, string> | undefined;
   cwd?: string | undefined;
 }

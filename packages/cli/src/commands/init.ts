@@ -6,6 +6,8 @@ import { compileOpenApi } from "@chainmcp/compiler";
 import { normalizeAllowedHost } from "@chainmcp/executor";
 
 import { loadSpec } from "../spec-loader.js";
+import { resolveLocalDependencySpecs } from "../local-deps.js";
+import { getCliVersion } from "../version.js";
 
 import {
   renderConfigYaml,
@@ -13,6 +15,7 @@ import {
   renderDockerignore,
   renderGitignore,
   renderPackageJson,
+  renderPnpmWorkspaceYaml,
   renderReadme,
   renderServerTs,
   renderToolsTs,
@@ -72,6 +75,53 @@ function normalizeInitBaseUrl(raw: string): NormalizedBaseUrlResult {
 export async function initCommand(options: InitOptions): Promise<InitResult> {
   const cwd = options.cwd ?? process.cwd();
   const projectDir = resolve(cwd, options.output ?? ".");
+  const version = options.version ?? (await getCliVersion());
+
+  if (
+    options.localDeps !== undefined &&
+    options.workspaceDependencies === true
+  ) {
+    return {
+      ok: false,
+      projectName: "",
+      projectDir,
+      specPath: "",
+      configPath: "",
+      toolCount: 0,
+      createdFiles: [],
+      error:
+        "Choose either --local-deps (file: dependencies) or --workspace-deps (workspace:*), not both.",
+    };
+  }
+
+  let dependencySpecs: Record<string, string> | undefined;
+  if (options.localDeps !== undefined) {
+    const local = await resolveLocalDependencySpecs({
+      repoRoot: options.localDeps,
+      projectDir,
+    });
+    if (!local.ok) {
+      return {
+        ok: false,
+        projectName: "",
+        projectDir,
+        specPath: "",
+        configPath: "",
+        toolCount: 0,
+        createdFiles: [],
+        error: local.error,
+      };
+    }
+    dependencySpecs = local.specs;
+  }
+  const localDependencies = dependencySpecs !== undefined;
+  const dependencyOptions = {
+    ...(dependencySpecs !== undefined ? { dependencySpecs } : {}),
+    ...(localDependencies ? { localDependencies: true } : {}),
+    ...(options.workspaceDependencies === true
+      ? { workspaceDependencies: true }
+      : {}),
+  };
 
   // Handle blank code-first project scaffolding
   if (options.blank) {
@@ -107,9 +157,22 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     createdFiles.push("chainmcp.config.yaml");
 
     // Write package.json
-    const packageJson = renderPackageJson({ name: projectName });
+    const packageJson = renderPackageJson({
+      name: projectName,
+      version,
+      ...dependencyOptions,
+    });
     await writeFile(join(projectDir, "package.json"), packageJson, "utf8");
     createdFiles.push("package.json");
+
+    if (dependencySpecs !== undefined) {
+      await writeFile(
+        join(projectDir, "pnpm-workspace.yaml"),
+        renderPnpmWorkspaceYaml({ overrides: dependencySpecs }),
+        "utf8",
+      );
+      createdFiles.push("pnpm-workspace.yaml");
+    }
 
     // Write TypeScript configs
     await writeFile(
@@ -128,7 +191,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     // Write source files
     await writeFile(
       join(projectDir, "src", "server.ts"),
-      renderServerTs(),
+      renderServerTs({ version }),
       "utf8",
     );
     createdFiles.push("src/server.ts");
@@ -162,6 +225,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
         name: projectName,
         toolCount: 1,
         blank: true,
+        ...(localDependencies ? { localDependencies: true } : {}),
       }),
       "utf8",
     );
@@ -329,9 +393,22 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   createdFiles.push("chainmcp.config.yaml");
 
   // Write package.json
-  const packageJson = renderPackageJson({ name: projectName });
+  const packageJson = renderPackageJson({
+    name: projectName,
+    version,
+    ...dependencyOptions,
+  });
   await writeFile(join(projectDir, "package.json"), packageJson, "utf8");
   createdFiles.push("package.json");
+
+  if (dependencySpecs !== undefined) {
+    await writeFile(
+      join(projectDir, "pnpm-workspace.yaml"),
+      renderPnpmWorkspaceYaml({ overrides: dependencySpecs }),
+      "utf8",
+    );
+    createdFiles.push("pnpm-workspace.yaml");
+  }
 
   // Write TypeScript configs
   await writeFile(
@@ -350,7 +427,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   // Write source files
   await writeFile(
     join(projectDir, "src", "server.ts"),
-    renderServerTs(),
+    renderServerTs({ version }),
     "utf8",
   );
   createdFiles.push("src/server.ts");
@@ -369,13 +446,13 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   await writeFile(join(projectDir, ".gitignore"), renderGitignore(), "utf8");
   createdFiles.push(".gitignore");
 
-  // Write README.md
   await writeFile(
     join(projectDir, "README.md"),
     renderReadme({
       name: projectName,
       toolCount: compiled.tools.length,
       contractRevision: compiled.contractRevision,
+      ...(localDependencies ? { localDependencies: true } : {}),
     }),
     "utf8",
   );

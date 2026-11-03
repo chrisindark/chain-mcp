@@ -24,7 +24,62 @@ flowchart LR
     end
 ```
 
-## Quick Start (From 0 to MCP in 3 Steps)
+## Quick Start (Local Clone)
+
+ChainMcp is not published to a package registry yet. Install it by cloning the
+repository and linking generated projects to that checkout.
+
+```bash
+git clone https://github.com/chrisindark/chain-mcp.git
+cd chain-mcp
+pnpm install
+pnpm build
+
+# From the repository root, create a server project outside the workspace:
+node packages/cli/dist/bin.js init \
+  --spec ./examples/petstore/openapi.yaml \
+  --output ~/my-mcp-server \
+  --local-deps "$PWD"
+```
+
+`--local-deps` writes `file:` dependency specifiers and a
+`pnpm-workspace.yaml` override block, so the generated project installs the
+unpublished `@chainmcp/*` packages from the clone instead of a registry.
+
+### Install, build, and run
+
+```bash
+cd ~/my-mcp-server
+pnpm install
+pnpm build
+pnpm start        # stdio MCP server
+```
+
+### Connect to Claude Desktop or Your AI IDE
+
+Add the server to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "my-api": {
+      "command": "node",
+      "args": ["/Users/you/my-mcp-server/dist/server.js"]
+    }
+  }
+}
+```
+
+Open Claude Desktop or your AI IDE. Your API tools appear automatically in the tool inventory.
+
+> [!NOTE]
+> The `npx @chainmcp/cli ...` form shown in older guides requires published
+> packages. Until publishing happens, run the CLI from the clone:
+> `node packages/cli/dist/bin.js <command>`.
+> Projects generated **inside** the monorepo can use `--workspace-deps` to keep
+> `workspace:*` specifiers.
+
+## Quick Start (Registry, after publishing)
 
 ### 1. Initialize a Project from an API Spec
 
@@ -43,20 +98,8 @@ chainmcp build
 
 ### 3. Connect to Claude Desktop or Your AI IDE
 
-Add the server to your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "my-api": {
-      "command": "chainmcp",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-Open Claude Desktop or your AI IDE. Your API tools appear automatically in the tool inventory!
+Use the same `claude_desktop_config.json` entry shown above, with
+`"command": "chainmcp"` and `"args": ["serve"]`.
 
 ## Core capabilities
 
@@ -94,9 +137,10 @@ These are initial architectural choices and may change through documented archit
 
 ## Repository documentation
 
+- **`PRIORITIES.md`**: Active work queue for the local-first 1.0, ordered high to low priority (supersedes the retired remediation plan and raw triage).
 - **`docs/product-guide.md`**: Complete plain-English product guide, visual architecture, metrics, caching, and adoption
 - **`docs/README.md`**: Complete documentation index and topic map
-- `ROADMAP.md`: milestones and acceptance criteria
+- `ROADMAP.md`: historical milestone record and acceptance criteria
 - `docs/getting-started.md`: runnable end-to-end example and Inspector commands
 - `docs/declarative-tools.md`: versioned declarative HTTP tool descriptors and their execution guarantees
 - `docs/declarative-admin.md`: self-hosted admin API and console for validating, previewing, and publishing descriptors
@@ -141,6 +185,7 @@ Run `pnpm install` followed by `pnpm check` from the repository root to run form
 
 ```bash
 chainmcp init --spec ./openapi.yaml  # Scaffolds project from API spec (or HTTPS URL)
+chainmcp init --spec ./openapi.yaml --local-deps /path/to/chain-mcp  # Link unpublished packages from a clone
 chainmcp validate                    # Audits schemas, regexes, and URLs
 chainmcp build                       # Compiles tools and manifests
 chainmcp diff --against baseline.yaml # Detects schema drift and breaking changes
@@ -148,7 +193,7 @@ chainmcp serve                       # Starts the local MCP server (stdio by def
 chainmcp serve --transport http --port 3333 # Serves Streamable HTTP / SSE endpoint
 chainmcp dev                         # Fast authoring loop; loads dist/tools.js or src/tools.ts
 chainmcp gateway serve               # Starts dynamic multi-contract gateway server
-chainmcp export --output ./dist-srv  # Exports portable standalone server
+chainmcp export --output ./dist-srv --local-deps /path/to/chain-mcp  # Exports a portable standalone server
 ```
 
 > [!NOTE]
