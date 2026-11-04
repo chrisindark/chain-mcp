@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
+import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
 import { InMemoryToolRuntime, type ToolDefinition } from "@chainmcp/core";
@@ -460,6 +461,69 @@ describe("serveHttp transport and inbound auth", () => {
       expect(parsed.scopes).toEqual(["read:data"]);
 
       await client.close();
+    } finally {
+      await serverHandle.close();
+    }
+  });
+
+  it("rejects a verified JWT without tenant context with TENANT_REQUIRED", async () => {
+    const runtime = createTestRuntime();
+    const jwtSecret = "super-secret-hmac-key-at-least-32-chars-long";
+    const verifier = createJwtVerifier({ secret: jwtSecret });
+
+    const serverHandle = await serveHttp(
+      runtime,
+      {
+        name: "jwt-tenant-server",
+        version: "1.0.0",
+        createContext: () => ({
+          requestId: "req-jwt-tenant",
+          tenantId: "never-reached",
+          principal: { id: "never-reached", scopes: [] },
+        }),
+      },
+      {
+        port: 0,
+        verifier,
+        // Even with optional inbound auth, a verified token without a tenant
+        // must fail closed rather than downgrade to an anonymous caller.
+        requireAuth: false,
+      },
+    );
+
+    const header = Buffer.from(
+      JSON.stringify({ alg: "HS256", typ: "JWT" }),
+    ).toString("base64url");
+    const payload = Buffer.from(
+      JSON.stringify({
+        sub: "jwt-user-42",
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      }),
+    ).toString("base64url");
+    const sig = createHmac("sha256", jwtSecret)
+      .update(`${header}.${payload}`)
+      .digest("base64url");
+    const jwt = `${header}.${payload}.${sig}`;
+
+    try {
+      const response = await fetch(serverHandle.url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${jwt}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+        }),
+      });
+
+      expect(response.status).toBe(401);
+      const body = (await response.json()) as {
+        error?: { data?: { code?: string } };
+      };
+      expect(body.error?.data?.code).toBe("TENANT_REQUIRED");
     } finally {
       await serverHandle.close();
     }
@@ -1250,7 +1314,7 @@ describe("serveHttp transport and inbound auth", () => {
       }
     });
 
-    it("rejects disallowed origin on preflight with 403 and omits allow-origin header on normal requests", async () => {
+    it("rejects a disallowed origin on preflight and on normal requests with 403", async () => {
       const runtime = createTestRuntime();
       const serverHandle = await serveHttp(runtime, testServerOptions, {
         port: 0,
@@ -1281,7 +1345,8 @@ describe("serveHttp transport and inbound auth", () => {
           "CORS origin not allowed",
         );
 
-        // 2. Normal POST request from untrusted origin -> succeeds or proceeds, but NO Access-Control-Allow-Origin
+        // 2. Normal POST from the same untrusted origin -> 403 before tools run,
+        // still without an Access-Control-Allow-Origin header.
         const postRes = await fetch(serverHandle.url, {
           method: "POST",
           headers: {
@@ -1296,9 +1361,13 @@ describe("serveHttp transport and inbound auth", () => {
             params: { name: "getGreeting", arguments: { name: "Evil" } },
           }),
         });
-        expect(postRes.status).toBe(200);
+        expect(postRes.status).toBe(403);
         expect(postRes.headers.get("access-control-allow-origin")).toBeNull();
         expect(postRes.headers.get("vary")).toBe("Origin");
+        const postData = (await postRes.json()) as {
+          error?: { message: string };
+        };
+        expect(postData.error?.message).toContain("Origin not allowed");
       } finally {
         await serverHandle.close();
       }
@@ -1452,7 +1521,7 @@ describe("serveHttp transport and inbound auth", () => {
         const optionsRes = await fetch(serverHandle.url, {
           method: "OPTIONS",
           headers: {
-            Origin: "https://app.example.com",
+            Origin: "http://localhost:4321",
             "Access-Control-Request-Method": "POST",
           },
         });
@@ -1465,7 +1534,7 @@ describe("serveHttp transport and inbound auth", () => {
         const postRes = await fetch(serverHandle.url, {
           method: "POST",
           headers: {
-            Origin: "https://app.example.com",
+            Origin: "http://localhost:4321",
             "Content-Type": "application/json",
             Accept: "application/json, text/event-stream",
           },
@@ -1506,6 +1575,293 @@ describe("serveHttp transport and inbound auth", () => {
         expect(preflightRes.headers.get("vary")).toBeNull();
       } finally {
         await serverHandle.close();
+      }
+    });
+
+    it("rejects a foreign Origin by default while allowing a loopback Origin without CORS headers", async () => {
+      const runtime = createTestRuntime();
+      const serverHandle = await serveHttp(runtime, testServerOptions, {
+        port: 0,
+      });
+
+      try {
+        const callBody = JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "getGreeting", arguments: { name: "Foreign" } },
+        });
+        const foreign = await fetch(serverHandle.url, {
+          method: "POST",
+          headers: {
+            Origin: "https://evil.attacker.com",
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+          },
+          body: callBody,
+        });
+        expect(foreign.status).toBe(403);
+        expect(foreign.headers.get("access-control-allow-origin")).toBeNull();
+        const denied = (await foreign.json()) as {
+          error?: { message: string };
+        };
+        expect(denied.error?.message).toContain("Origin not allowed");
+        expect(JSON.stringify(denied)).not.toContain("evil.attacker.com");
+
+        // A loopback origin is in the default allowlist; CORS stays disabled,
+        // so the request runs but carries no Access-Control-Allow-Origin.
+        const ownOrigin = await fetch(serverHandle.url, {
+          method: "POST",
+          headers: {
+            Origin: "http://localhost:4321",
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+          },
+          body: callBody,
+        });
+        expect(ownOrigin.status).toBe(200);
+        expect(ownOrigin.headers.get("access-control-allow-origin")).toBeNull();
+      } finally {
+        await serverHandle.close();
+      }
+    });
+
+    it("warns when wildcard CORS is explicitly configured on loopback", async () => {
+      const runtime = createTestRuntime();
+      const warnings: Array<{
+        message: string;
+        meta?: Record<string, unknown> | undefined;
+      }> = [];
+      const serverHandle = await serveHttp(runtime, testServerOptions, {
+        host: "127.0.0.1",
+        port: 0,
+        cors: { allowedOrigins: ["*"] },
+        warn: (message, meta) => warnings.push({ message, meta }),
+      });
+
+      try {
+        const corsWarn = warnings.find(
+          (w) => w.meta?.event === "cors_wildcard_warning",
+        );
+        expect(corsWarn).toBeDefined();
+        expect(corsWarn?.message).toContain("wildcard origin ('*')");
+        expect(corsWarn?.message).toContain("server.cors.allowedOrigins");
+      } finally {
+        await serverHandle.close();
+      }
+    });
+  });
+
+  describe("graceful shutdown (P0-5)", () => {
+    function controllableTool(name: string): {
+      tool: ToolDefinition;
+      started: Promise<void>;
+      release: () => void;
+    } {
+      let startedResolve!: () => void;
+      const started = new Promise<void>((resolve) => {
+        startedResolve = resolve;
+      });
+      let releaseResolve!: () => void;
+      const released = new Promise<void>((resolve) => {
+        releaseResolve = resolve;
+      });
+      return {
+        tool: {
+          name,
+          description: "Blocks until the test releases it",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+          operation: {},
+          async execute() {
+            startedResolve();
+            await released;
+            return { ok: true };
+          },
+        },
+        started,
+        release: releaseResolve,
+      };
+    }
+
+    function rawToolCall(port: number, id: number, toolName: string): string {
+      const body = JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: { name: toolName, arguments: {} },
+      });
+      return `POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: keep-alive\r\n\r\n${body}`;
+    }
+
+    const context = {
+      requestId: "shutdown",
+      tenantId: "default",
+      principal: { id: "p", scopes: [] },
+    };
+
+    it("completes an in-flight tool call before closing the server", async () => {
+      const slow = controllableTool("slowEcho");
+      const runtime = createTestRuntime([slow.tool]);
+      const serverHandle = await serveHttp(
+        runtime,
+        {
+          name: "drain-server",
+          version: "1.0.0",
+          createContext: () => context,
+        },
+        { port: 0, shutdownTimeoutMs: 5_000 },
+      );
+
+      const client = new Client({ name: "drain-client", version: "1.0.0" });
+      const transport = new StreamableHTTPClientTransport(serverHandle.url);
+      await client.connect(transport);
+
+      try {
+        const pending = client.callTool({
+          name: "slowEcho",
+          arguments: {},
+        });
+        await slow.started;
+
+        const closing = serverHandle.close();
+        slow.release();
+
+        const result = await pending;
+        expect(result.isError).toBeFalsy();
+        await closing;
+        expect(serverHandle.httpServer.listening).toBe(false);
+      } finally {
+        await client.close().catch(() => {});
+      }
+    });
+
+    it("answers 503 with Connection: close for a request that arrives after shutdown starts", async () => {
+      const slow = controllableTool("slowEcho");
+      const runtime = createTestRuntime([slow.tool]);
+      const serverHandle = await serveHttp(
+        runtime,
+        {
+          name: "503-server",
+          version: "1.0.0",
+          createContext: () => context,
+        },
+        { port: 0, shutdownTimeoutMs: 5_000 },
+      );
+
+      try {
+        const pending = fetch(serverHandle.url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: { name: "slowEcho", arguments: {} },
+          }),
+        });
+        await slow.started;
+
+        const closing = serverHandle.close();
+        const rejected = await fetch(new URL("/health", serverHandle.url));
+        expect(rejected.status).toBe(503);
+        expect(rejected.headers.get("connection")).toBe("close");
+        const body = (await rejected.json()) as {
+          error?: { code?: number; message?: string };
+        };
+        expect(body.error?.code).toBe(-32000);
+        expect(body.error?.message).toContain("shutting down");
+
+        slow.release();
+        const completed = await pending;
+        expect(completed.status).toBe(200);
+        await closing;
+      } finally {
+        slow.release();
+      }
+    });
+
+    it("force-closes a hung tool after the drain budget", async () => {
+      let startedResolve!: () => void;
+      const started = new Promise<void>((resolve) => {
+        startedResolve = resolve;
+      });
+      const hungTool: ToolDefinition = {
+        name: "hung",
+        description: "Ignores cancellation",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        operation: {},
+        execute() {
+          startedResolve();
+          return new Promise(() => {});
+        },
+      };
+      const runtime = createTestRuntime([hungTool]);
+      const serverHandle = await serveHttp(
+        runtime,
+        {
+          name: "timeout-server",
+          version: "1.0.0",
+          createContext: () => context,
+        },
+        { port: 0, shutdownTimeoutMs: 100 },
+      );
+      const port = Number(new URL(serverHandle.url).port);
+      const socket = net.connect(port, "127.0.0.1");
+      await once(socket, "connect");
+      socket.on("error", () => {});
+
+      try {
+        socket.write(rawToolCall(port, 1, "hung"));
+        await started;
+
+        const began = Date.now();
+        await serverHandle.close();
+        const elapsed = Date.now() - began;
+
+        expect(elapsed).toBeGreaterThanOrEqual(90);
+        expect(elapsed).toBeLessThan(3_000);
+        expect(serverHandle.httpServer.listening).toBe(false);
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    it("is idempotent across repeated SIGTERM and drains runtime resources once", async () => {
+      const onShutdown = vi.fn();
+      const runtime = new InMemoryToolRuntime({ onShutdown });
+      runtime.register(demoTool);
+      const previousExitCode = process.exitCode;
+      const serverHandle = await serveHttp(
+        runtime,
+        {
+          name: "signal-server",
+          version: "1.0.0",
+          createContext: () => context,
+        },
+        { port: 0 },
+      );
+
+      try {
+        process.emit("SIGTERM");
+        await serverHandle.closed;
+        expect(process.exitCode).toBe(143);
+
+        process.emit("SIGTERM");
+        await serverHandle.close();
+        expect(onShutdown).toHaveBeenCalledOnce();
+      } finally {
+        process.exitCode = previousExitCode;
       }
     });
   });

@@ -98,6 +98,13 @@ These are deliberate boundaries, not defects:
 
 ## Runtime, caching, projection, and token accounting
 
+- **Shutdown cancellation is cooperative.** HTTP shutdown stops accepting new
+  work, drains in-flight calls for `server.shutdownTimeoutMs` (default 10 s),
+  then aborts `context.signal` and force-closes sockets. A tool that ignores
+  the signal continues running until its own code returns; the runtime cannot
+  terminate it. Only the Redis client created by `buildRuntimeOptions` is
+  drained on `runtime.close()`; caller-supplied clients remain the caller's
+  responsibility.
 - **Token counts are estimates by default.** The built-in tokenizer divides
   characters by `charactersPerToken` (default 4) and always reports
   `measurement: "estimate"`. Exact counts require an injected `Tokenizer`; no
@@ -152,10 +159,19 @@ These are deliberate boundaries, not defects:
   contract registry.
 - **Publishing replaces a contract's toolset** rather than merging sources.
 - **Multi-tenant mode requires resolvable tenant context.** Without an inbound
-  verifier or an explicit tenant fallback the gateway refuses to start, and a
-  caller with no resolvable tenant fails closed with `TENANT_REQUIRED`.
+  verifier or an explicit tenant fallback the gateway refuses to start. JWT
+  inbound auth additionally requires an explicit tenant mapping (`tenantClaim`,
+  programmatic `mapClaims`, or the `tenant` fallback); implicit `tenantId`/`tid`
+  claims are not consulted in gateway mode. A caller with no resolvable tenant
+  fails closed with `TENANT_REQUIRED`.
 - **Stdio transport has no remote authentication** — it inherits the trust of
   the process that spawned it. HTTP inbound authentication is enforced.
+- **Browser-origin validation is hostname-based.** The default loopback
+  allowlist accepts any scheme or port on `localhost`, `127.0.0.1`, or `[::1]`,
+  so any local web app on those hostnames can reach the server. CORS is off by
+  default, so browsers cannot read responses unless `allowedOrigins` is
+  configured explicitly. Non-browser clients that omit `Origin` are not
+  restricted by this check.
 
 ## Declarative tools and admin (post-1.0 surface)
 

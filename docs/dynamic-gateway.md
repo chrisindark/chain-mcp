@@ -51,12 +51,13 @@ Each `ContractRevision` contains:
 1. **Discovery Isolation:** `gateway.listTools(context)` strictly scopes results to `context.tenantId`. Calls without a caller context fail closed with `AUTH_REQUIRED`, and calls with an empty tenant ID in multi-tenant mode fail closed with `TENANT_REQUIRED`.
 2. **Invocation Isolation:** `gateway.callTool(name, input, context)` resolves against `context.tenantId`. Attempting to call another tenant's tool fails closed with `TOOL_NOT_FOUND`, making cross-tenant inventory completely indistinguishable from nonexistent tools (ADR 0008). Invocations lacking a tenant ID fail closed with `TENANT_REQUIRED` and emit a `tenant_resolution_failed` audit event.
 3. **No Implicit 'default' Fallback:** The dynamic gateway does not guess or fall back to an implicit `"default"` tenant. If no tenant can be resolved for a request requiring tenant context, it fails closed with error code `TENANT_REQUIRED`.
-4. **Tenant Resolution Precedence:** When an inbound verifier is configured, the authenticated principal's tenant claim (`authTenant`) takes precedence over any CLI or configuration default: `authTenant ?? explicitTenant`.
-5. **Gateway Boot Validation:** Running `chainmcp gateway serve` without an inbound verifier (`auth.inbound`) or an explicit tenant flag/option (`--tenant <id>` / `tenant: string`) refuses to start with an explicit error.
-6. **Name Independence:** Two different tenants can safely register tools with identical names (e.g. `listUsers`) without collision or cross-talk.
-7. **Network Destination Isolation:** Outbound HTTP tools use an executor bound to the specific contract revision's `allowedHosts`. Requests cannot connect to another tenant's or contract's upstream hosts.
-8. **Credential Isolation:** Outbound requests use the revision's configured `credentialProvider`, preventing credential leakage across contracts.
-9. **Cache Isolation:** Cache keys incorporate `tenantId` and `contractRevision`, guaranteeing cached results for one tenant or revision cannot be retrieved by another.
+4. **Tenant Resolution Precedence:** When an inbound verifier is configured, the authenticated principal's tenant claim (`authTenant`) takes precedence over any CLI or configuration default: `authTenant ?? explicitTenant`. An explicit `tenant` (or `--tenant`) is also passed to JWT verification as the fallback tenant, so it applies only to tokens that carry no tenant claim.
+5. **Explicit JWT Tenant Mapping:** Gateway mode is multi-tenant, so JWT verification requires tenant identity to come from an explicit source: `auth.inbound.jwt.tenantClaim`, programmatic `mapClaims`, or the configured `tenant` fallback. Without one, `chainmcp gateway serve` fails at startup. Implicit `tenantId`/`tid` claims are not consulted in gateway mode, and a token that verifies without a tenant is rejected as `TENANT_REQUIRED`.
+6. **Gateway Boot Validation:** Running `chainmcp gateway serve` without an inbound verifier (`auth.inbound`) or an explicit tenant flag/option (`--tenant <id>` / `tenant: string`) refuses to start with an explicit error.
+7. **Name Independence:** Two different tenants can safely register tools with identical names (e.g. `listUsers`) without collision or cross-talk.
+8. **Network Destination Isolation:** Outbound HTTP tools use an executor bound to the specific contract revision's `allowedHosts`. Requests cannot connect to another tenant's or contract's upstream hosts.
+9. **Credential Isolation:** Outbound requests use the revision's configured `credentialProvider`, preventing credential leakage across contracts.
+10. **Cache Isolation:** Cache keys incorporate `tenantId` and `contractRevision`, guaranteeing cached results for one tenant or revision cannot be retrieved by another.
 
 ## CLI deployment (`chainmcp gateway serve`)
 
@@ -75,7 +76,7 @@ chainmcp gateway serve --config gateway.config.yaml --transport http --port 3333
 ```yaml
 version: 1
 name: enterprise-dynamic-gateway
-tenant: tenant-crm # Optional fallback default tenant for unauthenticated development
+tenant: tenant-crm # Explicit fallback tenant for callers with no tenant claim
 server:
   transport: http
   host: 0.0.0.0

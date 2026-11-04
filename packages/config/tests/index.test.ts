@@ -54,6 +54,7 @@ describe("configuration schema", () => {
         host: "127.0.0.1",
         port: 3333,
         requestTimeoutMs: 15_000,
+        shutdownTimeoutMs: 10_000,
         maxResponseBytes: 1_000_000,
         maxRequestBytes: 1_048_576,
         maxMultipartPartBytes: 1_048_576,
@@ -112,6 +113,7 @@ describe("configuration schema", () => {
         host: "127.0.0.1",
         port: 3333,
         requestTimeoutMs: 15_000,
+        shutdownTimeoutMs: 10_000,
         maxResponseBytes: 1_000_000,
         maxRequestBytes: 1_048_576,
         maxMultipartPartBytes: 1_048_576,
@@ -169,6 +171,30 @@ describe("configuration schema", () => {
         requestsPerMinute: 120,
       },
     });
+  });
+
+  it("accepts a custom shutdown timeout including zero (immediate force close)", () => {
+    expect(
+      parseConfig({
+        version: 1,
+        name: "catalog",
+        server: { shutdownTimeoutMs: 2_500 },
+      }).server.shutdownTimeoutMs,
+    ).toBe(2_500);
+    expect(
+      parseConfig({
+        version: 1,
+        name: "catalog",
+        server: { shutdownTimeoutMs: 0 },
+      }).server.shutdownTimeoutMs,
+    ).toBe(0);
+    expect(() =>
+      parseConfig({
+        version: 1,
+        name: "catalog",
+        server: { shutdownTimeoutMs: -1 },
+      }),
+    ).toThrow();
   });
 
   it("rejects unknown fields, invalid ports, and unsupported versions", () => {
@@ -557,6 +583,22 @@ describe("rateLimit configuration and factory", () => {
 });
 
 describe("auth configuration and factories", () => {
+  it("parses an explicit JWT tenant claim and rejects blank claim names", () => {
+    const config = parseConfig({
+      version: 1,
+      name: "test",
+      auth: { inbound: { jwt: { secret: "s", tenantClaim: " org_id " } } },
+    });
+    expect(config.auth.inbound.jwt?.tenantClaim).toBe("org_id");
+
+    const invalid = safeParseConfig({
+      version: 1,
+      name: "test",
+      auth: { inbound: { jwt: { secret: "s", tenantClaim: "  " } } },
+    });
+    expect(invalid.success).toBe(false);
+  });
+
   it("parses static, env, secretStore, and oauth provider configurations", () => {
     const config = parseConfig({
       version: 1,
@@ -801,6 +843,34 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
     expect(runtimeOpts.rateLimiter).toBeInstanceOf(InMemoryRateLimiter);
     expect(runtimeOpts.maxToolInputBytes).toBe(1_048_576);
     expect(runtimeOpts.maxResponseBytes).toBe(1_000_000);
+    expect(runtimeOpts.onShutdown).toBeUndefined();
+  });
+
+  it("buildRuntimeOptions drains the Redis client it created exactly once", async () => {
+    const config = parseConfig({
+      version: 1,
+      name: "test",
+      rateLimit: {
+        enabled: true,
+        provider: "redis",
+        requestsPerMinute: 60,
+      },
+      cache: {
+        enabled: true,
+        provider: "redis",
+      },
+    });
+
+    const runtimeOpts = buildRuntimeOptions(
+      config,
+      {},
+      { env: { CHAINMCP_REDIS_URL: "redis://127.0.0.1:1" } },
+    );
+    expect(runtimeOpts.onShutdown).toBeTypeOf("function");
+
+    await expect(runtimeOpts.onShutdown?.()).resolves.toBeUndefined();
+    // The factory-owned client is idempotent, so a repeated teardown is safe.
+    await expect(runtimeOpts.onShutdown?.()).resolves.toBeUndefined();
   });
 
   it("buildExecutorOptions and buildRuntimeOptions configure response validation and input size caps", () => {

@@ -237,8 +237,13 @@ export async function gatewayServeCommand(
     totalToolCount += revision.tools.length;
   }
 
-  const verifier = createInboundVerifier(config.auth.inbound);
   const explicitTenant = options.tenantId ?? config.tenant;
+  const verifier = createInboundVerifier(config.auth.inbound, {
+    multiTenant: true,
+    ...(explicitTenant !== undefined
+      ? { fallbackTenantId: explicitTenant }
+      : {}),
+  });
 
   if (!verifier && !explicitTenant) {
     throw new Error(
@@ -339,6 +344,7 @@ export async function gatewayServeCommand(
         enableDnsRebindingProtection:
           config.server.enableDnsRebindingProtection,
         requestTimeoutMs: config.server.requestTimeoutMs,
+        shutdownTimeoutMs: config.server.shutdownTimeoutMs,
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
       },
     );

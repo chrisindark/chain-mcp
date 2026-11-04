@@ -44,7 +44,7 @@ Versioning is managed with [Changesets](https://github.com/changesets/changesets
 
 ## Release checklist
 
-- [ ] Relevant roadmap acceptance criteria are met across all milestones (Milestones 0–9 verified; Milestone 10 gates prepared but release withheld, see [Release status](#release-status)).
+- [ ] Relevant roadmap acceptance criteria are met across all milestones (Milestones 0–9 verified; Milestone 10 gates prepared but release withheld, see [Release status](#release-status); the supported-version matrix is documented, but as a pre-1.0 intended-support document—not a published 1.0 guarantee—until a `1.0.0` artifact ships).
 - [ ] Every releasable change has a changeset, and pending changesets are applied (changesets are present; they are applied by the release version PR).
 - [x] Root and package versions match (`pnpm version:check`).
 - [x] Changelog and release notes are updated (`CHANGELOG.md`).
@@ -67,6 +67,8 @@ Detailed version support matrix and lifecycle policy are documented in [`docs/su
 - **MCP Protocol**: Model Context Protocol TypeScript SDK v2 (`@modelcontextprotocol/sdk`).
 - **Redis**: Redis 7+ for atomic Lua scripting and cache partitioning.
 - **Configuration**: Configuration schema `version: 1`.
+
+**Pre-1.0 note.** Until `1.0.0` is published, the matrix in `docs/supported-versions.md` documents intended support, not a published release guarantee.
 
 ## Version 1.0 exit criteria
 

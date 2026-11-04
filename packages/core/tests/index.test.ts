@@ -2074,3 +2074,36 @@ describe("validateJsonSchema", () => {
     expect(result.issues[3]).toBe("further issues omitted after 3");
   });
 });
+
+describe("runtime teardown", () => {
+  it("flushes analytics and runs the shutdown hook exactly once", async () => {
+    const flush = vi.fn();
+    const onShutdown = vi.fn();
+    const runtime = new InMemoryToolRuntime({
+      metrics: { record: vi.fn(), flush },
+      onShutdown,
+    });
+
+    await Promise.all([runtime.close(), runtime.close()]);
+    await runtime.close();
+
+    expect(flush).toHaveBeenCalledOnce();
+    expect(onShutdown).toHaveBeenCalledOnce();
+  });
+
+  it("isolates analytics and resource teardown failures", async () => {
+    const runtime = new InMemoryToolRuntime({
+      metrics: {
+        record: vi.fn(),
+        flush() {
+          throw new Error("sink flush failed");
+        },
+      },
+      onShutdown() {
+        throw new Error("client drain failed");
+      },
+    });
+
+    await expect(runtime.close()).resolves.toBeUndefined();
+  });
+});

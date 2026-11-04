@@ -2,11 +2,16 @@ import { copyFile, mkdir, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 
-import { compileOpenApi } from "@chainmcp/compiler";
+import { COMPILER_VERSION, compileOpenApi } from "@chainmcp/compiler";
 import { normalizeAllowedHost } from "@chainmcp/executor";
 
 import { loadSpec } from "../spec-loader.js";
 import { resolveLocalDependencySpecs } from "../local-deps.js";
+import {
+  attachCompiledToolsArtifact,
+  buildProjectManifest,
+  serializeCompiledTools,
+} from "../manifest.js";
 import { getCliVersion } from "../version.js";
 
 import {
@@ -191,7 +196,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     // Write source files
     await writeFile(
       join(projectDir, "src", "server.ts"),
-      renderServerTs({ version }),
+      renderServerTs({ version, compilerVersion: COMPILER_VERSION }),
       "utf8",
     );
     createdFiles.push("src/server.ts");
@@ -381,6 +386,35 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   }
   createdFiles.push("spec/openapi.yaml");
 
+  // Generation manifest and compiled tool definitions. Generated servers verify
+  // these at startup instead of recompiling the pinned contract.
+  const serialized = serializeCompiledTools(compiled.tools, {
+    contractRevision: compiled.contractRevision,
+  });
+  const manifest = attachCompiledToolsArtifact(
+    buildProjectManifest(projectName, compiled, { generatorVersion: version }),
+    serialized.artifact,
+  );
+  await mkdir(join(projectDir, "dist"), { recursive: true });
+  await writeFile(
+    join(projectDir, "chainmcp.manifest.json"),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    "utf8",
+  );
+  createdFiles.push("chainmcp.manifest.json");
+  await writeFile(
+    join(projectDir, "dist", "compiled-tools.json"),
+    serialized.content,
+    "utf8",
+  );
+  createdFiles.push("dist/compiled-tools.json");
+  await writeFile(
+    join(projectDir, "compiled-tools.json"),
+    serialized.content,
+    "utf8",
+  );
+  createdFiles.push("compiled-tools.json");
+
   // Write configuration
   const configYaml = renderConfigYaml({
     name: projectName,
@@ -427,7 +461,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   // Write source files
   await writeFile(
     join(projectDir, "src", "server.ts"),
-    renderServerTs({ version }),
+    renderServerTs({ version, compilerVersion: COMPILER_VERSION }),
     "utf8",
   );
   createdFiles.push("src/server.ts");

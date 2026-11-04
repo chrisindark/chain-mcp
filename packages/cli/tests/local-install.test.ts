@@ -135,8 +135,9 @@ describe("P0-2: generator version is never hardcoded", () => {
         join(projectDir, "src", "server.ts"),
         "utf8",
       );
-      expect(serverSource).toContain('version: "9.9.9"');
-      expect(serverSource).not.toContain('version: "0.1.0"');
+      expect(serverSource).toContain('const GENERATOR_VERSION = "9.9.9"');
+      expect(serverSource).toContain("version: GENERATOR_VERSION");
+      expect(serverSource).not.toContain('const GENERATOR_VERSION = "0.1.0"');
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -172,7 +173,8 @@ describe("P0-2: generator version is never hardcoded", () => {
         join(projectDir, "src", "server.ts"),
         "utf8",
       );
-      expect(serverSource).toContain('version: "9.9.9"');
+      expect(serverSource).toContain('const GENERATOR_VERSION = "9.9.9"');
+      expect(serverSource).toContain("version: GENERATOR_VERSION");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

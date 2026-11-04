@@ -8,6 +8,8 @@ import type {
 import type { ChainMcpConfig, SecretResolutionSource } from "@chainmcp/config";
 import type { ToolDefinition } from "@chainmcp/core";
 
+import type { CompiledToolsArtifact } from "./manifest.js";
+
 export type { LoadSpecOptions, LoadedSpec } from "./spec-loader.js";
 
 /**
@@ -29,6 +31,15 @@ export interface ProjectManifest {
     hash: string;
   }[];
   warnings?: readonly CompileDiagnostic[];
+  /**
+   * Integrity metadata for emitted build artifacts. Generated servers verify
+   * this before registering tools so a stale or modified artifact fails fast.
+   */
+  artifacts?:
+    | {
+        compiledTools: CompiledToolsArtifact;
+      }
+    | undefined;
   generatedAt: string;
 }
 
