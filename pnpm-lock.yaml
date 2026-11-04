@@ -1604,6 +1604,20 @@ packages:
         integrity: sha512-E8eBXaKibuvH2pSZErOjdVb5vF4PbKYcrnluBTYxEk1l/VhhwZg1kZQsdtjq+CsF5CFydf2Rdkz7jDHKSisi3w==,
       }
 
+  "@vitest/istanbul-lib-coverage@2.1.0":
+    resolution:
+      {
+        integrity: sha512-WOjuS+xcjSIy7ruYBQ+9BUcV7XZQ0FyVcbWbWxW9TRx/kLGx5SQaeFRIFDJxjNplb6YsT7SpKo2zuXXUo91OIQ==,
+      }
+    engines: { node: ">=22" }
+
+  "@vitest/istanbul-lib-report@2.1.0":
+    resolution:
+      {
+        integrity: sha512-+ZFta25nWtGCOBG9/IET8w1RO5Oawsd6H8Uf6AJ9EA/StFuKVtKAEJEJ6uRt84OH+T4YkI0ASmIHAhRA+0KVxw==,
+      }
+    engines: { node: ">=22" }
+
   "@vitest/mocker@3.2.7":
     resolution:
       {
@@ -2681,6 +2695,13 @@ packages:
         integrity: sha512-OWND8ei3VtNC9h7V60qff3SVobHr996CTwgxubgyQYEpg290h9J0buyECNNJexkFm5sOajh5G116RYA1c8ZMSw==,
       }
 
+  obug@3.0.0:
+    resolution:
+      {
+        integrity: sha512-5vvB5+W7ePv+p3uqxi+RcW1XAzLW0/hxt3/4X4Lc4qHudzOhmBiBwOY6DRob4WnanAEGvNcLjF+KNOufrUoEQw==,
+      }
+    engines: { node: ">=12.20.0" }
+
   optionator@0.9.4:
     resolution:
       {
@@ -2922,6 +2943,12 @@ packages:
         integrity: sha512-5GS12FdOZNliM5mAOxFRg7Ir0pWz8MdpYm6AY6VPkGpbA7ZzmbzNcBJQ0GPvvyWgcY7QAhCgf9Uy89I03faLkg==,
       }
 
+  std-env@4.3.0:
+    resolution:
+      {
+        integrity: sha512-OtU/EgQ1kIm5KwqQpBC6ZEMXrZRui11w8zgfTWp8cdO9B8OaPsbA8bTHO2P+HNo1VlUTGMVBwPhydu6poeXiag==,
+      }
+
   string-argv@0.3.2:
     resolution:
       {
@@ -3035,6 +3062,13 @@ packages:
     resolution:
       {
         integrity: sha512-op4nsTR47R6p0vMUUoYl/a+ljLFVtlfaXkLQmqfLR1qHma1h/ysYk4hEXZ880bf2CYgTskvTa/e196Vd5dDQXw==,
+      }
+    engines: { node: ">=14.0.0" }
+
+  tinyrainbow@3.2.0:
+    resolution:
+      {
+        integrity: sha512-LgO3D9yZJjApUiuUfl9iFAwrtaX4+lok3wJIqttGoKCHlWUqHqbQpnxCf82L8FjgKsh4iGo78hqJwgL8F6To2A==,
       }
     engines: { node: ">=14.0.0" }
 
@@ -4623,6 +4657,8 @@ snapshots:
 
   natural-compare@1.4.0: {}
 
+  obug@3.0.0: {}
+
   optionator@0.9.4:
     dependencies:
       deep-is: 0.1.4
@@ -4769,6 +4805,8 @@ snapshots:
 
   std-env@3.10.0: {}
 
+  std-env@4.3.0: {}
+
   string-argv@0.3.2: {}
 
   string-width@4.2.3:
@@ -4832,6 +4870,8 @@ snapshots:
   tinypool@2.2.0: {}
 
   tinyrainbow@2.0.0: {}
+
+  tinyrainbow@3.2.0: {}
 
   tinyspy@4.0.6: {}
 
