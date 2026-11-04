@@ -55,8 +55,7 @@ This compiles TypeScript files from `src/` into `dist/`.
 
 If the generated project was scaffolded with `--local-deps`, it includes a
 `packageManager: pnpm@...` pin and a `pnpm-workspace.yaml` override; use pnpm.
-After the `@chainmcp/*` packages are published, a standard `npm install` or
-`pnpm install` without local-deps also works.
+After the `@chainmcp/*` packages are published, the generated project no longer needs the `pnpm-workspace.yaml` override; a `pnpm` or `npm` install then resolves registry packages. Adjust the `RUN` lines accordingly.
 
 ---
 
@@ -138,9 +137,10 @@ ENTRYPOINT ["node", "dist/server.js"]
 ```
 
 The template assumes the generated server was scaffolded with local-deps and
-includes a `pnpm-workspace.yaml` override. After the `@chainmcp/*` packages are
-published, a standard `pnpm` or `npm` Dockerfile without the override also
-works; adjust the `RUN` lines accordingly.
+includes a `pnpm-workspace.yaml` override. The `RUN` lines use pnpm. After the
+`@chainmcp/*` packages are published, the generated project no longer needs the
+`pnpm-workspace.yaml` override and may use pnpm or npm; adjust the `RUN` lines
+for the published-package workflow.
 
 ### Building and Running Containers
 

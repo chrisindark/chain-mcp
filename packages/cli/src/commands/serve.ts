@@ -171,7 +171,11 @@ export async function serveCommand(
     const port = options.port ?? config.server.port ?? 3333;
     const host = options.host ?? config.server.host ?? "127.0.0.1";
     const path = options.path ?? config.server.path ?? "/mcp";
-    const verifier = createInboundVerifier(config.auth.inbound);
+    const verifier = createInboundVerifier(config.auth.inbound, {
+      ...(explicitTenant !== undefined
+        ? { fallbackTenantId: explicitTenant }
+        : {}),
+    });
     const requireInboundAuth =
       config.security.requireInboundAuth ||
       config.auth.inbound.requireInboundAuth;
@@ -231,6 +235,7 @@ export async function serveCommand(
         enableDnsRebindingProtection:
           config.server.enableDnsRebindingProtection,
         requestTimeoutMs: config.server.requestTimeoutMs,
+        shutdownTimeoutMs: config.server.shutdownTimeoutMs,
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
       },
     );

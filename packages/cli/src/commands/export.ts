@@ -1,13 +1,15 @@
 import { copyFile, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-import { compileOpenApi } from "@chainmcp/compiler";
+import { COMPILER_VERSION, compileOpenApi } from "@chainmcp/compiler";
 
 import { loadCodeFirstTools } from "../code-first-loader.js";
 import { resolveLocalDependencySpecs } from "../local-deps.js";
 import {
+  attachCompiledToolsArtifact,
   buildCodeFirstManifest,
   buildProjectManifest,
+  serializeCompiledTools,
   verifyProjectManifest,
 } from "../manifest.js";
 import { loadSpec } from "../spec-loader.js";
@@ -144,9 +146,18 @@ export async function exportCommand(
       injectedTools: options.tools,
     });
 
-    const manifest = buildCodeFirstManifest(projectName, loaded.tools, {
-      generatorVersion: version,
-    });
+    const compiledToolsForExport = loaded.tools.map((t) => ({
+      name: t.name,
+      description: t.description ?? "",
+      inputSchema: t.inputSchema ?? {},
+    }));
+    const serialized = serializeCompiledTools(compiledToolsForExport);
+    const manifest = attachCompiledToolsArtifact(
+      buildCodeFirstManifest(projectName, loaded.tools, {
+        generatorVersion: version,
+      }),
+      serialized.artifact,
+    );
 
     await mkdir(outputDir, { recursive: true });
     await mkdir(join(outputDir, "src"), { recursive: true });
@@ -197,7 +208,7 @@ export async function exportCommand(
     if (!hasServerTs) {
       await writeFile(
         join(outputDir, "src", "server.ts"),
-        renderServerTs({ version }),
+        renderServerTs({ version, compilerVersion: COMPILER_VERSION }),
         "utf8",
       );
       filesWritten.push("src/server.ts");
@@ -219,20 +230,11 @@ export async function exportCommand(
       "compiled-tools.json",
     );
     await mkdir(join(outputDir, "dist"), { recursive: true });
-    const compiledToolsForExport = loaded.tools.map((t) => ({
-      name: t.name,
-      description: t.description ?? "",
-      inputSchema: t.inputSchema ?? {},
-    }));
-    await writeFile(
-      codeFirstCompiledToolsPath,
-      `${JSON.stringify(compiledToolsForExport, null, 2)}\n`,
-      "utf8",
-    );
+    await writeFile(codeFirstCompiledToolsPath, serialized.content, "utf8");
     filesWritten.push("dist/compiled-tools.json");
     await writeFile(
       join(outputDir, "compiled-tools.json"),
-      `${JSON.stringify(compiledToolsForExport, null, 2)}\n`,
+      serialized.content,
       "utf8",
     );
     filesWritten.push("compiled-tools.json");
@@ -300,10 +302,11 @@ export async function exportCommand(
 
     let verifiedReproducible: boolean | undefined;
     if (options.check) {
-      const recompiledManifest = buildCodeFirstManifest(
-        projectName,
-        loaded.tools,
-        { generatorVersion: version },
+      const recompiledManifest = attachCompiledToolsArtifact(
+        buildCodeFirstManifest(projectName, loaded.tools, {
+          generatorVersion: version,
+        }),
+        serializeCompiledTools(compiledToolsForExport).artifact,
       );
       const verification = verifyProjectManifest(manifest, recompiledManifest);
       if (!verification.match) {
@@ -364,10 +367,14 @@ export async function exportCommand(
     };
   }
 
-  // 4. Build deterministic manifest
-  const manifest = buildProjectManifest(projectName, compiled, {
-    generatorVersion: version,
+  // 4. Build deterministic manifest with compiled-artifact integrity metadata
+  const serialized = serializeCompiledTools(compiled.tools, {
+    contractRevision: compiled.contractRevision,
   });
+  const manifest = attachCompiledToolsArtifact(
+    buildProjectManifest(projectName, compiled, { generatorVersion: version }),
+    serialized.artifact,
+  );
 
   // 5. Ensure directory structure
   await mkdir(outputDir, { recursive: true });
@@ -440,7 +447,7 @@ export async function exportCommand(
   // Standalone server source
   await writeFile(
     join(outputDir, "src", "server.ts"),
-    renderServerTs({ version }),
+    renderServerTs({ version, compilerVersion: COMPILER_VERSION }),
     "utf8",
   );
   filesWritten.push("src/server.ts");
@@ -450,16 +457,12 @@ export async function exportCommand(
   // Compiled tools artifact for verified startup
   const compiledToolsPath = join(outputDir, "dist", "compiled-tools.json");
   await mkdir(join(outputDir, "dist"), { recursive: true });
-  await writeFile(
-    compiledToolsPath,
-    `${JSON.stringify(compiled.tools, null, 2)}\n`,
-    "utf8",
-  );
+  await writeFile(compiledToolsPath, serialized.content, "utf8");
   filesWritten.push("dist/compiled-tools.json");
   // Also copy to root for compatibility
   await writeFile(
     join(outputDir, "compiled-tools.json"),
-    `${JSON.stringify(compiled.tools, null, 2)}\n`,
+    serialized.content,
     "utf8",
   );
   filesWritten.push("compiled-tools.json");
@@ -495,10 +498,13 @@ export async function exportCommand(
     const recompilation = compileOpenApi(specContent, {
       strict: validation.config?.contract?.strict ?? true,
     });
-    const recompiledManifest = buildProjectManifest(
-      projectName,
-      recompilation,
-      { generatorVersion: version },
+    const recompiledManifest = attachCompiledToolsArtifact(
+      buildProjectManifest(projectName, recompilation, {
+        generatorVersion: version,
+      }),
+      serializeCompiledTools(recompilation.tools, {
+        contractRevision: recompilation.contractRevision,
+      }).artifact,
     );
     const verification = verifyProjectManifest(manifest, recompiledManifest);
     if (!verification.match) {

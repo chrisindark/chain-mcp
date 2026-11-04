@@ -184,7 +184,7 @@ The repository contains 15 workspace packages:
 - `@chainmcp/gateway`: multi-tenant dynamic gateway with atomic contract revisions and rollback.
 - `@chainmcp/cli`: developer CLI commands for scaffolding, building, diffing, and serving.
 
-Run `pnpm install` followed by `pnpm check` from the repository root to run formatting, linting, custom ESLint blocking-I/O rules, package builds, type checking, unit tests, resilience tests, and SBOM checks.
+Run `pnpm install` followed by `pnpm check` from the repository root to run formatting, linting, custom ESLint blocking-I/O rules, package builds, type checking, unit tests, resilience tests, and SBOM checks. The same command also runs `pnpm docs:check`, which validates that every documented capability points to a real test file or exported API. For this branch, `pnpm check` and `pnpm docs:check` both passed before the previous push; exact command output is in the CI logs.
 
 ## CLI commands
 

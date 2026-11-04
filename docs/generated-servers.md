@@ -90,7 +90,9 @@ chainmcp build [--config <path>] [--spec <path|url>] [--out-dir <dir>] [--check]
 - `--check`: Verifies reproducibility against an existing `chainmcp.manifest.json`.
 - `--require-contract`: Require an OpenAPI contract and fail if absent.
 
-Emits `chainmcp.manifest.json` and `compiled-tools.json` for both contract-driven and code-first projects. The manifest and compiled tool definitions are written to `--out-dir` and mirrored to the project root so a generated server can verify its build artifacts at startup (`dist/compiled-tools.json` plus the root manifest). Startup fails with a remediation message when the manifest is missing, the tool set differs, or the generator/compiler versions do not match; `--allow-manifest-drift` or `CHAINMCP_ALLOW_MANIFEST_DRIFT=1` downgrades this to a warning for development.
+Emits `chainmcp.manifest.json` and `compiled-tools.json` for both contract-driven and code-first projects. The manifest and compiled tool definitions are written to `--out-dir` and mirrored to the project root so a generated server can verify its build artifacts at startup (`dist/compiled-tools.json` plus the root manifest). Startup fails with a remediation message when the manifest or artifact is missing, the manifest schema version is unsupported, the generator/compiler versions differ, the pinned contract's source hash changed after build, the tool set or tool count differs, the artifact digest changed, or a per-tool hash does not match; `--allow-manifest-drift` or `CHAINMCP_ALLOW_MANIFEST_DRIFT=1` downgrades this to a warning for development.
+
+Verified startup never recompiles the contract: the server registers tools from `dist/compiled-tools.json` and production mode does not import `@chainmcp/compiler`. Recompiling from `spec/openapi.yaml` is a `NODE_ENV=development` fallback used only when the artifact cannot be read. `chainmcp export` writes `compiled-tools.json` to both the project root and `dist/`, and the generated Dockerfile copies it into the image at `dist/compiled-tools.json`.
 
 ### 4. `chainmcp serve`
 
@@ -102,6 +104,7 @@ chainmcp serve [--config <path>] [--spec <path|url>] [--transport <stdio|http>] 
 
 - Supports both contract-driven and code-first projects in-process with identical shared runtime, signal handling, rate limiting, and JSON navigation tools.
 - Supports both `stdio` and `http` transports for contract-driven and code-first projects.
+- `http` uses drain-then-cancel shutdown: late requests get `503`, in-flight `POST`/`DELETE` requests drain for up to `server.shutdownTimeoutMs` (default 10,000 ms), then cooperative cancellation aborts tool signals and remaining sockets are force-closed. See [`deployment.md`](deployment.md#process-signals-and-teardown).
 - `--require-contract`: Require an OpenAPI contract and fail if absent.
 
 ### 5. `chainmcp export`

@@ -103,7 +103,10 @@ deployment-supplied projector) and an optional token budget. Presence of
 Registration requires the runtime to have a `ResultProjector` for any declared
 output policy, and a `Tokenizer` when `maxTokens` is set. A missing projector,
 missing tokenizer, or non-positive/non-integer `maxTokens` is
-`CONTRACT_INVALID`, not a silent no-op (ADR 0012).
+`CONTRACT_INVALID`, not a silent no-op (ADR 0012). Exact token measurement
+requires a configured tokenizer factory; `packages/config/src/index.ts:435` only
+accepts `approximate` / `none`, so `maxTokens` enforcement is approximate in
+every CLI deployment until a tokenizer factory is registered.
 
 `@chainmcp/core` currently provides `InMemoryToolRuntime`, which validates a documented JSON Schema subset, invokes an optional `Authorizer`, then an optional `RateLimiter`, reads the cache for eligible tools, executes the tool, applies opt-in output projection and its token budget, writes the projected result to the cache, and measures it. `RateLimiter.check` returns an explicit decision; only a denial is counted as rate limiting. Cancellation is cooperative: the runtime aborts a per-call signal and stops waiting on caller cancellation or timeout, but executors must bind that signal to their own abortable I/O and release resources. Calls have a 15-second default timeout, configurable through `RuntimeOptions.defaultTimeoutMs` or per tool. `InMemoryCacheStore` is available as a bounded standalone adapter and can be supplied as the runtime cache store; caching still requires per-tool opt-in. Metrics failures are ignored so they do not change tool results.
 
@@ -219,6 +222,9 @@ export interface ToolRuntime {
     input: unknown,
     context: ToolContext,
   ): Promise<void>;
+
+  /** Releases runtime-owned resources once; idempotent and concurrency-safe. */
+  close?(): Promise<void>;
 }
 ```
 
@@ -421,8 +427,10 @@ projected result with `RuntimeOptions.tokenizer` and rejects a count above the
 budget with `OUTPUT_LIMIT_EXCEEDED`. A tokenizer that throws or returns a
 negative, fractional, non-finite, or unsafe count also fails closed with
 `OUTPUT_POLICY_VIOLATION`, because the budget cannot be verified. The count is
-recorded as `tokenUsage` with the adapter's exact/estimate label. Budgets are
-integers in the adapter's token units; with an `estimate` adapter the limit is
+recorded as `tokenUsage` with the adapter's exact/estimate label.
+
+Exact measurement requires a configured tokenizer factory; until one is registered, `packages/config/src/index.ts:435` only accepts `measurement: approximate | none`, so `maxTokens` enforcement is approximate in every CLI deployment. Budgets are
+integers in the adapter's token units; with an estimate adapter the limit is
 only as accurate as the estimate.
 
 `output.fields` selects the built-in field projector:
@@ -541,6 +549,8 @@ export type RuntimeEvent = {
 
 export interface MetricsSink {
   record(event: RuntimeEvent): void | Promise<void>;
+  /** Optional: flushes buffered telemetry once during runtime teardown. */
+  flush?(): void | Promise<void>;
 }
 
 export interface Tokenizer {
@@ -580,7 +590,7 @@ The runtime emits one event for every `callTool` that finds a callable tool, reg
 
 The earlier target shape included `outcome: "cache_hit"` and optional `durationMs`, `tenantId`, `toolName`, `tokenCount`, and `attributes`. Cache hits are represented by `cacheOutcome: "hit"` with `outcome: "success"` rather than a distinct outcome, so existing consumers of `outcome` keep working. `tokenCount` is represented by `tokenUsage.count`, with `tokenUsage.measurement` preventing an estimate from being read as exact; `attributes` and the optional-field relaxation depend on analytics and redaction work (Milestone 6). Adapters must not assume they exist.
 
-`MetricsSink.record` is invoked after the call settles. Synchronous throws and rejected promises are ignored so telemetry cannot change the tool result. Events must not contain secrets, raw authorization data, or unrestricted request and response bodies.
+`MetricsSink.record` is invoked after the call settles. Synchronous throws and rejected promises are ignored so telemetry cannot change the tool result. Events must not contain secrets, raw authorization data, or unrestricted request and response bodies. A sink may implement `flush()` for buffered exporters; `InMemoryToolRuntime.close()` calls it at most once, then invokes `RuntimeOptions.onShutdown()`. Both hooks are failure-isolated, concurrent `close()` callers share one promise, and the runtime never uses them to cancel in-flight calls (cancellation travels through `ToolContext.signal`).
 
 ## Logging interface
 
@@ -1675,7 +1685,7 @@ export function createNavigationLimitsFromConfig(
 
 ### Configuration Sections
 
-- **`server`:** Configures transport (`stdio` or `http`), host, port, `requestTimeoutMs` (default 15,000ms), `maxResponseBytes` (default 1,000,000 bytes; aborts JSON serialization mid-stream upon breach), `maxRequestBytes` (default 1,048,576 bytes), `maxToolInputBytes` (default 1,048,576 bytes; capped pre-validation), `validateResponses` (`off` | `warn` | `enforce`, default `warn`), `allowedHosts`, `allowedOrigins`, `enableDnsRebindingProtection`, and `cors`.
+- **`server`:** Configures transport (`stdio` or `http`), host, port, `requestTimeoutMs` (default 15,000ms), `shutdownTimeoutMs` (default 10,000ms; HTTP drain budget, `0` forces immediate close), `maxResponseBytes` (default 1,000,000 bytes; aborts JSON serialization mid-stream upon breach), `maxRequestBytes` (default 1,048,576 bytes), `maxToolInputBytes` (default 1,048,576 bytes; capped pre-validation), `validateResponses` (`off` | `warn` | `enforce`, default `warn`), `allowedHosts`, `allowedOrigins`, `enableDnsRebindingProtection`, and `cors`.
 - **`security`:** Configures `requireInboundAuth`, `allowUnauthenticatedHttp`, `allowInsecureHttp`, `allowedUpstreamHosts`, and `redactHeaders`. Each host in `allowedUpstreamHosts` is strictly validated against schemes, ports, paths, queries, credentials, and wildcards, and normalized to canonical lowercase. `allowInsecureHttp` defaults to `false` and must be enabled to permit `http://` upstream traffic.
 - **`rateLimit`:** Configures in-memory or Redis distributed rate limiting with shorthand (`requestsPerMinute`, `concurrency`) or explicit global, tenant, and tool quotas.
 - **`auth`:** Configures inbound authorization (`authorizer: "scope"`) and upstream credential providers (`static`, `env`, `secretStore`, `oauth`).
@@ -1687,7 +1697,7 @@ export function createNavigationLimitsFromConfig(
 ### Wiring Helpers
 
 - `buildExecutorOptions(config, overrides)` maps `config.contract.baseUrl` (or fallback to `allowedUpstreamHosts[0]`) to `baseUrl`, `security.allowedUpstreamHosts` to `allowedHosts`, `security.allowInsecureHttp` to `allowInsecureHttp`, `server.requestTimeoutMs` to `timeoutMs`, `server.maxResponseBytes` to `maxResponseBytes`, `server.validateResponses` to `validateResponses`, `config.logging` to `logger`, and `auth.upstream` to `credentialProvider`. Fails closed if `allowedUpstreamHosts` is empty or no base URL can be resolved.
-- `buildRuntimeOptions(config, overrides, factoryOptions)` maps `security.requireInboundAuth` / `auth.inbound` to `authorizer`, `config.rateLimit` to `rateLimiter`, `config.logging` to `logger`, `config.analytics` to `metrics`, `config.analytics.openTelemetry.tracing` to `tracer` (`ToolTracer`), `server.requestTimeoutMs` to `defaultTimeoutMs`, `server.maxToolInputBytes` to `maxToolInputBytes`, and `server.maxResponseBytes` to `maxResponseBytes`.
+- `buildRuntimeOptions(config, overrides, factoryOptions)` maps `security.requireInboundAuth` / `auth.inbound` to `authorizer`, `config.rateLimit` to `rateLimiter`, `config.logging` to `logger`, `config.analytics` to `metrics`, `config.analytics.openTelemetry.tracing` to `tracer` (`ToolTracer`), `server.requestTimeoutMs` to `defaultTimeoutMs`, `server.maxToolInputBytes` to `maxToolInputBytes`, and `server.maxResponseBytes` to `maxResponseBytes`. When the factory creates the shared Redis client (no caller-supplied client was passed), it also composes `onShutdown` so `runtime.close()` drains that client exactly once; caller-supplied clients remain the caller's responsibility.
 
 ## Error codes
 
@@ -2369,17 +2379,20 @@ Streamable HTTP and SSE transports for Model Context Protocol clients.
 - `toolCount` (`number`, optional): Total count of registered tools reported in unauthenticated startup warnings.
 - `warn` (`(message: string, meta?: Record<string, unknown>) => void`, optional): Custom warning handler invoked when starting unauthenticated.
 - `info` (`(message: string, meta?: Record<string, unknown>) => void`, optional): Custom info handler invoked to log resolved security posture at startup.
-- `cors` (`boolean | HttpCorsOptions`, optional): Whether to enable CORS headers and preflight handling, or explicit CORS options. Defaults to `true` (with wildcard origin warning) on loopback development binds, and defaults to `false` on non-loopback binds unless explicitly enabled or configured with allowed origins.
+- `cors` (`boolean | HttpCorsOptions`, optional): Whether to enable CORS headers and preflight handling, or explicit CORS options. CORS is disabled by default on every bind host; configure explicit `allowedOrigins` (or top-level `allowedOrigins`) to enable it. `cors: true` without origins remains disabled. A wildcard `"*"` is only honoured when explicitly configured and always emits a startup warning.
 - `maxRequestBytes` (`number`, optional; default `1048576` = 1 MiB): Hard cap in bytes on incoming request bodies, enforced before buffering and during chunked streaming (rejects with 413 Payload Too Large).
 - `allowedHosts` (`string[]`, optional): Allowed Host header hostnames for DNS rebinding protection. Malformed or missing Host headers are rejected with 400 Bad Request; unlisted hosts are rejected with 403 Forbidden.
 - `allowedOrigins` (`string[]`, optional): Allowed Origin header hostnames for browser and DNS rebinding protection. Unlisted origins are rejected with 403 Forbidden when protection is enabled.
 - `enableDnsRebindingProtection` (`boolean`, optional; default `false`): Enables strict Host and Origin allowlist validation.
 - `requestTimeoutMs` (`number`, optional; default `15000`): Request timeout in milliseconds applied to the HTTP server and incoming body reads.
+- `shutdownTimeoutMs` (`number`, optional; default `10000`): Drain budget in milliseconds. `0` skips the drain and force-closes immediately.
 - `handleProcessSignals` (`boolean`, optional; default `true`): Installs SIGINT/SIGTERM handlers and sets standard process exit codes.
+
+Shutdown is drain-then-cancel. `close()` is idempotent and concurrent callers await the same promise. It marks the server as shutting down, answers every request that arrives during the window with `503` and `Connection: close` (the listener stays bound so late requests receive a rejection rather than a connection reset), and waits up to `shutdownTimeoutMs` for work-bearing `POST`/`DELETE` requests to finish. `GET`/`HEAD` streams such as SSE and health probes never extend the drain budget. When the budget expires, the shutdown `AbortSignal` is aborted, which propagates through the MCP request signal to cooperative tool executions as `CANCELLED`. The listener is then closed, idle and remaining connections are force-closed, `mcpHandler.close()` and the MCP server are torn down, and `runtime.close?.()` runs once to flush analytics and drain runtime-owned clients. A tool that ignores its signal is abandoned rather than forcibly terminated; its socket is closed and its process handles determine whether the process can exit. SIGINT and SIGTERM are idempotent: the first delivery sets exit code `130` or `143` and starts the same shutdown, and repeated or mixed signals do not change the code or run teardown twice.
 
 `HttpCorsOptions`:
 
-- `enabled` (`boolean`, optional): Explicitly toggles CORS headers and preflight handling.
+- `enabled` (`boolean`, optional): Explicitly toggles CORS headers and preflight handling. Defaults to `false`; setting `true` without `allowedOrigins` still leaves CORS disabled.
 - `allowedOrigins` (`string[]`, optional): Exact origins permitted to make cross-origin requests. Wildcard `"*"` is supported for uncredentialed access, but rejected at startup if combined with `allowCredentials: true`. Sandboxed `"null"` origin is rejected unless explicitly listed in `allowedOrigins`.
 - `allowedHeaders` (`string[]`, optional): Extra headers permitted in cross-origin requests, appended to standard defaults (`Content-Type`, `Authorization`, `X-API-Key`, `Accept`, `mcp-session-id`, `last-event-id`) and inbound verifier header names (`verifier.headerNames`).
 - `allowCredentials` (`boolean`, optional; default `false`): Enables `Access-Control-Allow-Credentials: true` when origin matches. Never permitted with wildcard origin `"*"`.
@@ -2392,9 +2405,36 @@ export interface InboundAuthVerifier {
   readonly headerNames?: readonly string[] | undefined;
   verify(
     request: InboundAuthRequest,
-  ): Promise<InboundAuthResult | undefined> | InboundAuthResult | undefined;
+  ): Promise<InboundAuthOutcome | undefined> | InboundAuthOutcome | undefined;
 }
+
+export interface InboundAuthResult {
+  context: ToolContext;
+  authInfo?: AuthInfo | undefined;
+}
+
+export interface InboundAuthFailure {
+  readonly failure: true;
+  readonly code: "TENANT_REQUIRED";
+  readonly message: string;
+}
+
+export type InboundAuthOutcome = InboundAuthResult | InboundAuthFailure;
 ```
+
+`undefined` remains the generic unauthenticated result (missing, invalid, or expired credential). A credential that verifies but cannot establish tenant context returns `InboundAuthFailure`; narrow both cases with `isInboundAuthFailure(outcome)` before reading `context`. This widens the return type for callers, while custom verifier implementations returning `InboundAuthResult | undefined` remain assignable.
+
+`serveHttp` answers an `InboundAuthFailure` with `401`, `WWW-Authenticate: Bearer error="invalid_token"`, and a JSON-RPC error carrying `data: { code: "TENANT_REQUIRED" }`. It does so even when `requireAuth` is `false`, so a verified token never downgrades to an anonymous caller.
+
+Browser-origin validation is independent of CORS header emission and always on. A request carrying an `Origin` header must match the effective allowlist (explicit `allowedOrigins` anywhere in the options, or the bind-host-derived hostnames such as `localhost`/`127.0.0.1`/`[::1]`); otherwise it receives `403` with a JSON-RPC error before any tool runs. Requests without `Origin` (CLI clients and the Inspector CLI) are unaffected. CORS-disabled responses carry no `Access-Control-Allow-Origin`. Explicit `allowedOrigins: ["*"]` allows any origin and emits the startup warning even on loopback; to use the Inspector UI, add its origin (default `http://localhost:6274`) to `allowedOrigins`.
+
+`createJwtVerifier(options)` additions:
+
+- `tenantClaim` (`string`, optional): explicit claim carrying the tenant id. When set, the implicit `tenantId` and `tid` claims are ignored.
+- `fallbackTenantId` (`string`, optional): tenant used only when the token has no tenant claim. Blank values throw `TypeError` at construction.
+- `requireExplicitClaimMapping` (`boolean`, optional): construction throws `TypeError` unless `mapClaims`, `tenantClaim`, or `fallbackTenantId` supplies tenant identity, and implicit claims are never read.
+
+`createInboundVerifier(options, settings?)` accepts `{ multiTenant?: boolean; fallbackTenantId?: string }`. `fallbackTenantId` is passed to JWT verification, and `multiTenant: true` sets `requireExplicitClaimMapping` so a multi-tenant deployment never guesses a tenant from implicit claims.
 
 Built-in verifiers (`createBearerTokenVerifier`, `createApiKeyVerifier`, `createJwtVerifier`, `createCompositeVerifier`) expose their inspected header names (`headerNames`) so CORS `Access-Control-Allow-Headers` can be dynamically computed without drift.
 
@@ -2573,6 +2613,39 @@ export function verifyProjectManifest(
   recompiled: ProjectManifest,
 ): ManifestVerificationResult;
 
+export interface ManifestToolEntry {
+  name: string;
+  hash: string;
+}
+
+export interface CompiledToolsArtifact {
+  /** Project-relative artifact path, e.g. `dist/compiled-tools.json`. */
+  path: string;
+  /** `sha256:` digest of the artifact bytes exactly as written. */
+  sha256: string;
+  contractRevision?: string | undefined;
+  toolCount: number;
+  tools: readonly ManifestToolEntry[];
+}
+
+export interface SerializedCompiledTools {
+  content: string;
+  artifact: CompiledToolsArtifact;
+}
+
+export function serializeCompiledTools(
+  tools: readonly unknown[],
+  options?: { path?: string; contractRevision?: string },
+): SerializedCompiledTools;
+
+export function attachCompiledToolsArtifact(
+  manifest: ProjectManifest,
+  artifact: CompiledToolsArtifact,
+): ProjectManifest;
+
+export function hashContent(content: string | Uint8Array): string;
+export function canonicalJson(value: unknown): string;
+
 export function loadCodeFirstTools(
   options: LoadCodeFirstToolsOptions,
 ): Promise<LoadedCodeFirstTools>;
@@ -2641,9 +2714,21 @@ export interface ProjectManifest {
     hash: string;
   }[];
   warnings?: readonly CompileDiagnostic[];
+  /**
+   * Integrity metadata for emitted build artifacts. Generated servers verify
+   * this before registering tools so a stale or modified artifact fails fast.
+   */
+  artifacts?: { compiledTools: CompiledToolsArtifact } | undefined;
   generatedAt: string;
 }
 ```
+
+Generated servers load `dist/compiled-tools.json` and verify `manifestVersion`,
+`generatorVersion`, `compilerVersion`, `sourceHash`, `contractRevision`,
+`toolCount`, `artifacts.compiledTools.sha256`, and every per-tool hash before
+registering tools. Recompiling the pinned contract happens only when
+`NODE_ENV=development` and the artifact is unreadable, so production startup
+does not import `@chainmcp/compiler`.
 
 ## `@chainmcp/gateway`
 

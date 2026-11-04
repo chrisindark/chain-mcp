@@ -358,6 +358,10 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 
 Every package lacks `README.md`, `LICENSE`, `engines`, `homepage`, `bugs`, and `keywords`; `files: ["dist"]` ships no license text. Prepare this with the publish work, not before.
 
+### P2-8 — Lock down the supported-versions page
+
+`docs/supported-versions.md` is currently titled "for ChainMcp 1.0" and supported-versions language elsewhere still implies a published 1.0 artifact. Until `1.0.0` is shipped, the page documents the intended support matrix with the pre-1.0 posture explicit, and the public-facing docs should not imply the matrix is a published 1.0 guarantee.
+
 ---
 
 ## Deferred — explicitly not part of this 1.0
@@ -381,7 +385,7 @@ A priority is complete only when:
 1. Implementation matches the scope above.
 2. Positive, negative, and security-boundary tests exist.
 3. `pnpm check` passes from the repository root.
-4. `README.md`, `CONFIGURATION.md`, `API_REFERENCE.md`, `docs/limitations.md`, and `CHANGELOG.md` are updated where behavior changed.
+4. `pnpm docs:check` passes: every documented capability in `docs/capability-evidence.json` points to a real test file or exported API, and the README "## Core capabilities" bullets are covered. `README.md`, `CONFIGURATION.md`, `API_REFERENCE.md`, `docs/limitations.md`, and `CHANGELOG.md` are otherwise updated where behavior changed.
 5. Compatibility impact is stated (breaking / additive / internal).
 6. Actual command output is reported, not summarized.
 7. Any deferred sub-item is written down in the Deferred section with a reason.
