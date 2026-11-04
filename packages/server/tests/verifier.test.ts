@@ -1,8 +1,10 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   createApiKeyVerifier,
   createBearerTokenVerifier,
   createCompositeVerifier,
+  createInboundVerifier,
   createJwtVerifier,
   type InboundPrincipalConfig,
 } from "../src/index.js";
@@ -362,6 +364,57 @@ describe("Inbound Auth Verifier Prototype and Input Hardening (RM-01)", () => {
       const jwt = `${header}.${payload}.${sig}`;
 
       const result = await verifier.verify({
+        headers: { authorization: `Bearer ${jwt}` },
+      });
+      expect(result).toBeUndefined();
+    });
+  });
+
+  describe("createInboundVerifier with extraOptions", () => {
+    const secret = "test-secret-at-least-32-chars-long!";
+
+    it("applies fallbackTenantId when JWT lacks a tenantId or tid claim", async () => {
+      const verifier = createInboundVerifier(
+        { jwt: { secret } },
+        { fallbackTenantId: "fallback-tenant" },
+      );
+      expect(verifier).toBeDefined();
+
+      const header = Buffer.from(
+        JSON.stringify({ alg: "HS256", typ: "JWT" }),
+      ).toString("base64url");
+      const payload = Buffer.from(
+        JSON.stringify({ sub: "user-1", iat: Math.floor(Date.now() / 1000) }),
+      ).toString("base64url");
+      const sig = createHmac("sha256", secret)
+        .update(`${header}.${payload}`)
+        .digest("base64url");
+      const jwt = `${header}.${payload}.${sig}`;
+
+      const result = await verifier?.verify({
+        headers: { authorization: `Bearer ${jwt}` },
+      });
+      expect(result).toBeDefined();
+      expect(result?.context.tenantId).toBe("fallback-tenant");
+      expect(result?.context.principal.id).toBe("user-1");
+    });
+
+    it("fails when JWT lacks tenantId and no fallbackTenantId is provided", async () => {
+      const verifier = createInboundVerifier({ jwt: { secret } });
+      expect(verifier).toBeDefined();
+
+      const header = Buffer.from(
+        JSON.stringify({ alg: "HS256", typ: "JWT" }),
+      ).toString("base64url");
+      const payload = Buffer.from(
+        JSON.stringify({ sub: "user-1", iat: Math.floor(Date.now() / 1000) }),
+      ).toString("base64url");
+      const sig = createHmac("sha256", secret)
+        .update(`${header}.${payload}`)
+        .digest("base64url");
+      const jwt = `${header}.${payload}.${sig}`;
+
+      const result = await verifier?.verify({
         headers: { authorization: `Bearer ${jwt}` },
       });
       expect(result).toBeUndefined();

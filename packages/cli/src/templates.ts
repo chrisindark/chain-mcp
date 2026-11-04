@@ -190,6 +190,7 @@ export function renderConfigYaml(options: ConfigYamlOptions): string {
 export interface ServerTsOptions {
   /** Generator version embedded in the generated server metadata. */
   version: string;
+  compilerVersion?: string | undefined;
 }
 
 export function renderServerTs(options: ServerTsOptions): string {

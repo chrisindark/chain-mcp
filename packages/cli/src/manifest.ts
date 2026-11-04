@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
 import { COMPILER_VERSION, type CompileResult } from "@chainmcp/compiler";
 import type { ToolDefinition } from "@chainmcp/core";
-import type { ProjectManifest } from "./types.js";
+import type {
+  CompiledToolsArtifact,
+  ManifestToolEntry,
+  ProjectManifest,
+} from "./types.js";
+
+export type { CompiledToolsArtifact, ManifestToolEntry };
 
 export interface ManifestOptions {
   /** Generator (CLI) version, read at runtime rather than hardcoded. */
@@ -44,24 +50,6 @@ export function canonicalJson(value: unknown): string {
     return `{${entries.join(",")}}`;
   }
   return JSON.stringify(value);
-}
-
-/** Integrity record for one emitted build artifact. */
-export interface CompiledToolsArtifact {
-  /** Project-relative artifact path, e.g. `dist/compiled-tools.json`. */
-  path: string;
-  /** `sha256:` digest of the artifact bytes exactly as written. */
-  sha256: string;
-  /** Contract revision the artifact was compiled from, when applicable. */
-  contractRevision?: string | undefined;
-  toolCount: number;
-  /** Canonical hash per tool record, sorted by name. */
-  tools: readonly ManifestToolEntry[];
-}
-
-export interface ManifestToolEntry {
-  name: string;
-  hash: string;
 }
 
 export interface SerializedCompiledTools {

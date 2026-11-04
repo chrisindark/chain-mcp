@@ -493,6 +493,12 @@ export const ServerConfigSchema = z
     port: z.number().int().min(1).max(65535).default(3333),
     path: z.string().default("/mcp"),
     requestTimeoutMs: z.number().int().positive().max(300_000).default(15_000),
+    shutdownTimeoutMs: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(300_000)
+      .default(10_000),
     maxResponseBytes: z
       .number()
       .int()

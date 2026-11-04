@@ -204,6 +204,7 @@ export interface JwtVerifierOptions {
   issuer?: string | undefined;
   audience?: string | undefined;
   clockToleranceSeconds?: number | undefined;
+  fallbackTenantId?: string | undefined;
   mapClaims?: (
     payload: Record<string, unknown>,
   ) =>
@@ -306,7 +307,7 @@ export function createJwtVerifier(
             ? payload.tenantId
             : typeof payload.tid === "string"
               ? payload.tid
-              : undefined;
+              : options.fallbackTenantId;
         if (!tenantId || tenantId.trim() === "") {
           return undefined;
         }
@@ -395,11 +396,17 @@ export interface InboundVerifierFactoryOptions {
   jwt?: JwtVerifierOptions | undefined;
 }
 
+export interface InboundVerifierExtraOptions {
+  multiTenant?: boolean | undefined;
+  fallbackTenantId?: string | undefined;
+}
+
 /**
  * Creates a composite verifier from configured token maps, API keys, or JWT options.
  */
 export function createInboundVerifier(
   options: InboundVerifierFactoryOptions,
+  extraOptions?: InboundVerifierExtraOptions,
 ): InboundAuthVerifier | undefined {
   const verifiers: InboundAuthVerifier[] = [];
   if (options.tokens && Object.keys(options.tokens).length > 0) {
@@ -414,7 +421,14 @@ export function createInboundVerifier(
     );
   }
   if (options.jwt && (options.jwt.secret || options.jwt.publicKey)) {
-    verifiers.push(createJwtVerifier(options.jwt));
+    verifiers.push(
+      createJwtVerifier({
+        ...options.jwt,
+        ...(extraOptions?.fallbackTenantId !== undefined
+          ? { fallbackTenantId: extraOptions.fallbackTenantId }
+          : {}),
+      }),
+    );
   }
   if (verifiers.length === 0) return undefined;
   if (verifiers.length === 1) return verifiers[0];

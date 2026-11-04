@@ -10,6 +10,24 @@ import type { ToolDefinition } from "@chainmcp/core";
 
 export type { LoadSpecOptions, LoadedSpec } from "./spec-loader.js";
 
+export interface ManifestToolEntry {
+  name: string;
+  hash: string;
+}
+
+/** Integrity record for one emitted build artifact. */
+export interface CompiledToolsArtifact {
+  /** Project-relative artifact path, e.g. `dist/compiled-tools.json`. */
+  path: string;
+  /** `sha256:` digest of the artifact bytes exactly as written. */
+  sha256: string;
+  /** Contract revision the artifact was compiled from, when applicable. */
+  contractRevision?: string | undefined;
+  toolCount: number;
+  /** Canonical hash per tool record, sorted by name. */
+  tools: readonly ManifestToolEntry[];
+}
+
 /**
  * Portable generation manifest emitted in `chainmcp.manifest.json`.
  * Pinned to compiler and generator versions, with deterministic hashes.
@@ -30,6 +48,11 @@ export interface ProjectManifest {
   }[];
   warnings?: readonly CompileDiagnostic[];
   generatedAt: string;
+  artifacts?:
+    | {
+        compiledTools?: CompiledToolsArtifact | undefined;
+      }
+    | undefined;
 }
 
 export interface InitOptions {
