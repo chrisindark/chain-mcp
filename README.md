@@ -164,7 +164,7 @@ These are initial architectural choices and may change through documented archit
 
 ## Project status
 
-ChainMcp is pre-1.0 (currently version `0.1.0`). Milestones 0–9 are implemented and covered by the repository's test suite, but the **1.0 release is deliberately withheld**: `RELEASES.md` records release gates that are not yet complete, including long-running and production-traffic validation. Do not treat this repository as a 1.0 release.
+ChainMcp is pre-1.0 (currently version `0.2.0`). P0-1 through P0-8 are implemented and covered by the repository's test suite, but the **1.0 release is deliberately withheld**: `RELEASES.md` records release gates that are not yet complete, including long-running and production-traffic validation. Do not treat this repository as a 1.0 release.
 
 The repository contains 15 workspace packages:
 
@@ -184,7 +184,7 @@ The repository contains 15 workspace packages:
 - `@chainmcp/gateway`: multi-tenant dynamic gateway with atomic contract revisions and rollback.
 - `@chainmcp/cli`: developer CLI commands for scaffolding, building, diffing, and serving.
 
-Run `pnpm install` followed by `pnpm check` from the repository root to run formatting, linting, custom ESLint blocking-I/O rules, package builds, type checking, unit tests, resilience tests, and SBOM checks.
+Run `pnpm install` followed by `pnpm check` from the repository root to run formatting, linting, custom ESLint blocking-I/O rules, package builds, type checking, unit tests, resilience tests, and SBOM checks. The same command also runs `pnpm docs:check`, which validates that every documented capability points to a real test file or exported API. For this branch, `pnpm check` and `pnpm docs:check` both passed before the previous push; exact command output is in the CI logs.
 
 ## CLI commands
 
