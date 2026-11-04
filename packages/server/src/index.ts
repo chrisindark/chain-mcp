@@ -447,7 +447,12 @@ export async function serveStdio(
     process.once("SIGINT", onSigint);
     process.once("SIGTERM", onSigterm);
   }
-  void connected.closed.then(cleanup);
+  void connected.closed.then(() => {
+    cleanup();
+    // Release runtime-owned clients and analytics buffers once, after the
+    // transport has stopped delivering calls.
+    void runtime.close?.().catch(() => {});
+  });
   return connected;
 }
 

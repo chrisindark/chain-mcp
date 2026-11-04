@@ -164,7 +164,7 @@ These are initial architectural choices and may change through documented archit
 
 ## Project status
 
-ChainMcp is pre-1.0 (currently version `0.1.0`). Milestones 0–9 are implemented and covered by the repository's test suite, but the **1.0 release is deliberately withheld**: `RELEASES.md` records release gates that are not yet complete, including long-running and production-traffic validation. Do not treat this repository as a 1.0 release.
+ChainMcp is pre-1.0 (currently version `0.2.0`). P0-1 through P0-8 are implemented and covered by the repository's test suite, but the **1.0 release is deliberately withheld**: `RELEASES.md` records release gates that are not yet complete, including long-running and production-traffic validation. Do not treat this repository as a 1.0 release.
 
 The repository contains 15 workspace packages:
 

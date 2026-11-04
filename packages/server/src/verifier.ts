@@ -7,6 +7,28 @@ export interface InboundAuthResult {
   authInfo?: AuthInfo | undefined;
 }
 
+/**
+ * A credential that verified but cannot establish tenant context. Returned
+ * instead of `undefined` so the transport answers `TENANT_REQUIRED` rather than
+ * a generic unauthenticated response.
+ */
+export interface InboundAuthFailure {
+  readonly failure: true;
+  readonly code: "TENANT_REQUIRED";
+  readonly message: string;
+}
+
+export type InboundAuthOutcome = InboundAuthResult | InboundAuthFailure;
+
+/** Narrows a verifier outcome to a credential-level failure. */
+export function isInboundAuthFailure(
+  outcome: InboundAuthOutcome | undefined,
+): outcome is InboundAuthFailure {
+  return (
+    outcome !== undefined && (outcome as { failure?: unknown }).failure === true
+  );
+}
+
 export interface InboundAuthRequest {
   headers: Record<string, string | string[] | undefined>;
   url?: URL | undefined;
@@ -17,7 +39,7 @@ export interface InboundAuthVerifier {
   readonly headerNames?: readonly string[] | undefined;
   verify(
     request: InboundAuthRequest,
-  ): Promise<InboundAuthResult | undefined> | InboundAuthResult | undefined;
+  ): Promise<InboundAuthOutcome | undefined> | InboundAuthOutcome | undefined;
 }
 
 export interface InboundPrincipalConfig {
@@ -204,7 +226,22 @@ export interface JwtVerifierOptions {
   issuer?: string | undefined;
   audience?: string | undefined;
   clockToleranceSeconds?: number | undefined;
+  /**
+   * Explicit claim carrying the tenant id. When set, the implicit `tenantId`
+   * and `tid` claims are not consulted.
+   */
+  tenantClaim?: string | undefined;
+  /**
+   * Tenant assigned only when a verified token carries no tenant claim. Must be
+   * configured explicitly by the deployment; there is no implicit default.
+   */
   fallbackTenantId?: string | undefined;
+  /**
+   * Refuses implicit claim names. Construction fails unless a `mapClaims`
+   * mapper, `tenantClaim`, or `fallbackTenantId` resolves tenant identity.
+   * Multi-tenant deployments set this so tenant identity is never guessed.
+   */
+  requireExplicitClaimMapping?: boolean | undefined;
   mapClaims?: (
     payload: Record<string, unknown>,
   ) =>
@@ -214,12 +251,52 @@ export interface JwtVerifierOptions {
 }
 
 /**
+ * Reads a non-empty string claim. Blank or non-string values count as absent so
+ * a token cannot satisfy the tenant requirement with whitespace.
+ */
+function readStringClaim(
+  payload: Record<string, unknown>,
+  claim: string,
+): string | undefined {
+  const value = payload[claim];
+  return typeof value === "string" && value.trim().length > 0
+    ? value
+    : undefined;
+}
+
+function assertJwtOptions(options: JwtVerifierOptions): void {
+  if (
+    options.tenantClaim !== undefined &&
+    options.tenantClaim.trim().length === 0
+  ) {
+    throw new TypeError("JWT tenantClaim must be a non-empty claim name");
+  }
+  if (
+    options.fallbackTenantId !== undefined &&
+    options.fallbackTenantId.trim().length === 0
+  ) {
+    throw new TypeError("JWT fallbackTenantId must be a non-empty tenant id");
+  }
+  if (
+    options.requireExplicitClaimMapping === true &&
+    options.mapClaims === undefined &&
+    options.tenantClaim === undefined &&
+    options.fallbackTenantId === undefined
+  ) {
+    throw new TypeError(
+      "Multi-tenant JWT verification requires an explicit tenant mapping: provide mapClaims or tenantClaim, or configure an explicit fallback tenant.",
+    );
+  }
+}
+
+/**
  * Creates an inbound verifier that validates signed JSON Web Tokens (HS256, RS256, ES256)
  * from `Authorization: Bearer <jwt>` without external dependencies.
  */
 export function createJwtVerifier(
   options: JwtVerifierOptions,
 ): InboundAuthVerifier {
+  assertJwtOptions(options);
   const tolerance = options.clockToleranceSeconds ?? 30;
 
   return {
@@ -302,14 +379,22 @@ export function createJwtVerifier(
       if (options.mapClaims) {
         principal = validatePrincipal(await options.mapClaims(payload));
       } else {
-        const tenantId =
-          typeof payload.tenantId === "string"
-            ? payload.tenantId
-            : typeof payload.tid === "string"
-              ? payload.tid
-              : options.fallbackTenantId;
-        if (!tenantId || tenantId.trim() === "") {
-          return undefined;
+        let tenantId: string | undefined;
+        if (options.tenantClaim !== undefined) {
+          tenantId = readStringClaim(payload, options.tenantClaim);
+        } else if (options.requireExplicitClaimMapping !== true) {
+          tenantId =
+            readStringClaim(payload, "tenantId") ??
+            readStringClaim(payload, "tid");
+        }
+        tenantId ??= options.fallbackTenantId;
+        if (tenantId === undefined) {
+          return {
+            failure: true,
+            code: "TENANT_REQUIRED",
+            message:
+              "Tenant context required: the token has no tenant claim and no fallback tenant is configured",
+          };
         }
         const principalId =
           typeof payload.sub === "string"
@@ -396,9 +481,17 @@ export interface InboundVerifierFactoryOptions {
   jwt?: JwtVerifierOptions | undefined;
 }
 
-export interface InboundVerifierExtraOptions {
-  multiTenant?: boolean | undefined;
-  fallbackTenantId?: string | undefined;
+export interface InboundVerifierSettings {
+  /**
+   * The deployment isolates tenants (dynamic gateway). JWT verification then
+   * requires an explicit tenant mapping instead of reading implicit claims.
+   */
+  readonly multiTenant?: boolean | undefined;
+  /**
+   * Explicitly configured fallback tenant (`tenant` config key or `--tenant`).
+   * Only applies to JWTs that carry no tenant claim of their own.
+   */
+  readonly fallbackTenantId?: string | undefined;
 }
 
 /**
@@ -406,7 +499,7 @@ export interface InboundVerifierExtraOptions {
  */
 export function createInboundVerifier(
   options: InboundVerifierFactoryOptions,
-  extraOptions?: InboundVerifierExtraOptions,
+  settings?: InboundVerifierSettings,
 ): InboundAuthVerifier | undefined {
   const verifiers: InboundAuthVerifier[] = [];
   if (options.tokens && Object.keys(options.tokens).length > 0) {
@@ -424,8 +517,11 @@ export function createInboundVerifier(
     verifiers.push(
       createJwtVerifier({
         ...options.jwt,
-        ...(extraOptions?.fallbackTenantId !== undefined
-          ? { fallbackTenantId: extraOptions.fallbackTenantId }
+        ...(settings?.fallbackTenantId !== undefined
+          ? { fallbackTenantId: settings.fallbackTenantId }
+          : {}),
+        ...(settings?.multiTenant === true
+          ? { requireExplicitClaimMapping: true }
           : {}),
       }),
     );

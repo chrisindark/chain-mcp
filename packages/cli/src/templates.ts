@@ -190,12 +190,17 @@ export function renderConfigYaml(options: ConfigYamlOptions): string {
 export interface ServerTsOptions {
   /** Generator version embedded in the generated server metadata. */
   version: string;
-  compilerVersion?: string | undefined;
+  /**
+   * Compiler version embedded at generation time. The generated server checks
+   * build artifacts against it, so production startup never imports the
+   * compiler.
+   */
+  compilerVersion: string;
 }
 
 export function renderServerTs(options: ServerTsOptions): string {
-  return `import { randomUUID } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+  return `import { createHash, randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -210,7 +215,6 @@ import {
   resolveConfigSecrets,
   type RedisRateLimitClient,
 } from "@chainmcp/config";
-import { COMPILER_VERSION, compileOpenApi } from "@chainmcp/compiler";
 import { InMemoryToolRuntime, RuntimeError } from "@chainmcp/core";
 import {
   createUpstreamExecutor,
@@ -226,6 +230,292 @@ import {
   type Transport,
 } from "@chainmcp/server";
 import { tools } from "./tools.js";
+
+/** Generator version pinned when this project was scaffolded. */
+const GENERATOR_VERSION = ${JSON.stringify(options.version)};
+/** Compiler version pinned when this project was scaffolded. */
+const COMPILER_VERSION = ${JSON.stringify(options.compilerVersion)};
+
+const MANIFEST_FILE = "chainmcp.manifest.json";
+const COMPILED_TOOLS_ARTIFACT_PATH = "dist/compiled-tools.json";
+const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
+
+interface VerifiedArtifacts {
+  /** False when the manifest or artifact could not be read or parsed. */
+  readable: boolean;
+  tools: unknown[];
+  contractRevision: string | undefined;
+  mismatches: string[];
+}
+
+function hashContent(content: string | Uint8Array): string {
+  return "sha256:" + createHash("sha256").update(content).digest("hex");
+}
+
+/** Canonical JSON with sorted object keys, matching the generator's hashing. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return "[" + value.map(canonicalJson).join(",") + "]";
+  }
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const entries = Object.keys(record)
+      .sort()
+      .map((key) => JSON.stringify(key) + ":" + canonicalJson(record[key]));
+    return "{" + entries.join(",") + "}";
+  }
+  return JSON.stringify(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function toolName(tool: unknown): string | undefined {
+  if (!isRecord(tool)) return undefined;
+  return typeof tool.name === "string" ? tool.name : undefined;
+}
+
+function parseToolHashes(
+  value: unknown,
+  mismatches: string[],
+): Map<string, string> {
+  const hashes = new Map<string, string>();
+  if (!Array.isArray(value)) {
+    mismatches.push(
+      "Manifest records no per-tool hashes for " + COMPILED_TOOLS_ARTIFACT_PATH,
+    );
+    return hashes;
+  }
+  for (const entry of value) {
+    if (
+      isRecord(entry) &&
+      typeof entry.name === "string" &&
+      typeof entry.hash === "string"
+    ) {
+      hashes.set(entry.name, entry.hash);
+    } else {
+      mismatches.push("Manifest contains a malformed tool hash entry");
+    }
+  }
+  return hashes;
+}
+
+/**
+ * Loads the generation manifest and compiled tool definitions and verifies
+ * that they still describe each other and the pinned contract. Returns every
+ * mismatch instead of throwing so the caller decides whether drift is fatal.
+ */
+async function verifyBuildArtifacts(
+  projectRoot: string,
+  specPath: string,
+): Promise<VerifiedArtifacts> {
+  const manifestPath = join(projectRoot, MANIFEST_FILE);
+  const compiledToolsPath = join(projectRoot, COMPILED_TOOLS_ARTIFACT_PATH);
+  const mismatches: string[] = [];
+
+  let manifest: Record<string, unknown>;
+  let compiledToolsRaw: string;
+  let parsedTools: unknown;
+  try {
+    const [manifestRaw, artifactRaw] = await Promise.all([
+      readFile(manifestPath, "utf8"),
+      readFile(compiledToolsPath, "utf8"),
+    ]);
+    compiledToolsRaw = artifactRaw;
+    const parsedManifest: unknown = JSON.parse(manifestRaw);
+    if (!isRecord(parsedManifest)) {
+      throw new Error(MANIFEST_FILE + " must contain a JSON object");
+    }
+    manifest = parsedManifest;
+    parsedTools = JSON.parse(compiledToolsRaw) as unknown;
+  } catch (error) {
+    return {
+      readable: false,
+      tools: [],
+      contractRevision: undefined,
+      mismatches: [
+        "build artifacts could not be read (" +
+          (error instanceof Error ? error.message : String(error)) +
+          "); expected " +
+          MANIFEST_FILE +
+          " and " +
+          COMPILED_TOOLS_ARTIFACT_PATH,
+      ],
+    };
+  }
+
+  if (manifest.manifestVersion !== 1) {
+    mismatches.push(
+      "manifest schema version mismatch: expected 1, got " +
+        String(manifest.manifestVersion),
+    );
+  }
+  if (manifest.generatorVersion !== GENERATOR_VERSION) {
+    mismatches.push(
+      "generator version mismatch: expected " +
+        GENERATOR_VERSION +
+        ", got " +
+        String(manifest.generatorVersion),
+    );
+  }
+  if (manifest.compilerVersion !== COMPILER_VERSION) {
+    mismatches.push(
+      "compiler version mismatch: expected " +
+        COMPILER_VERSION +
+        ", got " +
+        String(manifest.compilerVersion),
+    );
+  }
+  const contractRevision =
+    typeof manifest.contractRevision === "string" &&
+    SHA256_PATTERN.test(manifest.contractRevision)
+      ? manifest.contractRevision
+      : undefined;
+  if (contractRevision === undefined) {
+    mismatches.push("contract revision is missing or malformed");
+  }
+  const sourceHash =
+    typeof manifest.sourceHash === "string" &&
+    SHA256_PATTERN.test(manifest.sourceHash)
+      ? manifest.sourceHash
+      : undefined;
+  if (sourceHash === undefined) {
+    mismatches.push("source hash is missing or malformed");
+  }
+
+  if (!Array.isArray(parsedTools)) {
+    return {
+      readable: false,
+      tools: [],
+      contractRevision,
+      mismatches: [
+        ...mismatches,
+        COMPILED_TOOLS_ARTIFACT_PATH +
+          " must contain an array of compiled tools",
+      ],
+    };
+  }
+  const compiledTools: unknown[] = parsedTools;
+  if (manifest.toolCount !== compiledTools.length) {
+    mismatches.push(
+      "tool count mismatch: manifest " +
+        String(manifest.toolCount) +
+        ", compiled-tools " +
+        compiledTools.length,
+    );
+  }
+
+  const artifactMetadata = isRecord(manifest.artifacts)
+    ? manifest.artifacts.compiledTools
+    : undefined;
+  if (!isRecord(artifactMetadata)) {
+    mismatches.push(
+      "manifest does not record compiled-tools.json integrity (artifacts.compiledTools); rebuild the project",
+    );
+  } else {
+    if (artifactMetadata.sha256 !== hashContent(compiledToolsRaw)) {
+      mismatches.push(
+        COMPILED_TOOLS_ARTIFACT_PATH +
+          " digest does not match the manifest; the build artifact was modified after build",
+      );
+    }
+    if (artifactMetadata.toolCount !== compiledTools.length) {
+      mismatches.push(
+        "artifact tool count mismatch: manifest " +
+          String(artifactMetadata.toolCount) +
+          ", compiled-tools " +
+          compiledTools.length,
+      );
+    }
+    if (artifactMetadata.contractRevision !== contractRevision) {
+      mismatches.push(
+        "artifact contract revision does not match the manifest contract revision",
+      );
+    }
+    const expectedHashes = parseToolHashes(
+      artifactMetadata.tools,
+      mismatches,
+    );
+    for (const tool of compiledTools) {
+      const name = toolName(tool);
+      if (name === undefined) {
+        mismatches.push(
+          "compiled-tools.json contains a tool without a name",
+        );
+        continue;
+      }
+      const expectedHash = expectedHashes.get(name);
+      if (expectedHash === undefined) {
+        mismatches.push(
+          "tool '" + name + "' is missing from the manifest tool hashes",
+        );
+        continue;
+      }
+      expectedHashes.delete(name);
+      if (expectedHash !== hashContent(canonicalJson(tool))) {
+        mismatches.push(
+          "tool '" + name + "' does not match its manifest hash",
+        );
+      }
+    }
+    for (const name of expectedHashes.keys()) {
+      mismatches.push(
+        "tool '" +
+          name +
+          "' is recorded in the manifest but missing from " +
+          COMPILED_TOOLS_ARTIFACT_PATH,
+      );
+    }
+  }
+
+  const manifestTools = Array.isArray(manifest.tools) ? manifest.tools : [];
+  if (manifestTools.length !== compiledTools.length) {
+    mismatches.push(
+      "tool set mismatch between manifest and " + COMPILED_TOOLS_ARTIFACT_PATH,
+    );
+  } else {
+    const manifestNames = new Set<string>();
+    for (const entry of manifestTools) {
+      const name = toolName(entry);
+      if (name !== undefined) manifestNames.add(name);
+    }
+    for (const tool of compiledTools) {
+      const name = toolName(tool);
+      if (name !== undefined && !manifestNames.has(name)) {
+        mismatches.push("tool '" + name + "' is missing from the manifest");
+      }
+    }
+  }
+
+  if (sourceHash !== undefined) {
+    try {
+      const specContent = await readFile(specPath, "utf8");
+      if (hashContent(specContent) !== sourceHash) {
+        mismatches.push(
+          "pinned contract '" +
+            specPath +
+            "' changed after build (source hash no longer matches the manifest)",
+        );
+      }
+    } catch (error) {
+      mismatches.push(
+        "pinned contract '" +
+          specPath +
+          "' could not be read (" +
+          (error instanceof Error ? error.message : String(error)) +
+          ")",
+      );
+    }
+  }
+
+  return {
+    readable: true,
+    tools: compiledTools,
+    contractRevision,
+    mismatches,
+  };
+}
 
 export interface RunServerOptions {
   configPath?: string;
@@ -261,7 +551,7 @@ export async function runServer(options?: RunServerOptions) {
     )?.client,
   });
 
-  // Compile and register contract operations if contract is configured
+  // Register verified contract operations if a contract is configured.
   const effectiveContractPath =
     options?.contractPath ??
     (config.contract?.source ? join(projectRoot, config.contract.source) : undefined);
@@ -270,151 +560,90 @@ export async function runServer(options?: RunServerOptions) {
     const allowManifestDrift =
       process.env.CHAINMCP_ALLOW_MANIFEST_DRIFT === "1" ||
       process.argv.includes("--allow-manifest-drift");
-    const compiledToolsPath = join(projectRoot, "dist", "compiled-tools.json");
-    const manifestPath = join(projectRoot, "chainmcp.manifest.json");
+    const developmentMode = process.env.NODE_ENV === "development";
 
-    let contractRevision: string | undefined;
-    let baseUrl =
+    const verification = await verifyBuildArtifacts(
+      projectRoot,
+      effectiveContractPath,
+    );
+    if (verification.mismatches.length > 0) {
+      const detail = verification.mismatches.join("; ");
+      if (allowManifestDrift) {
+        console.warn(
+          "[WARN] Build artifact verification failed (--allow-manifest-drift): " +
+            detail,
+        );
+      } else if (verification.readable || !developmentMode) {
+        throw new Error(
+          "[ERROR] Build artifact verification failed: " +
+            detail +
+            ". Rebuild with 'chainmcp build', or start with --allow-manifest-drift for development.",
+        );
+      }
+    }
+
+    let compiledTools: readonly unknown[] = verification.tools;
+    let contractRevision = verification.contractRevision;
+
+    // Development fallback: recompile the pinned contract. Production startup
+    // uses the verified artifact and never imports the compiler.
+    if (!verification.readable) {
+      if (!allowManifestDrift && !developmentMode) {
+        throw new Error(
+          "Build artifacts are missing and development recompilation is disabled. Rebuild with 'chainmcp build'.",
+        );
+      }
+      console.warn(
+        "[WARN] Build artifacts unavailable; recompiling the pinned contract in development mode.",
+      );
+      const { compileOpenApi } = await import("@chainmcp/compiler");
+      const contractSource = await readFile(effectiveContractPath, "utf8");
+      const compiled = compileOpenApi(contractSource, {
+        strict: config.contract?.strict ?? true,
+      });
+      if (!compiled.ok) {
+        const diagnostics = compiled.diagnostics
+          .filter((diagnostic) => diagnostic.severity === "error")
+          .map(
+            (diagnostic) =>
+              "[" + diagnostic.code + "] " + diagnostic.message,
+          )
+          .join("; ");
+        throw new Error("Contract compilation failed: " + diagnostics);
+      }
+      compiledTools = compiled.tools;
+      contractRevision = compiled.contractRevision;
+    }
+
+    const baseUrl =
       options?.baseUrl ??
       config.contract?.baseUrl ??
       (config.security.allowedUpstreamHosts[0]
         ? "https://" + config.security.allowedUpstreamHosts[0]
         : undefined);
 
-    try {
-      const [compiledToolsRaw, manifestRaw] = await Promise.all([
-        readFile(compiledToolsPath, "utf8"),
-        readFile(manifestPath, "utf8"),
-      ]);
-      const manifest = JSON.parse(manifestRaw) as any;
-      const compiledTools = JSON.parse(compiledToolsRaw) as any[];
+    if (!baseUrl) {
+      throw new Error(
+        "No baseUrl configured in contract.baseUrl or options, and security.allowedUpstreamHosts is empty.",
+      );
+    }
 
-      const mismatches: string[] = [];
-      if (manifest.manifestVersion !== 1) {
-        mismatches.push(
-          "Manifest schema version mismatch: expected 1, got " + manifest.manifestVersion,
-        );
-      }
-      const expectedGeneratorVersion = ${JSON.stringify(options.version)};
-      if (manifest.generatorVersion !== expectedGeneratorVersion) {
-        mismatches.push(
-          "Generator version mismatch: expected " + expectedGeneratorVersion + ", got " + manifest.generatorVersion,
-        );
-      }
-      if (manifest.compilerVersion && manifest.compilerVersion !== COMPILER_VERSION) {
-        mismatches.push(
-          "Compiler version mismatch: expected " + COMPILER_VERSION + ", got " + manifest.compilerVersion,
-        );
-      }
-      if (typeof manifest.toolCount !== "number") {
-        mismatches.push("Manifest missing toolCount");
-      } else if (manifest.toolCount !== compiledTools.length) {
-        mismatches.push(
-          "Tool count mismatch: manifest " + manifest.toolCount + ", compiled-tools " + compiledTools.length,
-        );
-      }
-      if (Array.isArray(manifest.tools)) {
-        const manifestTools = new Map(
-          manifest.tools.map((t: any) => [t.name, t.hash]),
-        );
-        for (const tool of compiledTools) {
-          if (!manifestTools.has(tool.name)) {
-            mismatches.push("Tool '" + tool.name + "' missing from manifest");
-          }
-        }
-        if (manifestTools.size !== compiledTools.length) {
-          mismatches.push("Tool set mismatch between manifest and compiled-tools.json");
-        }
-      }
+    const executorOverrides: Parameters<typeof buildExecutorOptions>[1] = {
+      baseUrl,
+      ...(contractRevision !== undefined ? { contractRevision } : {}),
+      ...(options?.transport !== undefined ? { transport: options.transport } : {}),
+      ...(options?.resolveHost !== undefined
+        ? { resolveHost: options.resolveHost }
+        : {}),
+    };
 
-      if (mismatches.length > 0) {
-        if (allowManifestDrift) {
-          console.warn(
-            "[WARN] Manifest drift detected (--allow-manifest-drift): " +
-              mismatches.join("; "),
-          );
-        } else {
-          console.error(
-            "[ERROR] Build artifact verification failed: " +
-              mismatches.join("; ") +
-              ". Rebuild with chainmcp build or run with --allow-manifest-drift.",
-          );
-          process.exit(1);
-        }
-      }
+    const executorOptions = buildExecutorOptions(config, executorOverrides);
+    const executor = createUpstreamExecutor(executorOptions);
 
-      contractRevision = manifest.contractRevision ?? manifest.sourceHash;
-
-      if (!baseUrl) {
-        console.error(
-          "[ERROR] No baseUrl configured in contract.baseUrl or options, and security.allowedUpstreamHosts is empty.",
-        );
-        process.exit(1);
-      }
-
-      const executorOverrides: Parameters<typeof buildExecutorOptions>[1] = {
-        baseUrl,
-        contractRevision,
-        ...(options?.transport !== undefined ? { transport: options.transport } : {}),
-        ...(options?.resolveHost !== undefined
-          ? { resolveHost: options.resolveHost }
-          : {}),
-      };
-
-      const executorOptions = buildExecutorOptions(config, executorOverrides);
-      const executor = createUpstreamExecutor(executorOptions);
-
-      for (const tool of executor.createTools(compiledTools as any)) {
-        runtime.register(tool);
-      }
-    } catch (error) {
-      if (allowManifestDrift || process.env.NODE_ENV === "development") {
-        const contractSource = await readFile(effectiveContractPath, "utf8");
-        const { compileOpenApi } = await import("@chainmcp/compiler");
-        const compiled = compileOpenApi(contractSource, {
-          strict: config.contract?.strict ?? true,
-        });
-
-        if (!compiled.ok) {
-          for (const diagnostic of compiled.diagnostics) {
-            const loc = diagnostic.location ? " at " + diagnostic.location : "";
-            console.error(
-              "[" + diagnostic.severity.toUpperCase() + "] " + diagnostic.code + ": " + diagnostic.message + loc,
-            );
-          }
-          process.exit(1);
-        }
-
-        contractRevision = compiled.contractRevision;
-
-        if (!baseUrl) {
-          console.error(
-            "[ERROR] No baseUrl configured in contract.baseUrl or options, and security.allowedUpstreamHosts is empty.",
-          );
-          process.exit(1);
-        }
-
-        const executorOverrides: Parameters<typeof buildExecutorOptions>[1] = {
-          baseUrl,
-          contractRevision: compiled.contractRevision,
-          ...(options?.transport !== undefined ? { transport: options.transport } : {}),
-          ...(options?.resolveHost !== undefined
-            ? { resolveHost: options.resolveHost }
-            : {}),
-        };
-
-        const executorOptions = buildExecutorOptions(config, executorOverrides);
-        const executor = createUpstreamExecutor(executorOptions);
-
-        for (const tool of executor.createTools(compiled.tools)) {
-          runtime.register(tool);
-        }
-      } else {
-        console.error(
-          "[ERROR] Build artifact verification failed: " + (error as Error).message + ". Rebuild with chainmcp build or run with --allow-manifest-drift.",
-        );
-        process.exit(1);
-      }
+    for (const tool of executor.createTools(
+      compiledTools as Parameters<typeof executor.createTools>[0],
+    )) {
+      runtime.register(tool);
     }
   }
   // Register code-defined tools
@@ -433,7 +662,7 @@ export async function runServer(options?: RunServerOptions) {
 
   const serverOptions = {
     name: config.name,
-    version: ${JSON.stringify(options.version)},
+    version: GENERATOR_VERSION,
     maxResponseBytes: config.server.maxResponseBytes,
     createContext: (request: McpRequestContext) => {
       const auth = request.authInfo;
@@ -470,7 +699,11 @@ export async function runServer(options?: RunServerOptions) {
   }
 
   if (config.server.transport === "http") {
-    const verifier = createInboundVerifier(config.auth.inbound);
+    const verifier = createInboundVerifier(config.auth.inbound, {
+      ...(config.tenant !== undefined
+        ? { fallbackTenantId: config.tenant }
+        : {}),
+    });
     const requireInboundAuth =
       config.security.requireInboundAuth ||
       config.auth.inbound.requireInboundAuth;
@@ -498,6 +731,7 @@ export async function runServer(options?: RunServerOptions) {
         enableDnsRebindingProtection:
           config.server.enableDnsRebindingProtection,
         requestTimeoutMs: config.server.requestTimeoutMs,
+        shutdownTimeoutMs: config.server.shutdownTimeoutMs,
         ...(options?.signal !== undefined ? { signal: options.signal } : {}),
       },
     );
@@ -589,7 +823,7 @@ RUN npm ci --only=production || npm install --production
 COPY --from=builder /app/dist ./dist
 COPY chainmcp.config.yaml ./
 COPY chainmcp.manifest.json ./
-COPY dist/compiled-tools.json ./dist/compiled-tools.json 2>/dev/null || true
+COPY compiled-tools.json ./dist/compiled-tools.json
 EXPOSE 3333
 
 USER node
@@ -615,7 +849,7 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/spec ./spec
 COPY chainmcp.config.yaml ./
 COPY chainmcp.manifest.json ./
-COPY dist/compiled-tools.json ./dist/compiled-tools.json 2>/dev/null || true
+COPY compiled-tools.json ./dist/compiled-tools.json
 
 EXPOSE 3333
 
@@ -699,7 +933,15 @@ Compile TypeScript source code:
 npm run build
 \`\`\`
 
-### Run with an MCP Client
+${
+  isBlank
+    ? ""
+    : `### Build Artifacts
+
+The project pins its contract in \`spec/openapi.yaml\` and records \`chainmcp.manifest.json\` plus \`dist/compiled-tools.json\`. At startup the server verifies the manifest schema version, generator and compiler versions, contract source hash, and per-tool hashes, and exits when they no longer match. Run \`chainmcp build\` after editing the contract; for local development, \`--allow-manifest-drift\` downgrades verification failures to warnings.
+
+`
+}### Run with an MCP Client
 
 Start the server over stdio:
 

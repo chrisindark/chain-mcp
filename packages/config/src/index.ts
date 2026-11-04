@@ -184,6 +184,12 @@ export const InboundJwtConfigSchema = z
     issuer: z.string().optional(),
     audience: z.string().optional(),
     clockToleranceSeconds: z.number().int().nonnegative().default(30),
+    /**
+     * Explicit claim carrying the tenant id. Multi-tenant gateways require this
+     * (or an explicit `tenant` fallback) because implicit claim names are not
+     * consulted there.
+     */
+    tenantClaim: z.string().trim().min(1).max(128).optional(),
   })
   .strict();
 
@@ -1257,6 +1263,25 @@ export function buildRuntimeOptions(
     }
   }
 
+  let onShutdown = overrides?.onShutdown;
+  if (
+    sharedClient !== undefined &&
+    sharedClient !== passedLimiterClient &&
+    sharedClient !== passedCacheClient
+  ) {
+    const client = sharedClient;
+    const overrideShutdown = onShutdown;
+    onShutdown = async () => {
+      try {
+        await overrideShutdown?.();
+      } finally {
+        // The factory created this client for the runtime, so the runtime owns
+        // its one and only drain. Caller-supplied clients are left untouched.
+        await client.close();
+      }
+    };
+  }
+
   const tokenizer: Tokenizer | undefined =
     overrides?.tokenizer ??
     (config.tokenMetrics.enabled
@@ -1290,6 +1315,7 @@ export function buildRuntimeOptions(
     ...(cache !== undefined ? { cache } : {}),
     ...(tokenizer !== undefined ? { tokenizer } : {}),
     ...(projector !== undefined ? { projector } : {}),
+    ...(onShutdown !== undefined ? { onShutdown } : {}),
     maxToolInputBytes:
       overrides?.maxToolInputBytes ?? config.server.maxToolInputBytes,
     maxResponseBytes:

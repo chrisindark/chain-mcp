@@ -7,25 +7,13 @@ import type {
 } from "@chainmcp/compiler";
 import type { ChainMcpConfig, SecretResolutionSource } from "@chainmcp/config";
 import type { ToolDefinition } from "@chainmcp/core";
+import type { CompiledToolsArtifact } from "./manifest.js";
 
 export type { LoadSpecOptions, LoadedSpec } from "./spec-loader.js";
 
 export interface ManifestToolEntry {
   name: string;
   hash: string;
-}
-
-/** Integrity record for one emitted build artifact. */
-export interface CompiledToolsArtifact {
-  /** Project-relative artifact path, e.g. `dist/compiled-tools.json`. */
-  path: string;
-  /** `sha256:` digest of the artifact bytes exactly as written. */
-  sha256: string;
-  /** Contract revision the artifact was compiled from, when applicable. */
-  contractRevision?: string | undefined;
-  toolCount: number;
-  /** Canonical hash per tool record, sorted by name. */
-  tools: readonly ManifestToolEntry[];
 }
 
 /**
@@ -47,12 +35,16 @@ export interface ProjectManifest {
     hash: string;
   }[];
   warnings?: readonly CompileDiagnostic[];
-  generatedAt: string;
+  /**
+   * Integrity metadata for emitted build artifacts. Generated servers verify
+   * this before registering tools so a stale or modified artifact fails fast.
+   */
   artifacts?:
     | {
-        compiledTools?: CompiledToolsArtifact | undefined;
+        compiledTools: CompiledToolsArtifact;
       }
     | undefined;
+  generatedAt: string;
 }
 
 export interface InitOptions {

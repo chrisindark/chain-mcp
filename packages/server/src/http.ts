@@ -6,10 +6,14 @@ import {
   createMcpServer,
   type McpServerOptions,
 } from "./index.js";
-import type { InboundAuthVerifier, InboundAuthResult } from "./verifier.js";
+import {
+  isInboundAuthFailure,
+  type InboundAuthVerifier,
+  type InboundAuthOutcome,
+} from "./verifier.js";
 
 export interface HttpCorsOptions {
-  /** Whether CORS is enabled. Defaults to true for loopback binds, false for non-loopback binds. */
+  /** Whether CORS is enabled. CORS is disabled by default on every bind host. */
   enabled?: boolean | undefined;
   /** Explicit allowed origins (exact match, "null", or "*"). Wildcard cannot be used with allowCredentials. */
   allowedOrigins?: string[] | undefined;
@@ -371,9 +375,11 @@ export async function serveHttp(
   const enableHostProtection = Boolean(
     httpOptions.enableDnsRebindingProtection || hasExplicitAllowedHosts,
   );
-  const enableOriginDnsProtection = Boolean(
-    httpOptions.enableDnsRebindingProtection,
-  );
+  // Origin validation is always on: browser requests carry an Origin header,
+  // and an origin outside the effective allowlist must not reach tools even
+  // when CORS response headers are disabled. Requests without Origin (CLI
+  // clients, the Inspector CLI) remain unaffected.
+  const enableOriginDnsProtection = true;
   const enableDnsRebinding =
     httpOptions.enableDnsRebindingProtection ??
     (hasExplicitAllowedHosts || hasExplicitAllowedOrigins);
@@ -429,6 +435,7 @@ export async function serveHttp(
     inboundAuth: isAuthConfigured,
     tenantMode: runtime.tenantMode ?? "single-tenant",
     allowedHosts: effectiveAllowedHosts,
+    allowedOrigins: effectiveAllowedOrigins,
     enableDnsRebindingProtection: enableDnsRebinding,
     cors: {
       enabled: corsEnabled,
@@ -439,7 +446,7 @@ export async function serveHttp(
     port,
     path: mcpPath,
   };
-  const postureMessage = `[SECURITY] HTTP security posture: inboundAuth=${isAuthConfigured ? "enabled" : "disabled"}, tenantMode=${postureMeta.tenantMode}, allowedHosts=[${effectiveAllowedHosts.join(", ")}], enableDnsRebindingProtection=${enableDnsRebinding}, cors=${corsEnabled ? `enabled (${corsAllowedOrigins.join(", ") || "none"})` : "disabled"}`;
+  const postureMessage = `[SECURITY] HTTP security posture: inboundAuth=${isAuthConfigured ? "enabled" : "disabled"}, tenantMode=${postureMeta.tenantMode}, allowedHosts=[${effectiveAllowedHosts.join(", ")}], allowedOrigins=[${effectiveAllowedOrigins.join(", ")}], enableDnsRebindingProtection=${enableDnsRebinding}, cors=${corsEnabled ? `enabled (${corsAllowedOrigins.join(", ") || "none"})` : "disabled"}`;
 
   if (httpOptions.info) {
     httpOptions.info(postureMessage, postureMeta);
@@ -460,6 +467,32 @@ export async function serveHttp(
   let isShuttingDown = false;
   const activeRequests = new Set<AbortController>();
   const shutdownAbortController = new AbortController();
+  let drainWaiter: (() => void) | undefined;
+
+  const completeRequest = (controller: AbortController): void => {
+    if (!activeRequests.delete(controller)) return;
+    if (activeRequests.size === 0) {
+      const waiter = drainWaiter;
+      drainWaiter = undefined;
+      waiter?.();
+    }
+  };
+
+  const waitForDrain = (timeoutMs: number): Promise<boolean> => {
+    if (activeRequests.size === 0) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        drainWaiter = undefined;
+        resolve(false);
+      }, timeoutMs);
+      // A pending drain timer alone must not keep the process alive.
+      timer.unref?.();
+      drainWaiter = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+    });
+  };
 
   const httpServer = http.createServer(async (req, res) => {
     // Request timeout protection: abort socket if read takes longer than requestTimeoutMs
@@ -482,6 +515,19 @@ export async function serveHttp(
       }
       return;
     }
+
+    // Track work-bearing requests for the drain phase and cancel cooperative
+    // work when the client disconnects before its response is complete. GET
+    // and HEAD are long-lived SSE/probe streams (or health checks), not calls,
+    // so they never extend the drain budget.
+    const trackForDrain = req.method === "POST" || req.method === "DELETE";
+    const requestController = new AbortController();
+    if (trackForDrain) activeRequests.add(requestController);
+    res.once("close", () => {
+      requestController.abort(new Error("HTTP connection closed"));
+      if (trackForDrain) completeRequest(requestController);
+    });
+
     req.setTimeout(requestTimeoutMs, () => {
       if (!res.headersSent) {
         res.statusCode = 408;
@@ -576,8 +622,78 @@ export async function serveHttp(
         return;
       }
 
-      // 4. DNS rebinding / Origin allowlist validation
+      const requestUrl = new URL(req.url ?? "/", `http://${rawHost.trim()}`);
+
+      // CORS Preflight & Headers
+      if (corsEnabled) {
+        res.setHeader("Vary", "Origin");
+
+        const rawOrigin = req.headers.origin;
+        const requestOrigin = (
+          Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin
+        )?.trim();
+
+        const matchedOrigin = matchAllowedOrigin(
+          requestOrigin,
+          corsAllowedOrigins,
+        );
+
+        if (req.method === "OPTIONS") {
+          if (matchedOrigin !== undefined) {
+            res.setHeader("Access-Control-Allow-Origin", matchedOrigin);
+            if (corsAllowCredentials) {
+              res.setHeader("Access-Control-Allow-Credentials", "true");
+            }
+            res.setHeader(
+              "Access-Control-Allow-Methods",
+              "GET, POST, OPTIONS, DELETE",
+            );
+            res.setHeader("Access-Control-Allow-Headers", allowedHeadersString);
+            res.setHeader(
+              "Access-Control-Expose-Headers",
+              "Content-Type, mcp-session-id",
+            );
+            res.setHeader("Access-Control-Max-Age", String(corsMaxAgeSeconds));
+            res.statusCode = 204;
+            res.end();
+            return;
+          } else {
+            // Disallowed origin on preflight request -> 403
+            res.statusCode = 403;
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                error: {
+                  code: -32000,
+                  message: "Forbidden: CORS origin not allowed",
+                },
+                id: null,
+              }),
+            );
+            return;
+          }
+        }
+
+        // Non-OPTIONS requests: attach CORS headers if origin is allowed
+        if (matchedOrigin !== undefined) {
+          res.setHeader("Access-Control-Allow-Origin", matchedOrigin);
+          if (corsAllowCredentials) {
+            res.setHeader("Access-Control-Allow-Credentials", "true");
+          }
+          res.setHeader(
+            "Access-Control-Expose-Headers",
+            "Content-Type, mcp-session-id",
+          );
+        }
+      }
+
+      // 4b. Origin allowlist validation (after CORS preflight so CORS-specific
+      // rejections keep their message; runs even when CORS is disabled).
       if (enableOriginDnsProtection && req.headers.origin) {
+        // Origin-keyed responses must not be cached across origins, including
+        // the 403 rejection when CORS is active.
+        if (corsEnabled) res.setHeader("Vary", "Origin");
         const rawOrigin = req.headers.origin;
         const originStr = (
           Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin
@@ -647,72 +763,6 @@ export async function serveHttp(
         }
       }
 
-      const requestUrl = new URL(req.url ?? "/", `http://${rawHost.trim()}`);
-
-      // CORS Preflight & Headers
-      if (corsEnabled) {
-        res.setHeader("Vary", "Origin");
-
-        const rawOrigin = req.headers.origin;
-        const requestOrigin = (
-          Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin
-        )?.trim();
-
-        const matchedOrigin = matchAllowedOrigin(
-          requestOrigin,
-          corsAllowedOrigins,
-        );
-
-        if (req.method === "OPTIONS") {
-          if (matchedOrigin !== undefined) {
-            res.setHeader("Access-Control-Allow-Origin", matchedOrigin);
-            if (corsAllowCredentials) {
-              res.setHeader("Access-Control-Allow-Credentials", "true");
-            }
-            res.setHeader(
-              "Access-Control-Allow-Methods",
-              "GET, POST, OPTIONS, DELETE",
-            );
-            res.setHeader("Access-Control-Allow-Headers", allowedHeadersString);
-            res.setHeader(
-              "Access-Control-Expose-Headers",
-              "Content-Type, mcp-session-id",
-            );
-            res.setHeader("Access-Control-Max-Age", String(corsMaxAgeSeconds));
-            res.statusCode = 204;
-            res.end();
-            return;
-          } else {
-            // Disallowed origin on preflight request -> 403
-            res.statusCode = 403;
-            res.setHeader("Content-Type", "application/json");
-            res.end(
-              JSON.stringify({
-                jsonrpc: "2.0",
-                error: {
-                  code: -32000,
-                  message: "Forbidden: CORS origin not allowed",
-                },
-                id: null,
-              }),
-            );
-            return;
-          }
-        }
-
-        // Non-OPTIONS requests: attach CORS headers if origin is allowed
-        if (matchedOrigin !== undefined) {
-          res.setHeader("Access-Control-Allow-Origin", matchedOrigin);
-          if (corsAllowCredentials) {
-            res.setHeader("Access-Control-Allow-Credentials", "true");
-          }
-          res.setHeader(
-            "Access-Control-Expose-Headers",
-            "Content-Type, mcp-session-id",
-          );
-        }
-      }
-
       // Health and liveness probe
       if (
         requestUrl.pathname === "/health" ||
@@ -742,13 +792,33 @@ export async function serveHttp(
       }
 
       // Inbound Authentication
-      let authResult: InboundAuthResult | undefined;
+      let authResult: InboundAuthOutcome | undefined;
       if (httpOptions.verifier) {
         authResult = await httpOptions.verifier.verify({
           headers: req.headers,
           url: requestUrl,
           method: req.method,
         });
+      }
+
+      // A verified credential that cannot establish tenant context fails closed
+      // with a stable code, even when inbound auth is otherwise optional.
+      if (isInboundAuthFailure(authResult)) {
+        res.statusCode = 401;
+        res.setHeader("WWW-Authenticate", 'Bearer error="invalid_token"');
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: {
+              code: -32001,
+              message: `Unauthorized: ${authResult.message}`,
+              data: { code: authResult.code },
+            },
+            id: null,
+          }),
+        );
+        return;
       }
 
       if (requireAuth && !authResult) {
@@ -854,7 +924,10 @@ export async function serveHttp(
         method: req.method ?? "GET",
         headers: webHeaders,
         body: body ? new Uint8Array(body) : null,
-        signal: shutdownAbortController.signal,
+        signal: AbortSignal.any([
+          shutdownAbortController.signal,
+          requestController.signal,
+        ]),
       });
 
       // Invoke MCP handler with authInfo pass-through
@@ -916,17 +989,40 @@ export async function serveHttp(
   const close = async (): Promise<void> => {
     if (closePromise) return closePromise;
     closePromise = (async () => {
-      if (isShuttingDown) {
-        // Already shutting down, just wait
-      }
+      // 1. Stop accepting new work. The listener stays bound while draining so
+      // requests that arrive late receive a 503 rejection instead of a
+      // connection reset; it is closed once the drain window ends.
       isShuttingDown = true;
-      try {
-        if (typeof httpServer.close === "function") {
-          httpServer.close(() => {});
-        }
-      } catch {
-        // ignore
+
+      // 2. Drain work-bearing requests up to the configured budget. A request
+      // is in flight from acceptance until its response closes.
+      if (shutdownTimeoutMs > 0) {
+        await waitForDrain(shutdownTimeoutMs);
       }
+
+      // 3. Cancel what did not drain. Aborting the shutdown signal propagates
+      // through the MCP request signal to cooperative tool executions.
+      shutdownAbortController.abort(new Error("Server is shutting down"));
+
+      // 4. Stop listening, then force-close everything left: idle keep-alives
+      // first, then active sockets that ignored cooperative cancellation.
+      const httpClosed = new Promise<void>((resolve) => {
+        if (!httpServer.listening) {
+          resolve();
+          return;
+        }
+        httpServer.close(() => resolve());
+      });
+      if (typeof httpServer.closeIdleConnections === "function") {
+        httpServer.closeIdleConnections();
+      }
+      if (typeof httpServer.closeAllConnections === "function") {
+        httpServer.closeAllConnections();
+      }
+      await httpClosed;
+
+      // 5. Tear down the protocol adapter and release runtime-owned resources
+      // exactly once, after the last request has stopped using them.
       try {
         await mcpHandler.close().catch(() => {});
       } catch {
@@ -937,36 +1033,10 @@ export async function serveHttp(
       } catch {
         // Ignored: server teardown errors should not block HTTP server closure
       }
-      // Drain with timeout
-      const drainTimeout = shutdownTimeoutMs;
-      if (drainTimeout > 0) {
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(() => {
-            resolve();
-          }, drainTimeout);
-          // Try to wait a bit for in-flight; simple approach
-          if (activeRequests.size === 0) {
-            clearTimeout(timer);
-            resolve();
-            return;
-          }
-          const check = () => {
-            if (activeRequests.size === 0) {
-              clearTimeout(timer);
-              resolve();
-            } else {
-              setTimeout(check, 10);
-            }
-          };
-          check();
-        });
-      }
-      shutdownAbortController.abort();
-      if (httpServer.listening) {
-        if (typeof httpServer.closeAllConnections === "function") {
-          httpServer.closeAllConnections();
-        }
-        await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+      try {
+        await runtime.close?.();
+      } catch {
+        // Ignored: resource teardown failures must not change the exit code.
       }
       notifyClosed?.();
       try {
@@ -981,20 +1051,17 @@ export async function serveHttp(
   const onAbort = () => {
     void close().catch(() => {});
   };
-  let sigintCalled = false;
-  let sigtermCalled = false;
-  const onSigint = () => {
-    if (sigintCalled) return;
-    sigintCalled = true;
-    process.exitCode = 130;
+  // The first signal wins. Repeated or mixed SIGINT/SIGTERM deliveries share
+  // the same shutdown promise and never change the documented exit code.
+  let signalHandled = false;
+  const handleSignal = (exitCode: number): void => {
+    if (signalHandled) return;
+    signalHandled = true;
+    process.exitCode = exitCode;
     void close().catch(() => {});
   };
-  const onSigterm = () => {
-    if (sigtermCalled) return;
-    sigtermCalled = true;
-    process.exitCode = 143;
-    void close().catch(() => {});
-  };
+  const onSigint = () => handleSignal(130);
+  const onSigterm = () => handleSignal(143);
 
   const cleanup = () => {
     httpOptions.signal?.removeEventListener("abort", onAbort);

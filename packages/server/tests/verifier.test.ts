@@ -6,8 +6,20 @@ import {
   createCompositeVerifier,
   createInboundVerifier,
   createJwtVerifier,
+  isInboundAuthFailure,
+  type InboundAuthOutcome,
+  type InboundAuthResult,
   type InboundPrincipalConfig,
 } from "../src/index.js";
+
+function expectSuccess(
+  outcome: InboundAuthOutcome | undefined,
+): InboundAuthResult {
+  if (!outcome || isInboundAuthFailure(outcome)) {
+    throw new Error("expected a successful authentication outcome");
+  }
+  return outcome;
+}
 
 describe("Inbound Auth Verifier Prototype and Input Hardening (RM-01)", () => {
   describe("createBearerTokenVerifier", () => {
@@ -53,16 +65,19 @@ describe("Inbound Auth Verifier Prototype and Input Hardening (RM-01)", () => {
       });
 
       expect(result).toBeDefined();
-      expect(result?.context.tenantId).toBe("tenant-acme");
-      expect(result?.context.principal.id).toBe("user-alice");
-      expect(result?.context.principal.scopes).toEqual([
+      expect(expectSuccess(result).context.tenantId).toBe("tenant-acme");
+      expect(expectSuccess(result).context.principal.id).toBe("user-alice");
+      expect(expectSuccess(result).context.principal.scopes).toEqual([
         "read:data",
         "write:data",
       ]);
-      expect(result?.authInfo?.token).toBe("SecretToken-123");
-      expect(result?.authInfo?.clientId).toBe("user-alice");
-      expect(result?.authInfo?.scopes).toEqual(["read:data", "write:data"]);
-      expect(result?.authInfo?.extra).toEqual({
+      expect(expectSuccess(result).authInfo?.token).toBe("SecretToken-123");
+      expect(expectSuccess(result).authInfo?.clientId).toBe("user-alice");
+      expect(expectSuccess(result).authInfo?.scopes).toEqual([
+        "read:data",
+        "write:data",
+      ]);
+      expect(expectSuccess(result).authInfo?.extra).toEqual({
         tenantId: "tenant-acme",
         principalId: "user-alice",
       });
@@ -74,10 +89,10 @@ describe("Inbound Auth Verifier Prototype and Input Hardening (RM-01)", () => {
       });
 
       expect(result).toBeDefined();
-      expect(result?.context.tenantId).toBe("tenant-solo");
-      expect(result?.context.principal.id).toBe("user-bob");
-      expect(result?.context.principal.scopes).toEqual([]);
-      expect(result?.authInfo?.scopes).toEqual([]);
+      expect(expectSuccess(result).context.tenantId).toBe("tenant-solo");
+      expect(expectSuccess(result).context.principal.id).toBe("user-bob");
+      expect(expectSuccess(result).context.principal.scopes).toEqual([]);
+      expect(expectSuccess(result).authInfo?.scopes).toEqual([]);
     });
 
     it("enforces exact case sensitivity for bearer token lookup", async () => {
@@ -231,10 +246,10 @@ describe("Inbound Auth Verifier Prototype and Input Hardening (RM-01)", () => {
       });
 
       expect(result).toBeDefined();
-      expect(result?.context.tenantId).toBe("tenant-key-org");
-      expect(result?.context.principal.id).toBe("service-worker");
-      expect(result?.context.principal.scopes).toEqual(["admin"]);
-      expect(result?.authInfo?.token).toBe("Key-Secret-ABC");
+      expect(expectSuccess(result).context.tenantId).toBe("tenant-key-org");
+      expect(expectSuccess(result).context.principal.id).toBe("service-worker");
+      expect(expectSuccess(result).context.principal.scopes).toEqual(["admin"]);
+      expect(expectSuccess(result).authInfo?.token).toBe("Key-Secret-ABC");
     });
 
     it("authenticates a valid API key with scopes: undefined as scopes: []", async () => {
@@ -243,10 +258,12 @@ describe("Inbound Auth Verifier Prototype and Input Hardening (RM-01)", () => {
       });
 
       expect(result).toBeDefined();
-      expect(result?.context.tenantId).toBe("tenant-key-org");
-      expect(result?.context.principal.id).toBe("readonly-worker");
-      expect(result?.context.principal.scopes).toEqual([]);
-      expect(result?.authInfo?.scopes).toEqual([]);
+      expect(expectSuccess(result).context.tenantId).toBe("tenant-key-org");
+      expect(expectSuccess(result).context.principal.id).toBe(
+        "readonly-worker",
+      );
+      expect(expectSuccess(result).context.principal.scopes).toEqual([]);
+      expect(expectSuccess(result).authInfo?.scopes).toEqual([]);
     });
 
     it("enforces exact case sensitivity for API key lookup", async () => {
@@ -287,8 +304,8 @@ describe("Inbound Auth Verifier Prototype and Input Hardening (RM-01)", () => {
         headers: { "x-tenant-auth-key": "custom-key-1" },
       });
       expect(validResult).toBeDefined();
-      expect(validResult?.context.tenantId).toBe("t-custom");
-      expect(validResult?.context.principal.id).toBe("p-custom");
+      expect(expectSuccess(validResult).context.tenantId).toBe("t-custom");
+      expect(expectSuccess(validResult).context.principal.id).toBe("p-custom");
     });
 
     it("rejects empty, whitespace-only, or missing API key values", async () => {
@@ -370,54 +387,145 @@ describe("Inbound Auth Verifier Prototype and Input Hardening (RM-01)", () => {
     });
   });
 
-  describe("createInboundVerifier with extraOptions", () => {
+  describe("JWT tenant resolution (P0-6)", () => {
     const secret = "test-secret-at-least-32-chars-long!";
 
-    it("applies fallbackTenantId when JWT lacks a tenantId or tid claim", async () => {
+    function signJwt(payload: Record<string, unknown>): string {
+      const header = Buffer.from(
+        JSON.stringify({ alg: "HS256", typ: "JWT" }),
+      ).toString("base64url");
+      const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+      const signature = createHmac("sha256", secret)
+        .update(`${header}.${body}`)
+        .digest("base64url");
+      return `${header}.${body}.${signature}`;
+    }
+
+    function bearer(token: string) {
+      return { headers: { authorization: `Bearer ${token}` } };
+    }
+
+    const unexpired = () => ({ exp: Math.floor(Date.now() / 1000) + 3600 });
+
+    it("rejects a valid JWT without a tenant claim as TENANT_REQUIRED", async () => {
+      const verifier = createJwtVerifier({ secret });
+      const result = await verifier.verify(
+        bearer(signJwt({ sub: "user-1", ...unexpired() })),
+      );
+
+      expect(isInboundAuthFailure(result)).toBe(true);
+      expect(isInboundAuthFailure(result) && result.code).toBe(
+        "TENANT_REQUIRED",
+      );
+      expect(isInboundAuthFailure(result) && "context" in result).toBe(false);
+    });
+
+    it("treats blank or whitespace tenant claims as missing", async () => {
+      const verifier = createJwtVerifier({ secret });
+
+      for (const tenantId of ["", "   "]) {
+        const result = await verifier.verify(
+          bearer(signJwt({ sub: "user-1", tenantId, ...unexpired() })),
+        );
+        expect(isInboundAuthFailure(result)).toBe(true);
+      }
+    });
+
+    it("applies an explicitly configured fallback tenant without overriding a claim", async () => {
+      const verifier = createJwtVerifier({
+        secret,
+        fallbackTenantId: "tenant-fallback",
+      });
+
+      const fallback = await verifier.verify(
+        bearer(signJwt({ sub: "user-1", ...unexpired() })),
+      );
+      expect(expectSuccess(fallback).context.tenantId).toBe("tenant-fallback");
+      expect(expectSuccess(fallback).authInfo?.extra).toEqual({
+        tenantId: "tenant-fallback",
+        principalId: "user-1",
+      });
+
+      const claimed = await verifier.verify(
+        bearer(signJwt({ sub: "user-1", tid: "tenant-claim", ...unexpired() })),
+      );
+      expect(expectSuccess(claimed).context.tenantId).toBe("tenant-claim");
+    });
+
+    it("reads only the configured tenantClaim when one is set", async () => {
+      const verifier = createJwtVerifier({ secret, tenantClaim: "org_id" });
+
+      const mapped = await verifier.verify(
+        bearer(
+          signJwt({ sub: "user-1", org_id: "tenant-org", ...unexpired() }),
+        ),
+      );
+      expect(expectSuccess(mapped).context.tenantId).toBe("tenant-org");
+
+      // An implicit claim must not satisfy an explicit mapping.
+      const implicit = await verifier.verify(
+        bearer(
+          signJwt({
+            sub: "user-1",
+            tenantId: "tenant-implicit",
+            ...unexpired(),
+          }),
+        ),
+      );
+      expect(isInboundAuthFailure(implicit)).toBe(true);
+    });
+
+    it("requires an explicit tenant mapping in multi-tenant mode", () => {
+      expect(() =>
+        createInboundVerifier({ jwt: { secret } }, { multiTenant: true }),
+      ).toThrow(/explicit tenant mapping/);
+
+      expect(() =>
+        createInboundVerifier(
+          { jwt: { secret, tenantClaim: "org_id" } },
+          { multiTenant: true },
+        ),
+      ).not.toThrow();
+
+      expect(() =>
+        createInboundVerifier(
+          { jwt: { secret } },
+          { multiTenant: true, fallbackTenantId: "tenant-fallback" },
+        ),
+      ).not.toThrow();
+    });
+
+    it("does not consult implicit claims in multi-tenant mode", async () => {
       const verifier = createInboundVerifier(
         { jwt: { secret } },
-        { fallbackTenantId: "fallback-tenant" },
+        { multiTenant: true, fallbackTenantId: "tenant-fallback" },
       );
       expect(verifier).toBeDefined();
 
-      const header = Buffer.from(
-        JSON.stringify({ alg: "HS256", typ: "JWT" }),
-      ).toString("base64url");
-      const payload = Buffer.from(
-        JSON.stringify({ sub: "user-1", iat: Math.floor(Date.now() / 1000) }),
-      ).toString("base64url");
-      const sig = createHmac("sha256", secret)
-        .update(`${header}.${payload}`)
-        .digest("base64url");
-      const jwt = `${header}.${payload}.${sig}`;
-
-      const result = await verifier?.verify({
-        headers: { authorization: `Bearer ${jwt}` },
-      });
-      expect(result).toBeDefined();
-      expect(result?.context.tenantId).toBe("fallback-tenant");
-      expect(result?.context.principal.id).toBe("user-1");
+      const result = await verifier!.verify(
+        bearer(
+          signJwt({ sub: "user-1", tenantId: "tenant-claim", ...unexpired() }),
+        ),
+      );
+      expect(expectSuccess(result).context.tenantId).toBe("tenant-fallback");
     });
 
-    it("fails when JWT lacks tenantId and no fallbackTenantId is provided", async () => {
-      const verifier = createInboundVerifier({ jwt: { secret } });
-      expect(verifier).toBeDefined();
+    it("rejects blank fallback tenants at construction", () => {
+      expect(() =>
+        createJwtVerifier({ secret, fallbackTenantId: "  " }),
+      ).toThrow(/fallbackTenantId/);
+    });
 
-      const header = Buffer.from(
-        JSON.stringify({ alg: "HS256", typ: "JWT" }),
-      ).toString("base64url");
-      const payload = Buffer.from(
-        JSON.stringify({ sub: "user-1", iat: Math.floor(Date.now() / 1000) }),
-      ).toString("base64url");
-      const sig = createHmac("sha256", secret)
-        .update(`${header}.${payload}`)
-        .digest("base64url");
-      const jwt = `${header}.${payload}.${sig}`;
+    it("propagates a tenant failure through createCompositeVerifier", async () => {
+      const verifier = createCompositeVerifier([
+        createBearerTokenVerifier({ tokens: {} }),
+        createJwtVerifier({ secret }),
+      ]);
 
-      const result = await verifier?.verify({
-        headers: { authorization: `Bearer ${jwt}` },
-      });
-      expect(result).toBeUndefined();
+      const result = await verifier.verify(
+        bearer(signJwt({ sub: "user-1", ...unexpired() })),
+      );
+      expect(isInboundAuthFailure(result)).toBe(true);
     });
   });
 
