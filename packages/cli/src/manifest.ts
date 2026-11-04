@@ -21,6 +21,110 @@ export function sha256(content: string | Uint8Array): string {
 }
 
 /**
+ * Prefix used by compiler and artifact hashes so the algorithm is visible in
+ * the value. Keep in sync with the generated server verifier.
+ */
+export function hashContent(content: string | Uint8Array): string {
+  return `sha256:${sha256(content)}`;
+}
+
+/**
+ * Canonical JSON with object keys sorted. Used to hash a compiled tool record
+ * independently of serialization key order.
+ */
+export function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const entries = Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/** Integrity record for one emitted build artifact. */
+export interface CompiledToolsArtifact {
+  /** Project-relative artifact path, e.g. `dist/compiled-tools.json`. */
+  path: string;
+  /** `sha256:` digest of the artifact bytes exactly as written. */
+  sha256: string;
+  /** Contract revision the artifact was compiled from, when applicable. */
+  contractRevision?: string | undefined;
+  toolCount: number;
+  /** Canonical hash per tool record, sorted by name. */
+  tools: readonly ManifestToolEntry[];
+}
+
+export interface ManifestToolEntry {
+  name: string;
+  hash: string;
+}
+
+export interface SerializedCompiledTools {
+  /** Exact file content written to `compiled-tools.json`. */
+  content: string;
+  artifact: CompiledToolsArtifact;
+}
+
+/**
+ * Serializes compiled tool records and computes the integrity metadata a
+ * generated server verifies at startup. Key order of the input does not affect
+ * the hashes, so re-running the generator is deterministic.
+ */
+export function serializeCompiledTools(
+  tools: readonly unknown[],
+  options: {
+    path?: string | undefined;
+    contractRevision?: string | undefined;
+  } = {},
+): SerializedCompiledTools {
+  const content = `${JSON.stringify(tools, null, 2)}\n`;
+  const entries: ManifestToolEntry[] = [];
+  for (const tool of tools) {
+    if (
+      tool === null ||
+      typeof tool !== "object" ||
+      Array.isArray(tool) ||
+      typeof (tool as { name?: unknown }).name !== "string"
+    ) {
+      throw new TypeError(
+        "Compiled tool records must be objects with a string name",
+      );
+    }
+    entries.push({
+      name: (tool as { name: string }).name,
+      hash: hashContent(canonicalJson(tool)),
+    });
+  }
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
+  return {
+    content,
+    artifact: {
+      path: options.path ?? "dist/compiled-tools.json",
+      sha256: hashContent(content),
+      ...(options.contractRevision !== undefined
+        ? { contractRevision: options.contractRevision }
+        : {}),
+      toolCount: tools.length,
+      tools: entries,
+    },
+  };
+}
+
+/** Attaches compiled-artifact integrity metadata to a project manifest. */
+export function attachCompiledToolsArtifact(
+  manifest: ProjectManifest,
+  artifact: CompiledToolsArtifact,
+): ProjectManifest {
+  return { ...manifest, artifacts: { compiledTools: artifact } };
+}
+
+/**
  * Builds a deterministic ProjectManifest from a contract compilation result and project metadata.
  * Uses a fixed timestamp when deterministicTimestamp is passed, or an ISO string.
  */
@@ -145,6 +249,21 @@ export function verifyProjectManifest(
   for (const name of recompiledTools.keys()) {
     if (!existingTools.has(name)) {
       mismatches.push(`Unexpected new tool '${name}' in recompiled manifest`);
+    }
+  }
+
+  const existingArtifact = existing.artifacts?.compiledTools;
+  const recompiledArtifact = recompiled.artifacts?.compiledTools;
+  if (existingArtifact !== undefined && recompiledArtifact !== undefined) {
+    if (existingArtifact.sha256 !== recompiledArtifact.sha256) {
+      mismatches.push(
+        `Compiled tools digest mismatch: expected ${existingArtifact.sha256}, got ${recompiledArtifact.sha256}`,
+      );
+    }
+    if (existingArtifact.toolCount !== recompiledArtifact.toolCount) {
+      mismatches.push(
+        `Compiled tools count mismatch: expected ${existingArtifact.toolCount}, got ${recompiledArtifact.toolCount}`,
+      );
     }
   }
 

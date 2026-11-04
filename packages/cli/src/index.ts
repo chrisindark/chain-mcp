@@ -1,4 +1,6 @@
-export { getCliVersion } from "./version.js";
+import { getCliVersion } from "./version.js";
+export { getCliVersion };
+
 export {
   resolveLocalDependencySpecs,
   type LocalDependencyOptions,
@@ -59,13 +61,20 @@ export { gatewayServeCommand } from "./commands/gateway-serve.js";
 export { exportCommand } from "./commands/export.js";
 
 export {
+  attachCompiledToolsArtifact,
   buildCodeFirstManifest,
   buildProjectManifest,
+  canonicalJson,
+  hashContent,
+  serializeCompiledTools,
   sha256,
   verifyProjectManifest,
   type CodeFirstManifestOptions,
+  type CompiledToolsArtifact,
   type ManifestOptions,
+  type ManifestToolEntry,
   type ManifestVerificationResult,
+  type SerializedCompiledTools,
 } from "./manifest.js";
 
 export {

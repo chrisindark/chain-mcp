@@ -47,11 +47,15 @@ my-server/
 From the exported server directory:
 
 ```bash
-npm install
-npm run build
+pnpm install
+pnpm build
 ```
 
 This compiles TypeScript files from `src/` into `dist/`.
+
+If the generated project was scaffolded with `--local-deps`, it includes a
+`packageManager: pnpm@...` pin and a `pnpm-workspace.yaml` override; use pnpm.
+After the `@chainmcp/*` packages are published, the generated project no longer needs the `pnpm-workspace.yaml` override; a `pnpm` or `npm` install then resolves registry packages. Adjust the `RUN` lines accordingly.
 
 ---
 
@@ -111,18 +115,18 @@ Exported servers include a multi-stage `Dockerfile` following container best pra
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci || npm install
+RUN pnpm install --frozen-lockfile
 COPY tsconfig*.json ./
 COPY spec ./spec
 COPY src ./src
-RUN npm run build
+RUN pnpm build
 
 # Stage 2: Production runner
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./
-RUN npm ci --only=production || npm install --production
+RUN pnpm install --frozen-lockfile --prod
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/spec ./spec
 COPY chainmcp.config.yaml ./
@@ -131,6 +135,12 @@ COPY chainmcp.manifest.json ./
 USER node
 ENTRYPOINT ["node", "dist/server.js"]
 ```
+
+The template assumes the generated server was scaffolded with local-deps and
+includes a `pnpm-workspace.yaml` override. The `RUN` lines use pnpm. After the
+`@chainmcp/*` packages are published, the generated project no longer needs the
+`pnpm-workspace.yaml` override and may use pnpm or npm; adjust the `RUN` lines
+for the published-package workflow.
 
 ### Building and Running Containers
 
@@ -202,7 +212,20 @@ When deploying servers or the dynamic gateway over Streamable HTTP (`--transport
    - Wildcard origin (`"*"`) is never permitted when `allowCredentials: true` is configured; this dangerous combination is rejected at config parse time and server startup.
    - `Access-Control-Allow-Headers` is dynamically computed from configured inbound verifier headers (such as custom `ApiKeyVerifierOptions.headerName`), standard defaults, and custom `allowedHeaders`.
    - `Vary: Origin` is always attached to HTTP responses whenever CORS is enabled.
-   - In production and non-loopback bindings, CORS defaults to disabled (`enabled: false`) unless explicitly configured. Loopback bindings (`127.0.0.1`) permit CORS for development with wildcard origin and emit a prominent security warning.
+   - CORS defaults to disabled on **every** bind host, including loopback. There is no implicit wildcard: enabling CORS requires an explicit `allowedOrigins` list, and `cors: true` without origins stays disabled. Explicit wildcard `"*"` is honoured but always emits a startup warning.
+   - Browser-origin validation is always on. A request with an `Origin` outside the effective allowlist (configured origins, or the bind-host defaults such as `localhost`, `127.0.0.1`, `[::1]`) is rejected with `403` before tools run, even when CORS headers are disabled. Requests without `Origin` (CLI clients) are unaffected.
+   - To use the MCP Inspector UI, opt in to its origin explicitly:
+
+     ```yaml
+     server:
+       cors:
+         enabled: true
+         allowedOrigins:
+           - http://localhost:6274
+           - http://127.0.0.1:6274
+     ```
+
+     The Inspector CLI uses stdio and sends no `Origin` header.
 
 4. **Timeouts (`server.requestTimeoutMs`):**
    - Default request timeout is 15,000 ms (15s). Ensure reverse proxy timeouts (`proxy_read_timeout`, `proxy_send_timeout`) are aligned to prevent hung connections.
@@ -245,12 +268,33 @@ For clustered deployments using Redis for distributed caching (`@chainmcp/cache-
 
 ### Process Signals and Teardown
 
-`@chainmcp/server` listens for `SIGINT` (Ctrl+C) and `SIGTERM` signals:
+`@chainmcp/server` listens for `SIGINT` (Ctrl+C) and `SIGTERM` signals. Signal
+handling is idempotent: the first signal sets the conventional exit code (`130`
+for SIGINT, `143` for SIGTERM) and starts one shutdown; repeated or mixed
+signals share the same promise and do not run teardown twice.
 
-- Gracefully completes pending tool calls within their timeout budget.
-- Shuts down the stdio transport and removes stream event listeners.
-- Exits with conventional status codes (`130` on SIGINT, `143` on SIGTERM).
-- Automatically closes when standard input (`stdin`) reaches `EOF` (e.g. when the parent MCP client process terminates).
+**HTTP transport (`--transport http`)** shuts down drain-then-cancel:
+
+1. It marks the server as shutting down. Requests that arrive during the
+   window get `503` with `Connection: close`; the listener stays bound until the
+   drain ends so late clients receive a rejection rather than a reset.
+2. Work-bearing `POST` and `DELETE` requests drain for up to
+   `server.shutdownTimeoutMs` (default 10,000 ms; `0` skips the drain).
+   `GET`/`HEAD` streams such as SSE and health probes do not extend the budget.
+3. When the budget expires, it aborts the request cancellation signal. Tools
+   that bind `context.signal` to their I/O are cancelled cooperatively and
+   return `CANCELLED`; a tool that ignores the signal is abandoned, then its
+   socket is force-closed. Teardown cannot terminate user code for it.
+4. It closes the listener, tears down the MCP handler and server, and calls
+   `runtime.close()` once to flush analytics sinks and drain the shared Redis
+   client that `@chainmcp/config` created. Caller-supplied clients are not
+   closed.
+
+**Stdio transport** closes on application `AbortSignal`, `SIGINT`, `SIGTERM`,
+and automatically when standard input (`stdin`) reaches `EOF` (for example when
+the parent MCP client process terminates). It removes stream event listeners
+and releases runtime-owned clients on the same `runtime.close()` hook. A
+generated server inherits these defaults from `@chainmcp/server`.
 
 ---
 

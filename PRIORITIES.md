@@ -1,6 +1,6 @@
 # ChainMcp Priorities — Local-First Path to 1.0
 
-**Status:** pre-1.0 (`0.1.0`)
+**Status:** pre-1.0 (`0.2.0`)
 **Baseline:** `pnpm check` green (format, lint, build, typecheck, all workspace tests, SBOM, version sync).
 **Scope:** everything a user can run by cloning this repository. **Publishing to npm is intentionally out of scope** and is tracked in the "Deferred" section, not in the priority list.
 
@@ -82,6 +82,19 @@ source guard test rejects `0.1.0` and literal `version: "x.y.z"` in
 
 ### P0-3 — Verify the build artifact at startup; stop recompiling the spec
 
+**Status: done (2026-11-04).** Generated servers load `dist/compiled-tools.json`
+at startup instead of compiling the contract. Before registering tools they
+verify the manifest schema version, generator and compiler versions, contract
+source hash, contract revision, tool count, the artifact digest, and every
+per-tool hash; mismatches fail with a remediation message, while
+`--allow-manifest-drift` / `CHAINMCP_ALLOW_MANIFEST_DRIFT=1` downgrades them to
+a warning. Recompilation is a `NODE_ENV=development` fallback that dynamically
+imports `@chainmcp/compiler`; production startup never imports it. `build` and
+`export` copy the manifest and compiled tools into the project (and the
+Dockerfile copies them into the image). Positive, negative, and tamper tests
+are in `packages/cli/tests/startup-verification.test.ts`; documented in
+`docs/generated-servers.md`.
+
 **Problem.** `build` writes `dist/compiled-tools.json` and `chainmcp.manifest.json`, but the generated server (`packages/cli/src/templates.ts:200+`) recompiles the spec at startup and never reads either file. `verifyProjectManifest` exists (`packages/cli/src/manifest.ts:87`) but is only used by CLI `--check`. A tampered or stale artifact starts silently.
 
 **Do**
@@ -142,6 +155,22 @@ Positive, negative, and redaction tests live in
 
 ### P0-5 — Make HTTP shutdown actually graceful
 
+**Status: done (2026-11-04).** `serveHttp` now marks the server as shutting
+down, answers late requests with `503` and `Connection: close` (the listener
+stays bound until the drain ends so clients receive a rejection rather than a
+reset), and drains work-bearing `POST`/`DELETE` requests for up to
+`server.shutdownTimeoutMs` (default 10,000 ms; `0` skips the drain). `GET`/`HEAD`
+streams such as SSE and health probes do not extend the budget. When the budget
+expires, the shutdown signal aborts, propagating cooperative cancellation to
+`ToolContext.signal`; remaining sockets are force-closed and teardown runs once.
+SIGINT/SIGTERM are idempotent with exit codes `130`/`143`. `ToolRuntime.close?()`
+flushes analytics and runs `RuntimeOptions.onShutdown()`, which drains the shared
+Redis client created by `buildRuntimeOptions` exactly once; caller-supplied
+clients are untouched. Positive, negative, and timeout tests are in
+`packages/server/tests/http.test.ts`, `packages/core/tests/index.test.ts`, and
+`packages/config/tests/index.test.ts`. Documented in `CONFIGURATION.md`,
+`API_REFERENCE.md`, `docs/deployment.md`, and `docs/generated-servers.md`.
+
 **Problem.** `packages/server/src/http.ts:905` calls `closeAllConnections()` immediately, while `README.md` and `docs/deployment.md:237` claim pending tool calls complete. In-flight calls are killed on every deploy or scale-in.
 
 **Do**
@@ -163,6 +192,20 @@ Positive, negative, and redaction tests live in
 
 ### P0-6 — Fail closed when a JWT has no tenant
 
+**Status: done (2026-11-04).** `createJwtVerifier` no longer discards a valid
+token that lacks a tenant claim: it returns an `InboundAuthFailure` with code
+`TENANT_REQUIRED`, and `serveHttp` answers `401` with
+`error.data.code: "TENANT_REQUIRED"` even when inbound auth is optional. An
+explicitly configured deployment tenant (`tenant` / `--tenant`) is passed to
+verification as `fallbackTenantId` and applies only when the token has no
+claim. `tenantClaim` names the claim explicitly (implicit `tenantId`/`tid` are
+ignored), and `createInboundVerifier(..., { multiTenant: true })` refuses to
+construct JWT verification without an explicit mapping, so `chainmcp gateway
+serve` no longer guesses tenants from implicit claims. Positive and negative
+tests are in `packages/server/tests/verifier.test.ts` and
+`packages/server/tests/http.test.ts`; documented in `CONFIGURATION.md`,
+`API_REFERENCE.md`, `docs/authentication.md`, and `docs/dynamic-gateway.md`.
+
 **Problem.** `packages/server/src/verifier.ts:309` falls back to tenant `"default"` when a JWT has no `tenantId`/`tid` claim. This contradicts the explicit removal of the implicit default tenant elsewhere.
 
 **Do**
@@ -178,6 +221,18 @@ Positive, negative, and redaction tests live in
 ---
 
 ### P0-7 — Remove the default wildcard CORS on HTTP
+
+**Status: done (2026-11-04).** CORS is disabled by default on every bind host:
+`cors: true` without `allowedOrigins` stays disabled, and an explicit wildcard
+is honoured only with a startup warning. Origin validation is independent of
+CORS and always on, so a request whose `Origin` is outside the effective
+allowlist is rejected with `403` before tools run even when CORS headers are
+disabled; requests without `Origin` are unaffected. The Inspector UI origin is
+documented as an explicit opt-in (`http://localhost:6274`). Tests cover foreign
+origin rejection by default, loopback origins without CORS headers, explicit
+wildcard warnings on loopback, and disallowed preflight/normal requests in
+`packages/server/tests/http.test.ts`. Documented in `CONFIGURATION.md`,
+`API_REFERENCE.md`, `docs/deployment.md`, and `docs/limitations.md`.
 
 **Problem.** `packages/server/src/http.ts:305-315` defaults CORS to `["*"]` on loopback. Combined with default-unauthenticated loopback HTTP, any website open in the developer's browser can invoke the local MCP server.
 
@@ -197,24 +252,31 @@ Positive, negative, and redaction tests live in
 
 ### P0-8 — Make the documentation match the code
 
-**Problem.** Concrete false statements today:
+**Problem.** Concrete false statements before this pass:
 
-- `README.md:118` says the project satisfies "all release gates in `RELEASES.md`"; three gates are unchecked and the release is explicitly withheld.
-- `README.md:22` tells users to run `npx @chainmcp/cli init`; nothing is published.
-- `README.md` and `docs/deployment.md:237` claim graceful teardown; see P0-5.
-- `docs/limitations.md` and `ROADMAP.md` disagree with the shipped surface in several places.
+- `README.md` claimed the project satisfies "all release gates in `RELEASES.md`" and said 1.0 was satisfied; the release is withheld and several gates are unchecked.
+- `README.md` marked bare `chainmcp` commands and registry `npx @chainmcp/cli` paths as if publishable packages existed.
+- `README.md` listed Hono and PostgreSQL as intended current technology; neither ships.
+- `docs/getting-started.md` claimed response schemas and authentication policies were not enforced by the runtime or executor.
+- `docs/deployment.md` used `npm install` for generated servers that require pnpm in local-deps mode.
+- `docs/product-guide.md` made marketing claims (`reduce payloads by up to 90%`, `sub-millisecond`, `military-grade`), used wrong metric names, and claimed JSON navigation avoids loading the whole document into context.
 
 **Do**
 
-- One truth pass over `README.md`, `docs/getting-started.md`, `docs/deployment.md`, `docs/generated-servers.md`, `docs/limitations.md`.
-- Remove every reference to unpublished install paths, or mark it as "after publishing".
-- Replace marketing claims about capabilities that are deferred (JSON result handles, exact token counts) with the actual behavior.
-- Add a CI drift guard: any documented capability must point to a test or exported API.
+- One truth pass over `README.md`, `docs/getting-started.md`, `docs/deployment.md`, `docs/generated-servers.md`, `docs/limitations.md`, plus `docs/product-guide.md`, `docs/token-accounting.md`, `docs/json-navigation.md`, and `docs/openapi-support.md` cross-checks.
+- Remove or explicitly gate every reference to unpublished install paths behind "after publishing".
+- Replace deferred-capability marketing claims (JSON result handles, exact token counts, fixed latency/percentage savings) with actual behavior.
+- Add a CI drift guard: any documented capability must point to a test or exported API (`scripts/check-doc-capabilities.mjs`, wired into `pnpm check` and CI).
 
 **Acceptance**
 
 - Following the README from a fresh clone succeeds verbatim.
 - No doc claims a capability that `docs/limitations.md` lists as missing.
+- `pnpm check` passes with the new `docs:check` step.
+
+**Status: done (2026-11-04).**
+
+Changes: `README.md`, `docs/getting-started.md`, `docs/deployment.md`, `docs/product-guide.md`, `scripts/check-doc-capabilities.mjs`, `scripts/check-doc-capabilities.test.mjs`, `docs/capability-evidence.json`, `package.json`, `.github/workflows/ci.yml`, `CHANGELOG.md`, this priority, and a changeset.
 
 ---
 
@@ -296,6 +358,10 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 
 Every package lacks `README.md`, `LICENSE`, `engines`, `homepage`, `bugs`, and `keywords`; `files: ["dist"]` ships no license text. Prepare this with the publish work, not before.
 
+### P2-8 — Lock down the supported-versions page
+
+`docs/supported-versions.md` is currently titled "for ChainMcp 1.0" and supported-versions language elsewhere still implies a published 1.0 artifact. Until `1.0.0` is shipped, the page documents the intended support matrix with the pre-1.0 posture explicit, and the public-facing docs should not imply the matrix is a published 1.0 guarantee.
+
 ---
 
 ## Deferred — explicitly not part of this 1.0
@@ -319,7 +385,7 @@ A priority is complete only when:
 1. Implementation matches the scope above.
 2. Positive, negative, and security-boundary tests exist.
 3. `pnpm check` passes from the repository root.
-4. `README.md`, `CONFIGURATION.md`, `API_REFERENCE.md`, `docs/limitations.md`, and `CHANGELOG.md` are updated where behavior changed.
+4. `pnpm docs:check` passes: every documented capability in `docs/capability-evidence.json` points to a real test file or exported API, and the README "## Core capabilities" bullets are covered. `README.md`, `CONFIGURATION.md`, `API_REFERENCE.md`, `docs/limitations.md`, and `CHANGELOG.md` are otherwise updated where behavior changed.
 5. Compatibility impact is stated (breaking / additive / internal).
 6. Actual command output is reported, not summarized.
 7. Any deferred sub-item is written down in the Deferred section with a reason.

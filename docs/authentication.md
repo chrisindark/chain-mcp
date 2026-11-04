@@ -48,8 +48,20 @@ export interface InboundPrincipalConfig {
 1. **Own-property credential lookup:** Verifier credential maps (`tokens` and `keys`) evaluate credentials using own-property semantics (`Object.hasOwn`). Prototype properties (such as `constructor`, `__proto__`, `toString`, `valueOf`, or `hasOwnProperty`) are never matched.
 2. **Fail-closed principal validation:** Configured token/key records, custom verification callbacks (`verifyToken`, `verifyKey`), and JWT claim mappers (`mapClaims`) are strictly validated against `InboundPrincipalConfig`. If a candidate principal is nullish, non-object, lacks a non-empty `tenantId` or `principalId`, or contains invalid scopes, verification returns `undefined` (unauthenticated). The runtime never fabricates an empty principal.
 3. **Exact credential lookup:** Token and API key lookups are exact matches; credentials are not case-folded. Empty or whitespace-only credentials reject before lookup.
-4. **No implicit 'default' tenant fallback:** Authenticated callers without a valid `tenantId` claim reject with `RuntimeError("TENANT_REQUIRED")`. The server and dynamic gateway never assign callers an implicit `"default"` tenant.
-5. **Tenant resolution precedence:** In dynamic gateway or multi-tenant deployments with a configured fallback `--tenant <id>`, the authenticated principal's tenant claim strictly overrides the fallback: `authTenant ?? explicitTenant`. When no tenant can be resolved, the gateway emits a `tenant_resolution_failed` audit event and rejects with `TENANT_REQUIRED`.
+4. **No implicit 'default' tenant fallback:** A verified JWT with no tenant claim and no configured fallback is rejected as `TENANT_REQUIRED`. Built-in verifiers return an `InboundAuthFailure` (`{ failure: true, code: "TENANT_REQUIRED", message }`) instead of a generic `undefined`, and the HTTP transport answers `401` with `error.data.code: "TENANT_REQUIRED"`. The rejection happens even when `requireInboundAuth` is `false`, because a credential that verified but cannot be scoped must not downgrade to an anonymous caller. The server and dynamic gateway never assign callers an implicit `"default"` tenant.
+5. **Tenant resolution precedence:** An authenticated tenant claim always wins over an explicitly configured fallback (`authTenant ?? explicitTenant`). The fallback is `tenant` in configuration or `--tenant <id>`; it reaches JWT verification as `fallbackTenantId` and applies only to tokens that carry no tenant claim. When no tenant can be resolved, the gateway emits a `tenant_resolution_failed` audit event and rejects with `TENANT_REQUIRED`.
+6. **Explicit JWT tenant mapping:** By default `createJwtVerifier` reads `tenantId`, then `tid`. Deployments using a different claim set `tenantClaim` (or supply `mapClaims` programmatically); when `tenantClaim` is set, the implicit claims are ignored. A blank `tenantClaim` or `fallbackTenantId` throws at construction.
+
+```yaml
+auth:
+  inbound:
+    jwt:
+      secret: "${JWT_SECRET}"
+      issuer: https://auth.example.com
+      tenantClaim: org_id
+```
+
+The dynamic gateway runs in multi-tenant mode and refuses to start with JWT verification unless tenant identity is mapped explicitly: `auth.inbound.jwt.tenantClaim`, a programmatic `mapClaims`, or an explicit `tenant` fallback is required. Implicit `tenantId`/`tid` claims are not consulted in that mode.
 
 ## 3. Encrypted Secret Storage
 

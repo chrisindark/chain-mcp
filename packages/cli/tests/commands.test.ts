@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import { parse as parseYaml } from "yaml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { COMPILER_VERSION } from "@chainmcp/compiler";
 import { buildExecutorOptions, parseConfig } from "@chainmcp/config";
 import { buildCommand } from "../src/commands/build.js";
 import { devCommand } from "../src/commands/dev.js";
@@ -428,14 +429,20 @@ components:
     });
 
     it("asserts the emitted baseUrl logic in renderServerTs", () => {
-      const serverSource = renderServerTs({ version: "0.1.0" });
+      const serverSource = renderServerTs({
+        version: "0.1.0",
+        compilerVersion: COMPILER_VERSION,
+      });
       expect(serverSource).toContain("options?.baseUrl ??");
       expect(serverSource).toContain("config.contract?.baseUrl ??");
       expect(serverSource).not.toContain("api.example.com");
     });
 
     it("asserts renderServerTs does not fallback to default tenant", () => {
-      const serverSource = renderServerTs({ version: "0.1.0" });
+      const serverSource = renderServerTs({
+        version: "0.1.0",
+        compilerVersion: COMPILER_VERSION,
+      });
       expect(serverSource).not.toContain('?? "default"');
       expect(serverSource).not.toContain("?? 'default'");
       expect(serverSource).toContain("TENANT_REQUIRED");

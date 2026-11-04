@@ -134,9 +134,10 @@ The compiled input schemas enforce:
 
 Other JSON Schema `format` values are annotations and are not asserted.
 Unsupported composition (`oneOf`, `anyOf`, `not`, and conditional keywords) is
-rejected for tool inputs rather than silently weakened. Response schemas and
-authentication policies are compiled as metadata but are not enforced by the
-runtime or executor yet.
+rejected for tool inputs rather than silently weakened. The compiler maps response
+schemas and authentication policies into metadata, and the executor enforces response
+schemas when `server.validateResponses` is `warn` or `enforce`; authentication
+policies are not enforced by the compiler. See `docs/openapi-support.md`.
 
 ## Next steps
 
@@ -158,8 +159,9 @@ OpenAPI contracts are the default tool source, but not the only one. ChainMcp pr
 To create a new project without an OpenAPI document:
 
 ```bash
-chainmcp init --blank --name my-server --output ./my-server
+node packages/cli/dist/bin.js init --blank --name my-server --output ./my-server --local-deps "$PWD"
 cd my-server
+pnpm install
 ```
 
 This scaffolds:
@@ -208,23 +210,23 @@ ChainMcp CLI supports remote specifications via HTTPS URLs with full SSRF protec
 
 ```bash
 # Initialize a project directly from a remote specification
-chainmcp init --spec https://api.example.com/openapi.yaml --output ./my-server
+node packages/cli/dist/bin.js init --spec https://api.example.com/openapi.yaml --output ./my-server
 
 # Validate a remote specification and inspect tools with JSON output
-chainmcp validate --spec https://api.example.com/openapi.yaml --json
+node packages/cli/dist/bin.js validate --spec https://api.example.com/openapi.yaml --json
 
 # Build or export a project targeting a remote contract
-chainmcp export --spec https://api.example.com/openapi.yaml --output ./dist-server
+node packages/cli/dist/bin.js export --spec https://api.example.com/openapi.yaml --output ./dist-server
 ```
 
 Remote specs are validated against strict SSRF guards: HTTPS is required by default, loopback and private IP ranges are blocked, cloud metadata endpoints are unconditionally forbidden, DNS lookups are pinned to sockets, and responses are streamed with size bounds (10 MiB limit). To target a local loopback spec during development, supply `--allow-http` (or configure `security.allowInsecureHttp: true`).
 
-### Running over HTTP (`chainmcp serve --transport http`)
+### Running over HTTP (`node packages/cli/dist/bin.js serve --transport http`)
 
 ChainMcp can also serve tools over modern Streamable HTTP:
 
 ```bash
-chainmcp serve --transport http --port 3333
+node packages/cli/dist/bin.js serve --transport http --port 3333
 ```
 
 During local development on loopback (`127.0.0.1` or `localhost`), unauthenticated access is permitted and emits a structured startup warning:
@@ -238,7 +240,7 @@ Non-loopback interfaces (e.g. `--host 0.0.0.0` or public IPs) refuse to start wi
 Start the local server over stdio for testing with the MCP Inspector or Claude Desktop:
 
 ```bash
-chainmcp dev
+node packages/cli/dist/bin.js dev
 ```
 
 ## Code-First Quickstart
@@ -248,7 +250,7 @@ You can author and serve Model Context Protocol servers in TypeScript without re
 ### 1. Scaffold a blank project
 
 ```bash
-chainmcp init --blank --output ./my-code-server
+node packages/cli/dist/bin.js init --blank --output ./my-code-server --local-deps "$PWD"
 cd ./my-code-server
 pnpm install
 ```
@@ -279,19 +281,22 @@ export const tools = [helloTool];
 
 ### 3. Validate, build, and serve
 
+From a clone without a globally installed CLI, replace each bare `chainmcp`
+command with `node packages/cli/dist/bin.js <command>`.
+
 ```bash
 # Validate project configuration and discover code-first tools
-chainmcp validate
+node packages/cli/dist/bin.js validate
 
 # Build deterministic manifest and tool metadata
-chainmcp build
+node packages/cli/dist/bin.js build
 
 # Serve over stdio or Streamable HTTP
-chainmcp serve
-chainmcp serve --transport http --port 3333
+node packages/cli/dist/bin.js serve
+node packages/cli/dist/bin.js serve --transport http --port 3333
 
 # Export standalone portable server
-chainmcp export --output ./exported-server
+node packages/cli/dist/bin.js export --output ./exported-server
 ```
 
 Or run the runnable code-first example:

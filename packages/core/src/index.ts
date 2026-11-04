@@ -213,6 +213,12 @@ export interface RateLimiter {
 
 export interface MetricsSink {
   record(event: RuntimeEvent): void | Promise<void>;
+  /**
+   * Optional hook that flushes buffered telemetry. Called at most once by
+   * `InMemoryToolRuntime.close()`. A sink that records synchronously may omit
+   * it; implementations must be safe to call during process teardown.
+   */
+  flush?(): void | Promise<void>;
 }
 
 export interface ToolSpan {
@@ -355,6 +361,13 @@ export interface ToolRuntime {
     input: unknown,
     context: ToolContext,
   ): Promise<void>;
+  /**
+   * Releases runtime-owned resources exactly once after the transport has
+   * closed. Implementations must be idempotent; concurrent callers share the
+   * same promise. Used for cache/limit clients and analytics buffers, never
+   * for in-flight tool cancellation, which travels through `ToolContext.signal`.
+   */
+  close?(): Promise<void>;
 }
 
 export type RuntimeErrorCode =
@@ -460,6 +473,13 @@ export interface RuntimeOptions {
   maxToolInputBytes?: number;
   /** Maximum allowed tool output serialization size in UTF-8 bytes. */
   maxResponseBytes?: number;
+  /**
+   * Invoked at most once by `InMemoryToolRuntime.close()` after in-flight calls
+   * have drained. Composition belongs to the factory that created the
+   * resources (for example the shared Redis client in
+   * `@chainmcp/config`); failures are isolated from shutdown.
+   */
+  onShutdown?: () => void | Promise<void>;
 }
 
 export class InMemoryToolRuntime implements ToolRuntime {
@@ -1123,6 +1143,30 @@ export class InMemoryToolRuntime implements ToolRuntime {
         // Logging failure must never block or alter invalidation.
       }
     }
+  }
+
+  private closePromise: Promise<void> | undefined;
+
+  /**
+   * Flushes buffered analytics and releases runtime-owned resources once.
+   * Concurrent and repeated calls share one promise. Teardown failures are
+   * isolated: a failing sink or client must not keep the process alive or
+   * change the exit code.
+   */
+  close(): Promise<void> {
+    this.closePromise ??= (async () => {
+      try {
+        await this.options.metrics?.flush?.();
+      } catch {
+        // Telemetry teardown failures must not disrupt shutdown.
+      }
+      try {
+        await this.options.onShutdown?.();
+      } catch {
+        // Resource teardown failures must not disrupt shutdown.
+      }
+    })();
+    return this.closePromise;
   }
 
   /**

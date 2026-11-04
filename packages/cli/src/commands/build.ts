@@ -5,8 +5,10 @@ import { compileOpenApi } from "@chainmcp/compiler";
 
 import { loadCodeFirstTools } from "../code-first-loader.js";
 import {
+  attachCompiledToolsArtifact,
   buildCodeFirstManifest,
   buildProjectManifest,
+  serializeCompiledTools,
   verifyProjectManifest,
 } from "../manifest.js";
 import { loadSpec } from "../spec-loader.js";
@@ -84,9 +86,18 @@ export async function buildCommand(
       };
     }
 
-    const manifest = buildCodeFirstManifest(projectName, loaded.tools, {
-      generatorVersion: version,
-    });
+    const compiledTools = loaded.tools.map((t) => ({
+      name: t.name,
+      description: t.description ?? "",
+      inputSchema: t.inputSchema ?? {},
+    }));
+    const serialized = serializeCompiledTools(compiledTools);
+    const manifest = attachCompiledToolsArtifact(
+      buildCodeFirstManifest(projectName, loaded.tools, {
+        generatorVersion: version,
+      }),
+      serialized.artifact,
+    );
 
     let verifiedReproducible: boolean | undefined;
     if (options.check) {
@@ -109,25 +120,13 @@ export async function buildCommand(
       }
     }
 
+    const manifestContent = `${JSON.stringify(manifest, null, 2)}\n`;
     await mkdir(outDir, { recursive: true });
-    await writeFile(
-      manifestPath,
-      `${JSON.stringify(manifest, null, 2)}\n`,
-      "utf8",
-    );
+    await writeFile(manifestPath, manifestContent, "utf8");
 
     const toolsPath = join(outDir, "compiled-tools.json");
-    const compiledTools = loaded.tools.map((t) => ({
-      name: t.name,
-      description: t.description ?? "",
-      inputSchema: t.inputSchema ?? {},
-    }));
-    await writeFile(
-      toolsPath,
-      `${JSON.stringify(compiledTools, null, 2)}\n`,
-      "utf8",
-    );
-    await writeRootArtifacts(cwd, manifest, compiledTools);
+    await writeFile(toolsPath, serialized.content, "utf8");
+    await writeRootArtifacts(cwd, manifestContent, serialized.content);
 
     return {
       ok: true,
@@ -177,10 +176,14 @@ export async function buildCommand(
     };
   }
 
-  // 3. Build project manifest
-  const manifest = buildProjectManifest(projectName, compiled, {
-    generatorVersion: version,
+  // 3. Build project manifest with compiled-artifact integrity metadata
+  const serialized = serializeCompiledTools(compiled.tools, {
+    contractRevision: compiled.contractRevision,
   });
+  const manifest = attachCompiledToolsArtifact(
+    buildProjectManifest(projectName, compiled, { generatorVersion: version }),
+    serialized.artifact,
+  );
 
   // 4. Reproducibility check if requested
   let verifiedReproducible: boolean | undefined;
@@ -205,21 +208,14 @@ export async function buildCommand(
   }
 
   // 5. Ensure outDir exists and emit artifacts
+  const manifestContent = `${JSON.stringify(manifest, null, 2)}\n`;
   await mkdir(outDir, { recursive: true });
 
-  await writeFile(
-    manifestPath,
-    `${JSON.stringify(manifest, null, 2)}\n`,
-    "utf8",
-  );
+  await writeFile(manifestPath, manifestContent, "utf8");
 
   const toolsPath = join(outDir, "compiled-tools.json");
-  await writeFile(
-    toolsPath,
-    `${JSON.stringify(compiled.tools, null, 2)}\n`,
-    "utf8",
-  );
-  await writeRootArtifacts(cwd, manifest, compiled.tools);
+  await writeFile(toolsPath, serialized.content, "utf8");
+  await writeRootArtifacts(cwd, manifestContent, serialized.content);
 
   return {
     ok: true,
@@ -239,17 +235,17 @@ export async function buildCommand(
  */
 async function writeRootArtifacts(
   projectDir: string,
-  manifest: ProjectManifest,
-  tools: readonly unknown[],
+  manifestContent: string,
+  compiledToolsContent: string,
 ): Promise<void> {
   await writeFile(
     join(projectDir, "chainmcp.manifest.json"),
-    `${JSON.stringify(manifest, null, 2)}\n`,
+    manifestContent,
     "utf8",
   );
   await writeFile(
     join(projectDir, "compiled-tools.json"),
-    `${JSON.stringify(tools, null, 2)}\n`,
+    compiledToolsContent,
     "utf8",
   );
 }

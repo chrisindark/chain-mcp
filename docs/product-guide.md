@@ -24,13 +24,13 @@ Instead of hand-coding messy integration scripts or giving an AI agent direct, u
 
 ## 2. Before vs. After ChainMcp
 
-| Challenge                   | Without ChainMcp (Direct API Access)                                                                                      | With ChainMcp                                                                                                                   |
-| :-------------------------- | :------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------ |
-| **Context Window Overload** | An API returns 500 records (100,000 JSON lines). The LLM context window crashes or bills you \$5 per prompt.              | Built-in field projection and token budgets reduce payloads by up to 90%, returning only requested fields.                      |
-| **Security & SSRF**         | An attacker prompts the model to call `http://169.254.169.254` or `http://localhost:5432`. Cloud credentials get exposed. | Strict outbound policy engine enforces DNS pinning and blocks loopback, private, and metadata IP addresses.                     |
-| **Credential Safety**       | The AI or client app holds the master API token. One prompt extraction reveals backend keys.                              | Inbound MCP caller tokens are verified independently from upstream API credentials. Secrets are automatically redacted in logs. |
-| **Cost & Latency**          | Every question re-runs expensive database queries and third-party APIs.                                                   | Hashed, authorization-aware caching (in-memory or Redis) returns instant sub-millisecond responses safely.                      |
-| **Multi-Tenancy**           | Different enterprise customers or users collide or accidentally see each other's data.                                    | Native multi-tenant isolation: tenants only see their assigned tools, contracts, and cache partitions.                          |
+| Challenge                   | Without ChainMcp (Direct API Access)                                                                                      | With ChainMcp                                                                                                                                              |
+| :-------------------------- | :------------------------------------------------------------------------------------------------------------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Context Window Overload** | An API returns 500 records (100,000 JSON lines). The LLM context window is overloaded or each prompt costs tokens.        | Built-in field projection and token budgets trim responses to requested fields; exact savings depend on the contract and client, and are not pre-measured. |
+| **Security & SSRF**         | An attacker prompts the model to call `http://169.254.169.254` or `http://localhost:5432`. Cloud credentials get exposed. | Strict outbound policy engine enforces DNS pinning and blocks loopback, private, and metadata IP addresses.                                                |
+| **Credential Safety**       | The AI or client app holds the master API token. One prompt extraction reveals backend keys.                              | Inbound MCP caller tokens are verified independently from upstream API credentials. Secrets are automatically redacted in logs.                            |
+| **Cost & Latency**          | Every question re-runs expensive upstream queries and third-party API calls.                                              | Hashed, authorization-aware caching (in-memory or Redis) can shorten repeated calls within its cache bounds; it does not promise a fixed latency figure.   |
+| **Multi-Tenancy**           | Different enterprise customers or users collide or accidentally see each other's data.                                    | Native multi-tenant isolation: tenants only see their assigned tools, contracts, and cache partitions.                                                     |
 
 ---
 
@@ -150,23 +150,23 @@ flowchart LR
 
 ChainMcp is organized into 15 modular workspace packages:
 
-| Package                         | Purpose in One Sentence                                                                                                          |
-| :------------------------------ | :------------------------------------------------------------------------------------------------------------------------------- |
-| **`@chainmcp/core`**            | The brain: handles tool registry, input validation, execution timeouts, cancellation, token measurement, and caching interfaces. |
-| **`@chainmcp/compiler`**        | Reads OpenAPI 3.0/3.1 specs and compiles them into deterministic tool definitions with linear-time regex audits.                 |
-| **`@chainmcp/authoring`**       | Lets you write tools directly in TypeScript with Zod schemas instead of needing an OpenAPI file.                                 |
-| **`@chainmcp/executor`**        | Outbound HTTP client with military-grade SSRF defense, DNS pinning, redirect limits, and response byte caps.                     |
-| **`@chainmcp/server`**          | Wraps the official Model Context Protocol (MCP) SDK v2 for stdio and HTTP/SSE transports.                                        |
-| **`@chainmcp/gateway`**         | Central multi-tenant hub for dynamically publishing, versioning, isolating, and rolling back contracts.                          |
-| **`@chainmcp/auth`**            | Maps caller identity to permissions and injects upstream credentials (OAuth 2.0 Client Credentials, API keys, Bearer tokens).    |
-| **`@chainmcp/rate-limit`**      | Token-bucket quotas (requests/min) and concurrency limiters with in-memory and Redis backends.                                   |
-| **`@chainmcp/cache-redis`**     | Optional Redis adapter for persistent, distributed response caching.                                                             |
-| **`@chainmcp/analytics`**       | Redacted structured logging, OpenTelemetry metrics, tracing, and sliding-window operational summaries.                           |
-| **`@chainmcp/json-navigation`** | AI helper tools that allow LLMs to paginate, slice, and query large JSON datasets without loading the whole file into context.   |
-| **`@chainmcp/config`**          | Validates `chainmcp.config.yaml` using strict Zod schemas.                                                                       |
-| **`@chainmcp/cli`**             | Command-line tool (`chainmcp init`, `validate`, `build`, `serve`, `export`, `diff`).                                             |
-| **`@chainmcp/declarative`**     | Validates versioned JSON HTTP tool descriptors and lowers them into the bounded executor (post-1.0).                             |
-| **`@chainmcp/admin`**           | Self-hosted operator API and console for validating, previewing, publishing, and rolling back descriptors (post-1.0).            |
+| Package                         | Purpose in One Sentence                                                                                                                                                             |
+| :------------------------------ | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`@chainmcp/core`**            | The brain: handles tool registry, input validation, execution timeouts, cancellation, token measurement, and caching interfaces.                                                    |
+| **`@chainmcp/compiler`**        | Reads OpenAPI 3.0/3.1 specs and compiles them into deterministic tool definitions with linear-time regex audits.                                                                    |
+| **`@chainmcp/authoring`**       | Lets you write tools directly in TypeScript with Zod schemas instead of needing an OpenAPI file.                                                                                    |
+| **`@chainmcp/executor`**        | Outbound HTTP client with SSRF defense, DNS pinning, redirect limits, and response byte caps.                                                                                       |
+| **`@chainmcp/server`**          | Wraps the official Model Context Protocol (MCP) SDK v2 for stdio and HTTP/SSE transports.                                                                                           |
+| **`@chainmcp/gateway`**         | Central multi-tenant hub for dynamically publishing, versioning, isolating, and rolling back contracts.                                                                             |
+| **`@chainmcp/auth`**            | Maps caller identity to permissions and injects upstream credentials (OAuth 2.0 Client Credentials, API keys, Bearer tokens).                                                       |
+| **`@chainmcp/rate-limit`**      | Token-bucket quotas (requests/min) and concurrency limiters with in-memory and Redis backends.                                                                                      |
+| **`@chainmcp/cache-redis`**     | Optional Redis adapter for persistent, distributed response caching.                                                                                                                |
+| **`@chainmcp/analytics`**       | Redacted structured logging, OpenTelemetry metrics, tracing, and sliding-window operational summaries.                                                                              |
+| **`@chainmcp/json-navigation`** | AI helper tools for paginating, slicing, inspecting, and filtering JSON documents supplied inline by the caller (no result handles; the whole document must already be in context). |
+| **`@chainmcp/config`**          | Validates `chainmcp.config.yaml` using strict Zod schemas.                                                                                                                          |
+| **`@chainmcp/cli`**             | Command-line tool (`chainmcp init`, `validate`, `build`, `serve`, `export`, `diff`).                                                                                                |
+| **`@chainmcp/declarative`**     | Validates versioned JSON HTTP tool descriptors and lowers them into the bounded executor (post-1.0).                                                                                |
+| **`@chainmcp/admin`**           | Self-hosted operator API and console for validating, previewing, publishing, and rolling back descriptors (post-1.0).                                                               |
 
 ---
 
@@ -215,23 +215,22 @@ Logs are emitted in JSON format with **automatic secret redaction**:
 
 ### 6.2 The Top 6 Metrics to Monitor
 
-Wire `@chainmcp/analytics` into your Prometheus or OpenTelemetry Collector. Track these 6 gauges/counters:
+Wire `@chainmcp/analytics` into your Prometheus or OpenTelemetry Collector. Wire `@chainmcp/analytics` into your OpenTelemetry Collector. The bundled
+`OpenTelemetryMetricsSink` emits these metric names; no Prometheus scrape endpoint
+or exporter is bundled, so a deployment must provide its own OTel SDK/meter with a
+connected exporter (or implement `MetricsSink` directly for another backend):
 
 ```
-┌──────────────────────────────────────┬─────────────┬─────────────────────────────────────────────────┐
-│ Metric Name                          │ Type        │ What it Tells You                               │
-├──────────────────────────────────────┼─────────────┼─────────────────────────────────────────────────┤
-│ chainmcp.tool_invocations.total      │ Counter     │ Tool throughput broken down by toolName,        │
-│                                      │             │ tenantId, and outcome (success/error).          │
-│ chainmcp.tool_duration_ms            │ Histogram   │ Invocation latency (p50, p95, p99).             │
-│ chainmcp.cache.ratio                 │ Gauge       │ Cache efficiency (hits / [hits + misses]).      │
-│ chainmcp.tokens.measured             │ Counter     │ Total LLM tokens consumed vs tokens saved by    │
-│                                      │             │ field projection.                               │
-│ chainmcp.rate_limit.denials          │ Counter     │ How often callers are throttled with 429        │
-│                                      │             │ (helps identify noisy agents or quota limits).  │
-│ chainmcp.upstream_failures           │ Counter     │ Backend API health (5xx errors, socket aborts). │
-└──────────────────────────────────────┴─────────────┴─────────────────────────────────────────────────┘
+chainmcp.tool.invocations    counter   tool invocations by tool.name, tenant.id, and outcome
+chainmcp.tool.duration       histogram tool execution duration in milliseconds
+chainmcp.tool.tokens         counter   tokens measured or estimated for tool results (a deployment must inject a Tokenizer for exact counts; otherwise counts are estimates)
+chainmcp.tool.payload_bytes  histogram serialized result byte sizes
 ```
+
+The sink's attributes include `tool.name`, `tenant.id`, `outcome`, `error.code`,
+`cache.outcome`, `measurement`, and `tokenizer`; read `packages/analytics/src/otel-metrics.ts`
+for the exact schema. There is no `chainmcp.cache.ratio` gauge and no
+`chainmcp.rate_limit.denials`/`chainmcp.upstream_failures` counters emitted today.
 
 ### 6.3 Recommended Alerts
 

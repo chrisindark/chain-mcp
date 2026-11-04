@@ -280,7 +280,10 @@ auth:
   });
 
   it("generated servers resolve secrets before parsing config", () => {
-    const source = renderServerTs({ version: "9.9.9" });
+    const source = renderServerTs({
+      version: "9.9.9",
+      compilerVersion: "9.9.9",
+    });
     expect(source).toContain("resolveConfigSecrets(rawConfig).config");
   });
 });
