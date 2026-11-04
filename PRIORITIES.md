@@ -1,6 +1,6 @@
 # ChainMcp Priorities — Local-First Path to 1.0
 
-**Status:** pre-1.0 (`0.1.0`)
+**Status:** pre-1.0 (`0.2.0`)
 **Baseline:** `pnpm check` green (format, lint, build, typecheck, all workspace tests, SBOM, version sync).
 **Scope:** everything a user can run by cloning this repository. **Publishing to npm is intentionally out of scope** and is tracked in the "Deferred" section, not in the priority list.
 
