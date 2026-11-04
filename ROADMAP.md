@@ -365,7 +365,7 @@ ADR 0008 is accepted, and ADR 0026 is recorded.
 
 Public APIs across all 15 workspace packages are reviewed and stabilized with
 strict TypeScript definitions and ESM entrypoints.
-The supported-version matrix and lifecycle policy are published in
+The supported-version matrix and lifecycle policy are published in...
 `docs/supported-versions.md`, documenting Node.js (>=20.11, 20 and 22 LTS),
 operating systems, OpenAPI (3.0.x and 3.1.x), Model Context Protocol TypeScript
 SDK (v2), Redis (7+), and configuration (`version: 1`). CI workflow tests all

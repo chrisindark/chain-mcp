@@ -7,10 +7,14 @@ import type {
 } from "@chainmcp/compiler";
 import type { ChainMcpConfig, SecretResolutionSource } from "@chainmcp/config";
 import type { ToolDefinition } from "@chainmcp/core";
-
 import type { CompiledToolsArtifact } from "./manifest.js";
 
 export type { LoadSpecOptions, LoadedSpec } from "./spec-loader.js";
+
+export interface ManifestToolEntry {
+  name: string;
+  hash: string;
+}
 
 /**
  * Portable generation manifest emitted in `chainmcp.manifest.json`.
