@@ -1,65 +1,38 @@
-# Instructions for Coding Agents
+# Instructions for Coding Agents (ChainMcp)
 
-## Primary rule
+## Non-Negotiable Invariants
 
-Treat repository documentation as the product specification. Do not invent completed capabilities, silently change interfaces, or mark work complete without evidence.
+1. **Documentation is Product Specification**: Never invent capabilities, change interfaces silently, or mark tasks done without running tests.
+2. **Strict Scope Control**: Implement one bounded priority item at a time from `PRIORITIES.md`. Do not attempt to finish the whole backlog in one turn.
+3. **Security Invariants**:
+   - Never cache writes; mutations must never be cached.
+   - Enforce SSRF protection on upstream URLs.
+   - Never embed credentials in generated source or artifacts.
+   - Keep inbound identity (`Principal`) strictly separated from upstream credentials.
+4. **Known Gaps (Do Not Fix Silently)**: PostgreSQL storage and database metadata stores are intentionally not implemented (see `docs/limitations.md`).
 
-## Before making changes
+## Progressive Disclosure & Skills
 
-1. Read `README.md`, `PRIORITIES.md`, `ARCHITECTURE.md`, and the relevant feature documents.
-2. Inspect the actual code and tests.
-3. Identify the priority item and its acceptance criteria.
-4. Write a short plan for changes involving multiple files.
-5. Identify security and compatibility implications.
+Instead of ingesting large documentation files upfront, activate the skill matching your current task:
 
-## Engineering requirements
+- `add-tool`: Authoring declarative or code-first tools (`.agents/skills/add-tool/SKILL.md`)
+- `compiler`: Modifying OpenAPI contract compilation logic (`.agents/skills/compiler/SKILL.md`)
+- `runtime-policy`: Auth, caching, rate limiting, and token budgets (`.agents/skills/runtime-policy/SKILL.md`)
+- `changeset-verify`: Changesets, capability evidence, and quality gates (`.agents/skills/changeset-verify/SKILL.md`)
 
-- Use TypeScript strict mode and ESM.
-- Avoid `any`; validate untrusted data.
-- Keep infrastructure integrations behind interfaces.
-- Reuse the same runtime for generated servers and the dynamic gateway.
-- Propagate cancellation and enforce resource limits.
-- Never embed credentials in generated source or artifacts.
-- Never cache writes by default.
-- Never bypass authorization because a result is cached.
-- Keep inbound identity and upstream credentials separate.
-- Prevent SSRF, unsafe redirects, and unbounded responses.
-- Redact secrets and sensitive data from telemetry.
-- Do not implement OAuth, token counting, or distributed caching as placeholders presented as production-ready features.
+## Quick File & Package Index
 
-## Testing requirements
+- `packages/core`: Core runtime interfaces (`ToolContext`, `Principal`, `Tokenizer`).
+- `packages/compiler`: OpenAPI to MCP converter (`compileOpenApi`).
+- `packages/declarative`: JSON/HTTP tool descriptors.
+- `packages/authoring`: Code-first TypeScript tool definitions.
+- `packages/gateway`: Dynamic runtime gateway (`DynamicGateway`).
+- `packages/server`: Transport server (HTTP SSE & stdio).
+- `docs/adr/`: Specific architectural decision records (read only the relevant ADR by number).
 
-Add unit tests for core logic, integration tests for adapters, and security tests for trust boundaries.
+## Verification Cheatsheet
 
-Use deterministic fixtures and mock upstream APIs. Do not rely on production credentials or external services for normal tests.
-
-Run the repository's available checks and report the actual results. If a check cannot run, explain why.
-
-## Documentation synchronization
-
-Update relevant documentation whenever implementation changes:
-
-- `API_REFERENCE.md` for public APIs.
-- `CONFIGURATION.md` for configuration changes.
-- `ARCHITECTURE.md` and an ADR for significant design changes.
-- `PRIORITIES.md` for verified priority progress (`ROADMAP.md` is the historical record).
-- `CHANGELOG.md` for user-visible changes.
-
-## Scope control
-
-Implement one priority item or clearly bounded vertical slice at a time. Do not attempt to finish the entire priority list in a single task unless explicitly requested.
-
-Do not introduce a hosted SaaS control plane into the open-source MVP unless requested.
-
-## Definition of done
-
-A task is complete only when:
-
-- implementation is present;
-- relevant tests pass;
-- security requirements are met;
-- documentation is synchronized;
-- compatibility implications are assessed;
-- actual validation results are reported.
-
-At the end of every task, summarize changed files, behavior implemented, tests executed, known limitations, and the next recommended task.
+- Fast format & lint check: `pnpm format:check && pnpm lint`
+- Capability doc truth check: `pnpm docs:check`
+- Individual package test: `pnpm --filter @chainmcp/<pkg> test`
+- Full quality check: `pnpm check`
