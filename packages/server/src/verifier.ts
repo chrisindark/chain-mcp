@@ -1,4 +1,10 @@
-import { timingSafeEqual, createHmac, createVerify } from "node:crypto";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import {
+  timingSafeEqual,
+  createHmac,
+  createVerify,
+  createPublicKey,
+} from "node:crypto";
 import type { ToolContext } from "@chainmcp/core";
 import type { AuthInfo } from "@modelcontextprotocol/server";
 
@@ -223,6 +229,17 @@ export function createApiKeyVerifier(
 export interface JwtVerifierOptions {
   secret?: string | Buffer | undefined;
   publicKey?: string | Buffer | undefined;
+  /**
+   * URL of a JSON Web Key Set used to verify RS256/ES256 tokens. Keys are
+   * fetched and cached; an unknown `kid` triggers a single refresh so rotated
+   * keys are picked up without restarting.
+   */
+  jwksUri?: string | undefined;
+  /** Cache lifetime for a fetched JWKS, in milliseconds (default 300000). */
+  jwksCacheTtlMs?: number | undefined;
+  /** Test hook / custom fetcher for JWKS retrieval. */
+  fetchJwks?:
+    ((uri: string) => Promise<{ keys?: unknown[] } | unknown>) | undefined;
   issuer?: string | undefined;
   audience?: string | undefined;
   clockToleranceSeconds?: number | undefined;
@@ -299,6 +316,39 @@ export function createJwtVerifier(
   assertJwtOptions(options);
   const tolerance = options.clockToleranceSeconds ?? 30;
 
+  const ttl = options.jwksCacheTtlMs ?? 300_000;
+  let cached: { keys: any[]; fetchedAt: number } | undefined;
+
+  async function fetchJwks(force: boolean): Promise<any[]> {
+    if (!options.jwksUri) return [];
+    if (!force && cached && Date.now() - cached.fetchedAt < ttl) {
+      return cached.keys;
+    }
+    try {
+      const fetcher =
+        options.fetchJwks ??
+        (async (uri: string) => {
+          const res = await fetch(uri);
+          if (!res.ok) throw new Error(`JWKS fetch failed: ${res.status}`);
+          return res.json();
+        });
+      const data: any = await fetcher(options.jwksUri);
+      const keys = Array.isArray(data?.keys) ? data.keys : [];
+      cached = { keys, fetchedAt: Date.now() };
+      return keys;
+    } catch {
+      return cached?.keys ?? [];
+    }
+  }
+
+  function jwkToPublicKey(jwk: any): any {
+    try {
+      return createPublicKey({ key: jwk, format: "jwk" });
+    } catch {
+      return undefined;
+    }
+  }
+
   return {
     headerNames: ["Authorization"],
     async verify(request) {
@@ -341,13 +391,44 @@ export function createJwtVerifier(
         if (expectedSig.length !== actualSig.length) return undefined;
         if (!timingSafeEqual(expectedSig, actualSig)) return undefined;
       } else if (alg === "RS256" || alg === "ES256") {
-        if (!options.publicKey) return undefined;
-        const verifier = createVerify(
-          alg === "RS256" ? "RSA-SHA256" : "SHA256",
-        );
-        verifier.update(signatureInput);
         const actualSig = Buffer.from(parts[2]!, "base64url");
-        if (!verifier.verify(options.publicKey, actualSig)) return undefined;
+        const verifyWithKey = (key: any): boolean => {
+          const v = createVerify(alg === "RS256" ? "RSA-SHA256" : "SHA256");
+          v.update(signatureInput);
+          try {
+            return v.verify(key, actualSig);
+          } catch {
+            return false;
+          }
+        };
+
+        if (options.jwksUri) {
+          const kid = header.kid;
+          let keys = await fetchJwks(false);
+          let candidates = kid ? keys.filter((k: any) => k?.kid === kid) : keys;
+          if (candidates.length === 0) {
+            keys = await fetchJwks(true);
+            candidates = kid
+              ? keys.filter(
+                  (k: unknown) => (k as { kid?: unknown })?.kid === kid,
+                )
+              : keys;
+          }
+          if (candidates.length === 0) return undefined;
+          let ok = false;
+          for (const jwk of candidates) {
+            const pub = jwkToPublicKey(jwk);
+            if (!pub) continue;
+            if (verifyWithKey(pub)) {
+              ok = true;
+              break;
+            }
+          }
+          if (!ok) return undefined;
+        } else {
+          if (!options.publicKey) return undefined;
+          if (!verifyWithKey(options.publicKey)) return undefined;
+        }
       } else {
         return undefined;
       }

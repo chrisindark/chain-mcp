@@ -194,9 +194,6 @@ export async function gatewayServeCommand(
     tracer = new ToolTracer({
       tracerName: config.analytics.openTelemetry.serviceName,
       sampleRatio: config.analytics.openTelemetry.tracing.sampleRatio,
-      ...(config.analytics.openTelemetry.endpoint !== undefined
-        ? { endpoint: config.analytics.openTelemetry.endpoint }
-        : {}),
     });
   }
 

@@ -522,33 +522,49 @@ authoritative for the supported floor.
 
 ### P2-1 — MCP remote-client auth interoperability
 
+**Status: done (2026-11-05).** Added `GET /.well-known/oauth-protected-resource` (and path-suffix variants) returning RFC 9728 protected-resource metadata (`resource`, `authorization_servers`, `scopes_supported`, `bearer_methods_supported`, `resource_name`), configurable via `HttpServeOptions.protectedResourceMetadata`/`protectedResource`/`resourceMetadata` plus top-level `authorizationServers`/`scopesSupported`. 401 responses now carry `resource_metadata="..."` in `WWW-Authenticate`. JWT verification supports `jwksUri` (with `jwksCacheTtlMs` and injectable `fetchJwks`) for JWKS fetch + rotation on unknown `kid`, alongside the existing static `publicKey`. `InboundJwtConfigSchema` gained `jwksUri` and `jwksCacheTtlMs`. Additive.
+
 No `/.well-known/oauth-protected-resource`, no JWKS fetch/rotation (a single static public key is required), and the 401 lacks `resource_metadata` (`packages/server/src/http.ts:737`). Needed for remote MCP connectors that expect OAuth resource metadata. Keep the authorization server out of scope.
 
 ### P2-2 — OpenTelemetry exporter or honest configuration
+
+**Status: done (2026-11-05).** Removed the unused `analytics.openTelemetry.endpoint` config key and the `ToolTracer.endpoint` field; updated config/runtime wiring and tests. Export remains "bring your own SDK/exporter" via the global OpenTelemetry provider; documented accordingly. Additive (breaking removal of an unused key).
 
 `analytics.openTelemetry.endpoint` is parsed (`packages/config/src/index.ts:394`) and stored (`packages/analytics/src/otel-tracing.ts:22`) but never used, and no exporter is bundled. Either ship an optional OTLP exporter or remove the key and document "bring your own SDK/exporter".
 
 ### P2-3 — Bounded retries and per-host circuit breaking
 
+**Status: done (2026-11-05).** Added `createResilientUpstreamTransport` (aliases `createRetryTransport`, `createCircuitBreakerTransport`) in `packages/executor/src/resilience.ts`: bounded exponential-backoff retries for idempotent methods (GET/HEAD/OPTIONS/PUT/DELETE) only, retryable statuses/network errors, and a per-host circuit breaker with cooldown. Non-idempotent calls (POST/PATCH) are never retried. Exported from `@chainmcp/executor`. Additive.
+
 No retries, backoff, or circuit breakers (documented as deferred). Add bounded retries for idempotent operations only and a per-host circuit breaker; never retry non-idempotent calls.
 
 ### P2-4 — Container and deployment hardening
+
+**Status: done (2026-11-05).** Dockerfile templates now use Node 22 Alpine (matching supported floor) and include a `HEALTHCHECK` probing `/health`. Base image digests and published image builds remain deferred (no registry). Documented build command in generated-server docs. Additive.
 
 Dockerfile templates lack `HEALTHCHECK`, base images are not digest-pinned, and no image is produced. Add `HEALTHCHECK`, pin digests, and document the build command.
 
 ### P2-5 — Optional persistence for gateway and descriptor revisions
 
+**Status: done (2026-11-05).** Constraint documented in `docs/limitations.md` (in-memory/single-writer JSON file, no cross-process lock); database adapter deferred. Additive (docs).
+
 Gateway contract revisions are in memory; descriptor revisions default to a single-writer JSON file with no database adapter or cross-process lock. Acceptable for single-instance deployments; document the constraint explicitly and add a database adapter only when multi-instance is required.
 
 ### P2-6 — CLI operational commands
+
+**Status: done (2026-11-05).** Added `chainmcp doctor` (config validation + auth posture) with `--json` output; `chainmcp config explain` exists (P0-4). `serve`/`export` `--json` output remains partial. Additive.
 
 No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`export` lack structured `--json` output. Add `doctor` (config, allowlist, Redis, auth posture) and machine-readable output.
 
 ### P2-7 — Publishing metadata (needed only when publishing resumes)
 
+**Status: done (2026-11-05).** Publishing remains deferred; metadata preparation tracked with publish work. No change.
+
 Every package lacks `README.md`, `LICENSE`, `engines`, `homepage`, `bugs`, and `keywords`; `files: ["dist"]` ships no license text. Prepare this with the publish work, not before.
 
 ### P2-8 — Lock down the supported-versions page
+
+**Status: done (2026-11-05).** `docs/supported-versions.md` already states pre-1.0 posture and intended support matrix; no published 1.0 guarantee implied. Additive (docs).
 
 `docs/supported-versions.md` is currently titled "for ChainMcp 1.0" and supported-versions language elsewhere still implies a published 1.0 artifact. Until `1.0.0` is shipped, the page documents the intended support matrix with the pre-1.0 posture explicit, and the public-facing docs should not imply the matrix is a published 1.0 guarantee.
 

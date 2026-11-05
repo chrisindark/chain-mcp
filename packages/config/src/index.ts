@@ -211,6 +211,8 @@ export const InboundJwtConfigSchema = z
   .object({
     secret: z.string().optional(),
     publicKey: z.string().optional(),
+    jwksUri: z.string().url().optional(),
+    jwksCacheTtlMs: z.number().int().positive().optional(),
     issuer: z.string().optional(),
     audience: z.string().optional(),
     clockToleranceSeconds: z.number().int().nonnegative().default(30),
@@ -467,7 +469,6 @@ export const AnalyticsConfigSchema = z
       .object({
         enabled: z.boolean().default(false),
         serviceName: z.string().min(1).default("chainmcp"),
-        endpoint: z.string().url().optional(),
         tracing: z
           .object({
             enabled: z.boolean().default(false),
@@ -1328,9 +1329,6 @@ export function buildRuntimeOptions(
     tracer = new ToolTracer({
       tracerName: config.analytics.openTelemetry.serviceName,
       sampleRatio: config.analytics.openTelemetry.tracing.sampleRatio,
-      ...(config.analytics.openTelemetry.endpoint !== undefined
-        ? { endpoint: config.analytics.openTelemetry.endpoint }
-        : {}),
     });
   }
 

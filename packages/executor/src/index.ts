@@ -22,6 +22,13 @@ export {
   createNodeUpstreamTransport,
 } from "./transport.js";
 export {
+  CircuitBreakerOpenError,
+  createResilientUpstreamTransport,
+  createRetryTransport,
+  createCircuitBreakerTransport,
+  type ResilientTransportOptions,
+} from "./resilience.js";
+export {
   classifyAddress,
   canonicalizeIp,
   isSameAddress,
