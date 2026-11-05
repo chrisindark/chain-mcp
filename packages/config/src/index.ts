@@ -424,7 +424,7 @@ export const JsonNavigationConfigSchema = z
     maxVisitedNodes: z.number().int().min(1).max(1_000_000).default(50_000),
     timeoutMs: z.number().int().min(1).max(60_000).default(5_000),
     /**
-     * Result-handle registry (P1-2). When `handles.enabled` is true the
+     * Result-handle registry. When `handles.enabled` is true the
      * caller can `json_create_handle` a large document once and navigate
      * it by handle from then on, without pasting the payload back inline.
      */
@@ -757,9 +757,8 @@ export const GatewayConfigSchema = z
     logging: LoggingConfigSchema,
     jsonNavigation: JsonNavigationConfigSchema,
     analytics: AnalyticsConfigSchema,
-    // P1-5: /readyz deps. Declared on the gateway schema so the gateway
-    // deployment can also serve dependency readiness; the CLI wires
-    // `buildReadinessDeps` into `serveHttp`.
+    // Declared on the gateway schema so the gateway deployment can also serve
+    // dependency readiness; the CLI wires `buildReadinessDeps` into `serveHttp`.
     contracts: z.array(GatewayContractConfigSchema).default([]),
   })
   .strict();
