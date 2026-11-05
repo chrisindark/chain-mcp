@@ -47,7 +47,7 @@ jobs:
           pnpm audit --audit-level=high
 
       - name: Generate Software Bill of Materials (SBOM)
-        run: pnpm sbom
+        run: pnpm run sbom
 
       - name: Upload SBOM Artifact
         uses: actions/upload-artifact@v4
