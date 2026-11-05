@@ -158,8 +158,10 @@ The compiled input schemas enforce:
 - object `minProperties` and `maxProperties`.
 
 Other JSON Schema `format` values are annotations and are not asserted.
-Unsupported composition (`oneOf`, `anyOf`, `not`, and conditional keywords) is
-rejected for tool inputs rather than silently weakened. The compiler maps response
+`oneOf`/`anyOf` input parameters are skipped with a warning and the tool is
+kept with its supported parameters. Other unsupported composition (`not` and
+conditional keywords) is rejected for tool inputs rather than silently
+weakened. The compiler maps response
 schemas and authentication policies into metadata, and the executor enforces response
 schemas when `server.validateResponses` is `warn` or `enforce`; authentication
 policies are not enforced by the compiler. See `docs/openapi-support.md`.

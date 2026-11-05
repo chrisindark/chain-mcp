@@ -38,7 +38,8 @@ The compiler:
 - Flattens an `allOf` of object schemas into one object schema when the
   intersection is semantics-preserving, resolving nested local `$ref`s.
   Incompatible properties, non-object members, sibling validation keywords, and
-  input `oneOf`/`anyOf`/`not`/conditional composition are rejected.
+  `oneOf`/`anyOf` input composition is skipped with a warning, keeping the
+  tool with supported parameters; `not`/conditional composition is rejected.
 - Audits every input schema with `auditInputSchema` and refuses to emit an
   operation the runtime cannot enforce.
 - Maps declared responses as metadata: status keys, descriptions, the selected
@@ -161,7 +162,7 @@ Cover the 3.0 and 3.1 forms with fixtures so the two paths are tested separately
 
 The compiler must not silently weaken validation when it encounters unsupported schema features. It should fail in strict mode or emit explicit diagnostics in permissive mode.
 
-Current status: the runtime-supported constraints listed above are preserved and enforced. Strict mode (the default) errors and omits the operation for unsupported input annotations such as `contentEncoding` and `contentMediaType`. Permissive mode drops only annotations that can be omitted without changing the supported subset and records a warning. Input `allOf` is flattened when every member is an object schema and merging is semantics-preserving; nested `$ref`s are resolved first. Incompatible or non-object `allOf` members, sibling validation keywords, `oneOf`, `anyOf`, `not`, conditionals, dependent and pattern schemas, schema-valued `additionalProperties`, tuple/boolean `items`, remote references, and unknown schema keywords remain errors in both modes because dropping or approximating them would accept values the contract rejects.
+Current status: the runtime-supported constraints listed above are preserved and enforced. Strict mode (the default) errors and omits the operation for unsupported input annotations such as `contentEncoding` and `contentMediaType`. Permissive mode drops only annotations that can be omitted without changing the supported subset and records a warning. Input `allOf` is flattened when every member is an object schema and merging is semantics-preserving; nested `$ref`s are resolved first. Incompatible or non-object `allOf` members, sibling validation keywords, `not`, conditionals, dependent and pattern schemas, schema-valued `additionalProperties`, tuple/boolean `items`, remote references, and unknown schema keywords remain errors in both modes because dropping or approximating them would accept values the contract rejects. `oneOf`/`anyOf` input parameters are dropped with a warning and the tool is kept with supported parameters.
 
 Asserted `format` values are `date-time`, `date`, `time`, `email`, `hostname`, `ipv4`, `ipv6`, `uri`, and `uuid`. Other format strings are preserved as annotations, matching JSON Schema's default format-annotation behavior. `pattern` uses the linear-time `re2js` engine and is capped at 4,096 characters; invalid or unsupported regular expressions are rejected. `uniqueItems` uses a bounded structural comparison and fails closed when the comparison budget is exceeded.
 

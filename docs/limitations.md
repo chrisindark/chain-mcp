@@ -45,10 +45,13 @@ These are deliberate boundaries, not defects:
 
 ## OpenAPI compiler (`@chainmcp/compiler`)
 
-- **Unsupported schema constructs are rejected, never approximated:** `oneOf`,
-  `anyOf`, `not`, `if`/`then`/`else`, dependent schemas, pattern properties,
-  schema-valued `additionalProperties`, tuple or boolean `items`, `const`,
-  remote `$ref`s, and YAML merge keys. They fail in strict and permissive modes.
+- **Union-type parameters are skipped, not compiled:** `oneOf`/`anyOf` input
+  parameters are dropped with a `SCHEMA_COMPOSITION_UNSUPPORTED` warning and
+  the tool is kept with its supported parameters. Other unsupported
+  composition (`not`, `if`/`then`/`else`, dependent schemas, pattern
+  properties), schema-valued `additionalProperties`, tuple/boolean `items`,
+  `const`, remote `$ref`s, and YAML merge keys are rejected, never
+  approximated.
 - **`allOf` supports object intersections only.** Members that are
   non-object, incompatible, or carry sibling validation keywords are rejected.
 - **`contentEncoding`, `contentMediaType`, and unknown keywords** are strict-mode

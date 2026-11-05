@@ -298,15 +298,26 @@ function translateSchema(
       if (keyword.startsWith("x-")) continue;
 
       if (UNSUPPORTED_COMPOSITION_KEYWORDS.has(keyword)) {
+        if (keyword === "oneOf" || keyword === "anyOf") {
+          // `anyOf`/`oneOf` parameters are skipped (permissive mode) with a
+          // parameter-named warning from collectParameters; returning
+          // undefined signals the skip. In strict mode, report an error so
+          // collectParameters drops the whole operation.
+          report(
+            context,
+            context.strict ? "error" : "warning",
+            "SCHEMA_COMPOSITION_UNSUPPORTED",
+            `Schema '${keyword}' composition is not supported for tool inputs; skipping parameter`,
+          );
+          return undefined;
+        }
         // Composition changes which values are valid; dropping it would be a
         // validation bypass, so it is an error even in permissive mode.
         report(
           context,
           "error",
           "SCHEMA_COMPOSITION_UNSUPPORTED",
-          keyword === "oneOf" || keyword === "anyOf"
-            ? `Schema '${keyword}' composition is not supported for tool inputs`
-            : `Schema keyword '${keyword}' is not supported`,
+          `Schema keyword '${keyword}' is not supported`,
         );
         return undefined;
       }

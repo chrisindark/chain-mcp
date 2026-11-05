@@ -1147,16 +1147,102 @@ describe("unsupported schemas", () => {
     ).toBe("warning");
   });
 
-  it("rejects union composition even in permissive mode", () => {
+  it("skips union composition with a warning and keeps the tool", () => {
     const result = compileDocument(
-      parameterDocument({
-        oneOf: [{ type: "string" }, { type: "integer" }],
+      baseDocument({
+        "/x": {
+          get: operation({
+            operationId: "get_x",
+            parameters: [
+              { name: "keep", in: "query", schema: { type: "string" } },
+              {
+                name: "skip",
+                in: "query",
+                schema: { oneOf: [{ type: "string" }, { type: "integer" }] },
+              },
+              {
+                name: "skipAny",
+                in: "query",
+                schema: { anyOf: [{ type: "string" }, { type: "boolean" }] },
+              },
+              {
+                name: "unsupported",
+                in: "query",
+                schema: { type: "string", unknownKeyword: true },
+              },
+            ],
+          }),
+        },
       }),
       { strict: false },
     );
+    // The union-typed parameters are skipped with parameter-named warnings,
+    // but the unrelated unknown-keyword parameter keeps operation-dropping
+    // semantics, so the operation is still omitted and the compile fails.
     expect(result.ok).toBe(false);
     expect(result.tools).toHaveLength(0);
     expect(codes(result)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
+    expect(codes(result)).toContain("SCHEMA_UNSUPPORTED");
+
+    const degraded = compileDocument(
+      baseDocument({
+        "/x": {
+          get: operation({
+            operationId: "get_x",
+            parameters: [
+              { name: "keep", in: "query", schema: { type: "string" } },
+              {
+                name: "skip",
+                in: "query",
+                schema: { oneOf: [{ type: "string" }, { type: "integer" }] },
+              },
+            ],
+          }),
+        },
+      }),
+      { strict: false },
+    );
+    expect(degraded.ok).toBe(true);
+    expect(degraded.tools).toHaveLength(1);
+    expect(codes(degraded)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
+    const names = degraded.diagnostics
+      .filter((d) => d.code === "SCHEMA_COMPOSITION_UNSUPPORTED")
+      .map((d) => d.message);
+    expect(
+      names.some(
+        (m) => m.includes("Skipping parameter 'skip'") && m.includes("get /x"),
+      ),
+    ).toBe(true);
+    expect(
+      degraded.diagnostics.some(
+        (d) =>
+          d.code === "SCHEMA_COMPOSITION_UNSUPPORTED" &&
+          d.severity === "warning",
+      ),
+    ).toBe(true);
+    const props = degraded.tools[0]?.inputSchema.properties ?? {};
+    expect(props).toHaveProperty("keep");
+    expect(props).not.toHaveProperty("skip");
+
+    // Strict mode still rejects the whole operation.
+    const strictResult = compileDocument(
+      baseDocument({
+        "/x": {
+          get: operation({
+            parameters: [
+              {
+                name: "value",
+                in: "query",
+                schema: { oneOf: [{ type: "string" }, { type: "integer" }] },
+              },
+            ],
+          }),
+        },
+      }),
+    );
+    expect(strictResult.ok).toBe(false);
+    expect(strictResult.tools).toHaveLength(0);
+    expect(codes(strictResult)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
   });
 
   it("rejects schema-valued additionalProperties and unknown keywords", () => {

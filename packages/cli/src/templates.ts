@@ -1030,7 +1030,21 @@ startup with the field and variable named.
 Environment variables:
 - \`CHAINMCP_CONFIG\`: Path to custom configuration file.
 - \`CHAINMCP_LOG_LEVEL\`: Override log level (\`debug\`, \`info\`, \`warn\`, \`error\`, \`silent\`).
+${
+  isBlank
+    ? ""
+    : `
+## Compiler Limitations
 
+Union-typed parameters (\`anyOf\`/\`oneOf\`) cannot be represented by the
+runtime validator and are skipped with a \`SCHEMA_COMPOSITION_UNSUPPORTED\`
+warning; the tool is kept with its supported parameters. Other unsupported
+composition (\`not\`, conditional/pattern/dependent schemas), schema-valued
+\`additionalProperties\`, tuple/boolean \`items\`, \`const\`, and remote
+\`$ref\`s remain errors. See the repository \`docs/limitations.md\` for the
+full boundary.
+`
+}
 ## License
 
 Apache-2.0

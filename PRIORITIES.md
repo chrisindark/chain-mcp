@@ -250,6 +250,46 @@ wildcard warnings on loopback, and disallowed preflight/normal requests in
 
 ---
 
+### P0-9 — Gracefully degrade on unsupported union schemas
+
+**Status: done (2026-11-05).** `translateInputSchema` reports `SCHEMA_COMPOSITION_UNSUPPORTED` for `anyOf`/`oneOf`: an error in strict mode (operation dropped) and a warning in permissive mode. `collectParameters` then skips only that parameter, keeps the tool with its supported parameters, and emits a parameter-named warning (`Skipping parameter '<name>' on <METHOD> <path>`). Other undefined schemas keep operation-dropping semantics. Strict mode still rejects. Tests cover the degraded path, the warning emission (including method+path in the message), and strict rejection in `packages/compiler/tests/compile.test.ts`. Documented in `docs/getting-started.md`, `docs/limitations.md`, `docs/openapi-support.md`, `packages/compiler/API.md`, and the generated-server README. Additive.
+
+**Problem.** specs using `anyOf` were rejected entirely at compile time. Users with large OpenAPI contracts containing a few union-typed parameters lost the whole toolset instead of the unsupported fields.
+
+**Do**
+
+- Compile, but skip unsupported union-typed parameters (and log a warning).
+- Never silently drop fields — every dropped parameter must surface a visible warning.
+- Document the degraded behavior and its limits in the generated README and `docs/limitations.md`.
+
+**Acceptance**
+
+- A spec containing `anyOf` parameters compiles; supported parameters still work.
+- Each skipped union-typed parameter emits a warning log naming the tool and parameter.
+- Tests cover both the degraded path and the warning emission, and `pnpm check` passes.
+
+---
+
+### P0-10 — Clarify large-response caps vs. pagination
+
+**Status: open.**
+
+**Problem.** There are three distinct "large response" mechanisms and they are easy to confuse: (1) upstream tool results are hard-capped by `server.maxResponseBytes` (default 1 MiB) and abort with `UPSTREAM_FAILURE` when exceeded — they are **not** paginated; (2) the server's `tools/list` catalog is paginated by `server.toolsPageSize` (default 100) with a revision-bound opaque cursor; (3) large upstream JSON payloads are explored through `@chainmcp/json-navigation` using server-side result handles (`json_create_handle`) plus `json_paginate`/`json_select_path`. Users hitting the cap often expect automatic pagination that does not exist, and the relationship between the cap and the navigation tools is not stated in one place.
+
+**Do**
+
+- Add a single, cross-referenced note (in `docs/troubleshooting.md`, `docs/json-navigation.md`, and the generated-server README) explaining the three mechanisms, their defaults, and when to raise the cap vs. switch to handle-based navigation.
+- State explicitly that exceeding `maxResponseBytes` is a hard failure (`UPSTREAM_FAILURE`), not a truncated page.
+- Cross-link the `tools/list` cursor behavior and the `json_paginate` offset/page semantics.
+
+**Acceptance**
+
+- One documented location answers "what is capped and how is it paginated?" for all three cases.
+- A test or doc-capability entry guards the new note.
+- `pnpm docs:check` passes.
+
+---
+
 ### P0-8 — Make the documentation match the code
 
 **Problem.** Concrete false statements before this pass:

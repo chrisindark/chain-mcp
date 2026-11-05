@@ -307,6 +307,7 @@ export function compileOpenApi(
       settings,
       diagnostics,
       pointer("paths", path, "parameters"),
+      `paths ${path}`,
     );
     const pathParametersValid = !hasError(diagnostics, pathParameterStart);
     const pathItemWarnings = diagnostics
@@ -516,6 +517,7 @@ function compileOperation(
     settings,
     diagnostics,
     pointer("paths", path, method, "parameters"),
+    `${method} ${path}`,
   );
   if (
     operationParameters === undefined ||
@@ -721,6 +723,7 @@ function collectParameters(
   settings: NormalizedOptions,
   diagnostics: CompileDiagnostic[],
   location: string,
+  methodAndLabel: string = "operation",
 ): ReadonlyMap<string, ParameterInfo> | undefined {
   const parameters = new Map<string, ParameterInfo>();
   if (value === undefined) return parameters;
@@ -1006,6 +1009,7 @@ function collectParameters(
 
     if (parameterHasError && settings.strict) return undefined;
 
+    const diagnosticsBefore = diagnostics.length;
     const schema = translateInputSchema(parameter.schema, {
       document,
       version,
@@ -1013,7 +1017,29 @@ function collectParameters(
       maxRefDepth: settings.maxRefDepth,
       diagnostics,
     });
-    if (schema === undefined) return undefined;
+    if (schema === undefined) {
+      // Graceful degradation applies only to union-type parameters: skip a
+      // parameter whose schema contains `anyOf`/`oneOf` and keep the tool
+      // with its supported parameters, naming the parameter in the warning.
+      // Every other undefined schema keeps the operation-dropping semantics.
+      const skippedForUnion = settings.strict
+        ? false
+        : diagnostics
+            .slice(diagnosticsBefore)
+            .some(
+              (d) =>
+                d.code === "SCHEMA_COMPOSITION_UNSUPPORTED" &&
+                d.severity === "warning",
+            );
+      if (!skippedForUnion) return undefined;
+      diagnostics.push({
+        severity: "warning",
+        code: "SCHEMA_COMPOSITION_UNSUPPORTED",
+        message: `Skipping parameter '${parameter.name}' in ${parameterIn} of ${methodAndLabel}: unsupported union composition`,
+        location: parameterLocation,
+      });
+      continue;
+    }
 
     const key = `${parameterIn}\u0000${parameter.name}`;
     if (parameters.has(key)) {
