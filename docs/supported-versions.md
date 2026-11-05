@@ -4,11 +4,11 @@ This document defines the supported runtime environments, protocol specification
 
 ## 1. Runtime Environments
 
-| Component             | Supported Versions                                     | Recommended                      | Notes                                                                     |
-| :-------------------- | :----------------------------------------------------- | :------------------------------- | :------------------------------------------------------------------------ |
-| **Node.js**           | `>=20.11.0` (Active LTS)                               | `22.x LTS`                       | Requires native ESM, `node:crypto`, `node:dns/promises`, and Web Streams. |
-| **Package Manager**   | `pnpm >=9.0.0`                                         | `pnpm 11.0.0`                    | Monorepo uses pnpm workspaces and strict hoisting.                        |
-| **Operating Systems** | Linux (`x86_64`, `aarch64`), macOS (`arm64`, `x86_64`) | Linux / Debian 12 or Alpine 3.20 | Container templates provided for multi-stage Docker deployment.           |
+| Component             | Supported Versions                                     | Recommended                      | Notes                                                                                                                                                                                 |
+| :-------------------- | :----------------------------------------------------- | :------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Node.js**           | `>=22.13.0` (Active LTS)                               | `22.x LTS`                       | pnpm 11 imports `node:sqlite`, which requires Node.js 22.13+; Node.js 20 reached end-of-life in April 2026. Requires native ESM, `node:crypto`, `node:dns/promises`, and Web Streams. |
+| **Package Manager**   | `pnpm >=9.0.0`                                         | `pnpm 11.0.0`                    | Monorepo uses pnpm workspaces and strict hoisting.                                                                                                                                    |
+| **Operating Systems** | Linux (`x86_64`, `aarch64`), macOS (`arm64`, `x86_64`) | Linux / Debian 12 or Alpine 3.20 | Container templates provided for multi-stage Docker deployment.                                                                                                                       |
 
 ## 2. API & Protocol Specifications
 

@@ -61,7 +61,7 @@ Versioning is managed with [Changesets](https://github.com/changesets/changesets
 
 Detailed version support matrix and lifecycle policy are documented in [`docs/supported-versions.md`](./docs/supported-versions.md):
 
-- **Node.js**: `>=20.11` (tested on Node.js 20 and 22 LTS).
+- **Node.js**: `>=22.13` (tested on Node.js 22 LTS; pnpm 11 requires 22.13+).
 - **Operating Systems**: Linux, macOS, containerized Alpine/Debian environments.
 - **OpenAPI**: 3.0.x and 3.1.x specifications.
 - **MCP Protocol**: Model Context Protocol TypeScript SDK v2 (`@modelcontextprotocol/sdk`).

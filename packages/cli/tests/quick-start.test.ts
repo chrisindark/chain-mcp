@@ -7,6 +7,10 @@ import { describe, expect, it } from "vitest";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 
 import { initCommand } from "../src/commands/init.js";
+import {
+  assertChainMcpPackagesFromClone,
+  installGeneratedProject,
+} from "./support/generated-install.js";
 
 /**
  * P1-6: execute the documented local-clone quick start
@@ -87,7 +91,8 @@ describe("P1-6: documented local-clone quick start, end to end", () => {
       ).toBe(true);
 
       // Install from local deps only (no registry).
-      curl(["pnpm", "install", "--offline", "--ignore-scripts"], projectDir);
+      await installGeneratedProject(projectDir);
+      await assertChainMcpPackagesFromClone(projectDir, REPO_ROOT);
 
       // Build the generated server.
       curl(["pnpm", "build"], projectDir);

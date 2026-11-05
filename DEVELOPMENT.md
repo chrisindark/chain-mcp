@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 20 or newer, subject to the supported-version policy.
+- Node.js 22.13 or newer, subject to the supported-version policy.
 - pnpm 11 managed through Corepack.
 - Git.
 - Docker when running optional Redis integration tests.

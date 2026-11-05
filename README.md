@@ -80,8 +80,11 @@ directory):
 ```
 
 Open Claude Desktop or your AI IDE. Your API tools appear automatically in
-the tool inventory. No registry access is required at any step: the
-generated project installs `@chainmcp/*` from the clone.
+the tool inventory. `@chainmcp/*` never needs a registry: the generated
+project links them from the clone. The third-party dependencies it declares
+(`zod`, `yaml`, `typescript`, `@types/node`) still come from npm the first
+time they are installed, so `pnpm install --offline` only works with a warm
+pnpm store.
 
 The full literal sequence above is executed end to end by
 `packages/cli/tests/quick-start.test.ts`; the registry form below stays

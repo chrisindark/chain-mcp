@@ -9,7 +9,8 @@ network service and does not require credentials.
 
 ## Prerequisites
 
-- Node.js 20.11 or newer for the packages and example
+- Node.js 22.13 or newer for the packages and example (pnpm 11 imports
+  `node:sqlite`; Node.js 20 reached end-of-life in April 2026)
 - Node.js 22.19 or newer for the Inspector 2.11 CLI check
 - pnpm 11
 - No API keys or external services
@@ -68,9 +69,13 @@ directory):
 ```
 
 Open Claude Desktop (or Cursor) and your API tools appear automatically in
-the tool inventory. No registry access is required at any step: the
-generated project installs `@chainmcp/*` from the clone, and the example's
-upstream is the deterministic in-process transport described below.
+the tool inventory. `@chainmcp/*` never needs a registry: the generated
+project links them from the clone, and the example's upstream is the
+deterministic in-process transport described below. The generated project's
+third-party dependencies (`zod`, `yaml`, `typescript`, `@types/node`) still
+come from npm the first time they are installed, so a fully offline
+`pnpm install --offline` requires a warm pnpm store; plain `pnpm install`
+works everywhere.
 
 ## Inspect the tools
 

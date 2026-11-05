@@ -23,6 +23,10 @@ import { exportCommand } from "../src/commands/export.js";
 import { buildCommand } from "../src/commands/build.js";
 import { initCommand } from "../src/commands/init.js";
 import {
+  assertChainMcpPackagesFromClone,
+  installGeneratedProject,
+} from "./support/generated-install.js";
+import {
   CHAINMCP_PACKAGE_DEPENDENCIES,
   renderPackageJson,
 } from "../src/templates.js";
@@ -292,27 +296,12 @@ describe("P0-1: local-clone dependency mode", () => {
       const buildResult = await buildCommand({ cwd: projectDir });
       expect(buildResult.ok).toBe(true);
 
-      // Install from local packages only. Third-party packages come from the
-      // existing pnpm store; no registry request is made.
-      try {
-        await execFileAsync(
-          "pnpm",
-          ["install", "--offline", "--ignore-scripts"],
-          { cwd: projectDir, timeout: 120_000 },
-        );
-      } catch (error) {
-        const stderr =
-          typeof error === "object" && error !== null && "stderr" in error
-            ? String(error.stderr)
-            : "";
-        const stdout =
-          typeof error === "object" && error !== null && "stdout" in error
-            ? String(error.stdout)
-            : "";
-        throw new Error(
-          `pnpm install failed.\nstdout: ${stdout}\nstderr: ${stderr}`,
-        );
-      }
+      // Install from the clone. A cold pnpm store cannot resolve semver
+      // ranges for third-party packages, so the helper falls back to
+      // --prefer-offline and the assertion below proves @chainmcp/* still
+      // came from the clone rather than a registry (P2-0).
+      await installGeneratedProject(projectDir);
+      await assertChainMcpPackagesFromClone(projectDir, REPO_ROOT);
       expect(await pathExists(join(projectDir, "node_modules"))).toBe(true);
 
       const tscBin = join(REPO_ROOT, "node_modules/.bin/tsc");
