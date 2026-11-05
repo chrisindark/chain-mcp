@@ -95,6 +95,35 @@ export interface HttpServeOptions {
           | undefined;
       }
     | undefined;
+  protectedResourceMetadata?:
+    | {
+        resource?: string | undefined;
+        authorizationServers?: string[] | undefined;
+        scopesSupported?: string[] | undefined;
+        bearerMethodsSupported?: string[] | undefined;
+        resourceName?: string | undefined;
+      }
+    | undefined;
+  protectedResource?:
+    | {
+        resource?: string | undefined;
+        authorizationServers?: string[] | undefined;
+        scopesSupported?: string[] | undefined;
+        bearerMethodsSupported?: string[] | undefined;
+        resourceName?: string | undefined;
+      }
+    | undefined;
+  resourceMetadata?:
+    | {
+        resource?: string | undefined;
+        authorizationServers?: string[] | undefined;
+        scopesSupported?: string[] | undefined;
+        bearerMethodsSupported?: string[] | undefined;
+        resourceName?: string | undefined;
+      }
+    | undefined;
+  authorizationServers?: string[] | undefined;
+  scopesSupported?: string[] | undefined;
 }
 
 export interface ConnectedHttpServer extends ConnectedMcpServer {
@@ -249,6 +278,19 @@ export async function serveHttp(
   const port = httpOptions.port ?? DEFAULT_PORT;
   const host = httpOptions.host ?? DEFAULT_HOST;
   const mcpPath = normalizePath(httpOptions.path ?? DEFAULT_PATH);
+  const protectedResourceConfig =
+    httpOptions.protectedResourceMetadata ??
+    httpOptions.protectedResource ??
+    httpOptions.resourceMetadata ??
+    {};
+  const protectedResourceAuthorizationServers = [
+    ...(protectedResourceConfig.authorizationServers ?? []),
+    ...(httpOptions.authorizationServers ?? []),
+  ];
+  const protectedResourceScopes = [
+    ...(protectedResourceConfig.scopesSupported ?? []),
+    ...(httpOptions.scopesSupported ?? []),
+  ];
   const requireAuth =
     httpOptions.requireInboundAuth ?? httpOptions.requireAuth ?? false;
   const allowUnauthenticated = httpOptions.allowUnauthenticatedHttp ?? false;
@@ -781,6 +823,30 @@ export async function serveHttp(
         }
       }
 
+      // OAuth protected-resource metadata (RFC 9728): advertised so remote MCP
+      // clients can discover the authorization server protecting this resource.
+      if (
+        requestUrl.pathname === "/.well-known/oauth-protected-resource" ||
+        requestUrl.pathname.startsWith("/.well-known/oauth-protected-resource/")
+      ) {
+        const resourceUrl =
+          protectedResourceConfig.resource ?? `${requestUrl.origin}${mcpPath}`;
+        const metadata = {
+          resource: resourceUrl,
+          authorization_servers: protectedResourceAuthorizationServers,
+          scopes_supported: protectedResourceScopes,
+          bearer_methods_supported:
+            protectedResourceConfig.bearerMethodsSupported ?? ["header"],
+          ...(protectedResourceConfig.resourceName !== undefined
+            ? { resource_name: protectedResourceConfig.resourceName }
+            : {}),
+        };
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify(metadata));
+        return;
+      }
+
       // Health and liveness probe (liveness-only: never touches dependencies)
       if (
         requestUrl.pathname === "/health" ||
@@ -858,7 +924,10 @@ export async function serveHttp(
       // with a stable code, even when inbound auth is otherwise optional.
       if (isInboundAuthFailure(authResult)) {
         res.statusCode = 401;
-        res.setHeader("WWW-Authenticate", 'Bearer error="invalid_token"');
+        res.setHeader(
+          "WWW-Authenticate",
+          `Bearer resource_metadata="${requestUrl.origin}/.well-known/oauth-protected-resource", error="invalid_token"`,
+        );
         res.setHeader("Content-Type", "application/json");
         res.end(
           JSON.stringify({
@@ -876,7 +945,10 @@ export async function serveHttp(
 
       if (requireAuth && !authResult) {
         res.statusCode = 401;
-        res.setHeader("WWW-Authenticate", 'Bearer error="invalid_token"');
+        res.setHeader(
+          "WWW-Authenticate",
+          `Bearer resource_metadata="${requestUrl.origin}/.well-known/oauth-protected-resource", error="invalid_token"`,
+        );
         res.setHeader("Content-Type", "application/json");
         res.end(
           JSON.stringify({

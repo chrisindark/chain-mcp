@@ -2,7 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { JsonNavigationError } from "./limits.js";
 
 /**
- * Result handles for JSON navigation (P1-2).
+ * Result handles for JSON navigation.
  *
  * Large upstream documents are stored once, server-side, and handed to the
  * caller as an opaque, unguessable ID. The model then navigates the stored

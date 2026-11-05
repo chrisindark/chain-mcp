@@ -13,13 +13,11 @@ export interface ToolTracerOptions {
   tracerName?: string;
   tracerVersion?: string;
   sampleRatio?: number;
-  endpoint?: string;
 }
 
 export class ToolTracer implements CoreToolTracer {
   private readonly tracer: Tracer;
   private readonly sampleRatio: number;
-  public readonly endpoint?: string | undefined;
 
   constructor(options?: ToolTracerOptions) {
     this.tracer =
@@ -34,7 +32,6 @@ export class ToolTracer implements CoreToolTracer {
       options.sampleRatio <= 1
         ? options.sampleRatio
         : 1.0;
-    this.endpoint = options?.endpoint;
   }
 
   startToolSpan(

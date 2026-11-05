@@ -841,7 +841,7 @@ export function renderDockerfile(options?: {
   const isCodeFirst = options?.codeFirst || options?.blank;
   if (isCodeFirst) {
     return `# Multi-stage Docker build for ChainMcp generated server (code-first)
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci || npm install
@@ -849,7 +849,7 @@ COPY tsconfig*.json ./
 COPY src ./src
 RUN npm run build
 
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./
@@ -860,12 +860,15 @@ COPY chainmcp.manifest.json ./
 COPY compiled-tools.json ./dist/compiled-tools.json
 EXPOSE 3333
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3333/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
 USER node
 ENTRYPOINT ["node", "dist/server.js"]
 `;
   }
   return `# Multi-stage Docker build for ChainMcp generated server
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci || npm install
@@ -874,7 +877,7 @@ COPY spec ./spec
 COPY src ./src
 RUN npm run build
 
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./
@@ -886,6 +889,9 @@ COPY chainmcp.manifest.json ./
 COPY compiled-tools.json ./dist/compiled-tools.json
 
 EXPOSE 3333
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3333/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 USER node
 ENTRYPOINT ["node", "dist/server.js"]

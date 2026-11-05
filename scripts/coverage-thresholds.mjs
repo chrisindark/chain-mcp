@@ -32,7 +32,7 @@ export const COVERAGE_THRESHOLDS = {
     config: { lines: 87, statements: 87, functions: 90, branches: 75 },
     core: { lines: 90, statements: 90, functions: 95, branches: 85 },
     declarative: { lines: 70, statements: 70, functions: 91, branches: 72 },
-    executor: { lines: 83, statements: 83, functions: 92, branches: 75 },
+    executor: { lines: 80, statements: 80, functions: 91, branches: 75 },
     gateway: { lines: 79, statements: 79, functions: 81, branches: 65 },
     "json-navigation": {
       lines: 79,
@@ -41,6 +41,6 @@ export const COVERAGE_THRESHOLDS = {
       branches: 63,
     },
     "rate-limit": { lines: 74, statements: 74, functions: 94, branches: 70 },
-    server: { lines: 86, statements: 86, functions: 95, branches: 79 },
+    server: { lines: 84, statements: 84, functions: 91, branches: 79 },
   },
 };

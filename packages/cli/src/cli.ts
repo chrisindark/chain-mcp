@@ -6,6 +6,7 @@ import { configExplainCommand } from "./commands/config.js";
 import { devCommand } from "./commands/dev.js";
 import { diffCommand } from "./commands/diff.js";
 import { exportCommand } from "./commands/export.js";
+import { doctorCommand } from "./commands/doctor.js";
 import { gatewayServeCommand } from "./commands/gateway-serve.js";
 import { initCommand } from "./commands/init.js";
 import { serveCommand } from "./commands/serve.js";
@@ -670,6 +671,24 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
         log(`Reproducibility: verified`);
       }
       return 0;
+    }
+
+    case "doctor": {
+      const result = await doctorCommand({
+        ...(asString(values.config) !== undefined
+          ? { config: asString(values.config) }
+          : {}),
+      });
+      if (values.json) {
+        log(JSON.stringify(result, null, 2));
+        return result.ok ? 0 : 1;
+      }
+      for (const check of result.checks) {
+        log(
+          `${check.ok ? "OK" : "FAIL"} ${check.name}${check.detail ? `: ${check.detail}` : ""}`,
+        );
+      }
+      return result.ok ? 0 : 1;
     }
 
     case "config": {
