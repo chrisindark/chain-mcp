@@ -59,13 +59,32 @@ export const ADMIN_INDEX_HTML = `<!doctype html>
 
       <section class="card">
         <div class="card-heading">
-          <h2>Descriptors</h2>
+          <h2>Builder</h2>
           <button id="example" type="button" class="secondary">
             Reset example
           </button>
         </div>
+        <div class="grid">
+          <label>Name<input id="b-name" spellcheck="false" placeholder="get_user" /></label>
+          <label>Method
+            <select id="b-method">
+              <option>GET</option><option>POST</option><option>PUT</option>
+              <option>PATCH</option><option>DELETE</option><option>HEAD</option>
+            </select>
+          </label>
+          <label>Path<input id="b-path" spellcheck="false" placeholder="/users/{userId}" /></label>
+        </div>
+        <label for="b-description">Description<textarea id="b-description" rows="2"></textarea></label>
+        <label>Parameter (name)<input id="b-p-name" spellcheck="false" placeholder="userId" /></label>
+        <label>Parameter location
+          <select id="b-p-in"><option>path</option><option>query</option><option>header</option><option>cookie</option></select>
+        </label>
+        <label>Parameter type
+          <select id="b-p-type"><option>string</option><option>number</option><option>integer</option><option>boolean</option></select>
+        </label>
+        <div class="actions"><button id="add-param" type="button" class="secondary">Add parameter</button></div>
         <label class="sr-only" for="descriptors">Descriptor JSON</label>
-        <textarea id="descriptors" spellcheck="false" rows="22"></textarea>
+        <textarea id="descriptors" spellcheck="false" rows="16"></textarea>
         <div class="actions">
           <button id="validate" type="button">Validate</button>
           <button id="preview" type="button">Preview</button>
@@ -540,5 +559,64 @@ export const ADMIN_APP_JS = `(function () {
   });
 
   textarea.value = JSON.stringify(EXAMPLE, null, 2);
+
+  // ---- Visual builder: forms emit one descriptor (array of one) ----
+  var bName = document.getElementById("b-name");
+  var bMethod = document.getElementById("b-method");
+  var bPath = document.getElementById("b-path");
+  var bDesc = document.getElementById("b-description");
+  var bPName = document.getElementById("b-p-name");
+  var bPIn = document.getElementById("b-p-in");
+  var bPType = document.getElementById("b-p-type");
+  var params = [];
+
+  function emitDescriptor() {
+    var name = bName.value.trim() || "example_tool";
+    var props = {};
+    var required = [];
+    var requestParams = [];
+    for (var i = 0; i < params.length; i += 1) {
+      props[params[i].name] = { type: params[i].type };
+      if (params[i].in === "path") required.push(params[i].name);
+      requestParams.push({ name: params[i].name, in: params[i].in, required: params[i].in === "path" });
+    }
+    var descriptor = {
+      descriptorVersion: 1,
+      name: name,
+      description: bDesc.value.trim() || "Descriptor built in the visual builder",
+      request: {
+        method: bMethod.value,
+        path: bPath.value.trim() || "/example",
+        ...(requestParams.length > 0 ? { parameters: requestParams } : {})
+      },
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        ...(required.length > 0 ? { required: required } : {}),
+        properties: props
+      }
+    };
+    textarea.value = JSON.stringify([descriptor], null, 2);
+  }
+
+  [bName, bMethod, bPath, bDesc].forEach(function (el) {
+    if (el) el.addEventListener("input", emitDescriptor);
+    if (el) el.addEventListener("change", emitDescriptor);
+  });
+  var addParam = document.getElementById("add-param");
+  if (addParam) {
+    addParam.addEventListener("click", function () {
+      var n = bPName.value.trim();
+      if (!n) {
+        setStatus("Enter a parameter name first", "error");
+        return;
+      }
+      params.push({ name: n, in: bPIn.value, type: bPType.value });
+      bPName.value = "";
+      emitDescriptor();
+      setStatus("Parameter added: " + n, "ok");
+    });
+  }
 })();
+
 `;
