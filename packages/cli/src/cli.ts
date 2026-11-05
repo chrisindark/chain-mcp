@@ -7,6 +7,7 @@ import { devCommand } from "./commands/dev.js";
 import { diffCommand } from "./commands/diff.js";
 import { exportCommand } from "./commands/export.js";
 import { doctorCommand } from "./commands/doctor.js";
+import { adminCommand } from "./commands/admin.js";
 import { gatewayServeCommand } from "./commands/gateway-serve.js";
 import { initCommand } from "./commands/init.js";
 import { serveCommand } from "./commands/serve.js";
@@ -671,6 +672,23 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
         log(`Reproducibility: verified`);
       }
       return 0;
+    }
+
+    case "admin": {
+      const result = await adminCommand({
+        ...(asString(values.host) !== undefined
+          ? { host: asString(values.host) }
+          : {}),
+        ...(values.port !== undefined ? { port: Number(values.port) } : {}),
+      });
+      if (values.json) log(JSON.stringify(result, null, 2));
+      else
+        log(
+          result.ok
+            ? `Admin console: ${result.url}`
+            : `Admin error: ${result.error}`,
+        );
+      return result.ok ? 0 : 1;
     }
 
     case "doctor": {

@@ -44,6 +44,7 @@ export {
 export { runCli } from "./cli.js";
 export { configExplainCommand } from "./commands/config.js";
 export { doctorCommand } from "./commands/doctor.js";
+export { adminCommand } from "./commands/admin.js";
 export {
   DEFAULT_CONFIG_FILENAMES,
   findConfigPath,

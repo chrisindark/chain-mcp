@@ -32,6 +32,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@chainmcp/admin": "workspace:*",
     "@chainmcp/analytics": "workspace:*",
     "@chainmcp/auth": "workspace:*",
     "@chainmcp/compiler": "workspace:*",
