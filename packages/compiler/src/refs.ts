@@ -70,7 +70,15 @@ export function resolveLocalPointer(
   return { ok: true, value: current };
 }
 
-const REF_SIBLING_ANNOTATIONS = new Set(["summary", "description"]);
+const REF_SIBLING_ANNOTATIONS = new Set([
+  "summary",
+  "description",
+  "title",
+  "example",
+  "examples",
+  "$comment",
+  "default",
+]);
 
 /**
  * Resolves an object-level `$ref` (path item, parameter, or request body).

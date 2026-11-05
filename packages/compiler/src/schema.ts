@@ -373,7 +373,8 @@ function translateReference(
       key !== "title" &&
       key !== "example" &&
       key !== "examples" &&
-      key !== "$comment",
+      key !== "$comment" &&
+      key !== "default",
   );
   if (siblings.length > 0) {
     report(
@@ -802,7 +803,8 @@ function translateOutputReference(
       key !== "title" &&
       key !== "example" &&
       key !== "examples" &&
-      key !== "$comment",
+      key !== "$comment" &&
+      key !== "default",
   );
   if (siblings.length > 0) {
     report(
