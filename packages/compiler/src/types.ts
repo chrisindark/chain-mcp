@@ -197,6 +197,16 @@ export interface CompiledAuthenticationPolicy {
  * to a runtime `ToolDefinition`; credential injection and response validation
  * remain deferred.
  */
+export interface CompiledServerVariable {
+  default: string;
+  enum?: readonly string[];
+}
+
+export interface CompiledServer {
+  url: string;
+  variables?: Readonly<Record<string, CompiledServerVariable>>;
+}
+
 export interface CompiledOperation {
   name: string;
   description: string;
@@ -219,6 +229,7 @@ export interface CompiledOperation {
   /** Explicit OR/AND authentication policy derived from `security`. */
   authentication: CompiledAuthenticationPolicy;
   sourceLocation: string;
+  servers?: readonly CompiledServer[];
   warnings?: readonly CompileDiagnostic[];
 }
 

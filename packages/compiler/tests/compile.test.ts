@@ -2030,7 +2030,7 @@ describe("document validation", () => {
 });
 
 describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
-  it("rejects operation-level servers in strict mode and warns in permissive mode", () => {
+  it("accepts operation-level servers overrides", () => {
     const doc = baseDocument({
       "/items": {
         get: operation({
@@ -2039,44 +2039,15 @@ describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
       },
     });
 
-    // strict: true (default)
     const strictResult = compileDocument(doc, { strict: true });
-    expect(strictResult.ok).toBe(false);
-    expect(codes(strictResult)).toContain("UNSUPPORTED_SERVERS");
-    const strictDiag = strictResult.diagnostics.find(
-      (d) => d.code === "UNSUPPORTED_SERVERS",
-    );
-    expect(strictDiag?.severity).toBe("error");
-    expect(strictDiag?.location).toBe("#/paths/~1items/get/servers");
-    expect(strictDiag?.message).toContain(
-      "Operation 'servers' override is not supported",
-    );
-    expect(strictDiag?.message).toContain("strict: false");
-    expect(strictResult.tools).toHaveLength(0);
-
-    // strict: false (permissive mode)
-    const permissiveResult = compileDocument(doc, { strict: false });
-    expect(permissiveResult.ok).toBe(true);
-    expect(codes(permissiveResult)).toContain("UNSUPPORTED_SERVERS");
-    const permissiveDiag = permissiveResult.diagnostics.find(
-      (d) => d.code === "UNSUPPORTED_SERVERS",
-    );
-    expect(permissiveDiag?.severity).toBe("warning");
-    expect(permissiveResult.tools).toHaveLength(1);
-    expect(permissiveResult.manifest.warnings).toBeDefined();
-    expect(
-      permissiveResult.manifest.warnings?.some(
-        (w) => w.code === "UNSUPPORTED_SERVERS",
-      ),
-    ).toBe(true);
-    expect(
-      permissiveResult.tools[0]?.warnings?.some(
-        (w) => w.code === "UNSUPPORTED_SERVERS",
-      ),
-    ).toBe(true);
+    expect(strictResult.ok).toBe(true);
+    expect(strictResult.tools).toHaveLength(1);
+    expect(strictResult.tools[0]?.servers).toEqual([
+      { url: "https://override.example.com" },
+    ]);
   });
 
-  it("rejects path-item-level servers in strict mode and warns in permissive mode", () => {
+  it("accepts path-item-level servers overrides", () => {
     const doc = baseDocument({
       "/items": {
         servers: [{ url: "https://path-override.example.com" }],
@@ -2085,33 +2056,11 @@ describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
     });
 
     const strictResult = compileDocument(doc, { strict: true });
-    expect(strictResult.ok).toBe(false);
-    expect(codes(strictResult)).toContain("UNSUPPORTED_SERVERS");
-    const strictDiag = strictResult.diagnostics.find(
-      (d) => d.code === "UNSUPPORTED_SERVERS",
-    );
-    expect(strictDiag?.severity).toBe("error");
-    expect(strictDiag?.location).toBe("#/paths/~1items/servers");
-    expect(strictResult.tools).toHaveLength(0);
-
-    const permissiveResult = compileDocument(doc, { strict: false });
-    expect(permissiveResult.ok).toBe(true);
-    expect(codes(permissiveResult)).toContain("UNSUPPORTED_SERVERS");
-    const permissiveDiag = permissiveResult.diagnostics.find(
-      (d) => d.code === "UNSUPPORTED_SERVERS",
-    );
-    expect(permissiveDiag?.severity).toBe("warning");
-    expect(permissiveResult.tools).toHaveLength(1);
-    expect(
-      permissiveResult.manifest.warnings?.some(
-        (w) => w.code === "UNSUPPORTED_SERVERS",
-      ),
-    ).toBe(true);
-    expect(
-      permissiveResult.tools[0]?.warnings?.some(
-        (w) => w.code === "UNSUPPORTED_SERVERS",
-      ),
-    ).toBe(true);
+    expect(strictResult.ok).toBe(true);
+    expect(strictResult.tools).toHaveLength(1);
+    expect(strictResult.tools[0]?.servers).toEqual([
+      { url: "https://path-override.example.com" },
+    ]);
   });
 
   it("rejects operation-level callbacks in strict mode and warns in permissive mode", () => {
@@ -2164,7 +2113,7 @@ describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
     ).toBe(true);
   });
 
-  it("rejects non-default parameter style, explode, and allowReserved combinations in strict mode and warns in permissive mode", () => {
+  it("accepts serialization styles and rejects allowReserved:true in strict mode and warns in permissive mode", () => {
     const docWithCustomStyle = baseDocument({
       "/items": {
         get: operation({
@@ -2180,30 +2129,9 @@ describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
       },
     });
 
-    // style: "deepObject"
+    // style: "deepObject" is supported
     const strictStyle = compileDocument(docWithCustomStyle, { strict: true });
-    expect(strictStyle.ok).toBe(false);
-    expect(codes(strictStyle)).toContain("PARAMETER_UNSUPPORTED");
-    const styleDiag = strictStyle.diagnostics.find(
-      (d) => d.code === "PARAMETER_UNSUPPORTED",
-    );
-    expect(styleDiag?.severity).toBe("error");
-    expect(styleDiag?.location).toBe("#/paths/~1items/get/parameters/0/style");
-    expect(styleDiag?.message).toContain(
-      "Query parameter 'filter' specifies unsupported style 'deepObject'",
-    );
-    expect(styleDiag?.message).toContain("only 'form' is supported");
-
-    const permissiveStyle = compileDocument(docWithCustomStyle, {
-      strict: false,
-    });
-    expect(permissiveStyle.ok).toBe(true);
-    expect(codes(permissiveStyle)).toContain("PARAMETER_UNSUPPORTED");
-    expect(
-      permissiveStyle.manifest.warnings?.some(
-        (w) => w.code === "PARAMETER_UNSUPPORTED",
-      ),
-    ).toBe(true);
+    expect(strictStyle.ok).toBe(true);
 
     // explode: false
     const docWithExplodeFalse = baseDocument({
@@ -2224,29 +2152,7 @@ describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
     const strictExplode = compileDocument(docWithExplodeFalse, {
       strict: true,
     });
-    expect(strictExplode.ok).toBe(false);
-    expect(codes(strictExplode)).toContain("PARAMETER_UNSUPPORTED");
-    const explodeDiag = strictExplode.diagnostics.find(
-      (d) => d.code === "PARAMETER_UNSUPPORTED",
-    );
-    expect(explodeDiag?.severity).toBe("error");
-    expect(explodeDiag?.location).toBe(
-      "#/paths/~1items/get/parameters/0/explode",
-    );
-    expect(explodeDiag?.message).toContain(
-      "Query parameter 'tags' specifies unsupported explode: false",
-    );
-
-    const permissiveExplode = compileDocument(docWithExplodeFalse, {
-      strict: false,
-    });
-    expect(permissiveExplode.ok).toBe(true);
-    expect(codes(permissiveExplode)).toContain("PARAMETER_UNSUPPORTED");
-    expect(
-      permissiveExplode.manifest.warnings?.some(
-        (w) => w.code === "PARAMETER_UNSUPPORTED",
-      ),
-    ).toBe(true);
+    expect(strictExplode.ok).toBe(true);
 
     // allowReserved: true
     const docWithAllowReserved = baseDocument({
@@ -2417,9 +2323,7 @@ describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
     const result = compileDocument(doc, { strict: false });
     expect(result.ok).toBe(true);
     const resultCodes = codes(result);
-    expect(resultCodes).toContain("UNSUPPORTED_SERVERS");
     expect(resultCodes).toContain("UNSUPPORTED_CALLBACKS");
-    expect(resultCodes).toContain("PARAMETER_UNSUPPORTED");
 
     // All diagnostics must have code, message, severity, and location
     for (const d of result.diagnostics) {
