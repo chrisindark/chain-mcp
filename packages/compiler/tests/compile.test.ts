@@ -1225,7 +1225,7 @@ describe("unsupported schemas", () => {
     expect(strictResult.tools).toHaveLength(1);
   });
 
-  it("rejects schema-valued additionalProperties and unknown keywords", () => {
+  it("accepts schema-valued additionalProperties and rejects unknown keywords", () => {
     const additional = compileDocument(
       parameterDocument({
         type: "object",
@@ -1233,7 +1233,7 @@ describe("unsupported schemas", () => {
       }),
       { strict: false },
     );
-    expect(codes(additional)).toContain("SCHEMA_UNSUPPORTED");
+    expect(additional.ok).toBe(true);
 
     const unknown = compileDocument(
       parameterDocument({ type: "string", unknownKeyword: true }),

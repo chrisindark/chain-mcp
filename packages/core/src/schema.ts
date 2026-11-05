@@ -270,15 +270,27 @@ function auditSchema(
       }
     }
 
-    if (
-      "additionalProperties" in schema &&
-      typeof schema.additionalProperties !== "boolean"
-    ) {
-      diagnostics.push({
-        code: "SCHEMA_INVALID_ADDITIONAL_PROPERTIES",
-        path,
-        message: `Schema 'additionalProperties' at ${path} must be a boolean`,
-      });
+    if ("additionalProperties" in schema) {
+      const value = schema.additionalProperties;
+      if (typeof value === "boolean") {
+        // ok
+      } else if (isJsonObject(value)) {
+        auditSchema(
+          value,
+          `${path}.additionalProperties`,
+          depth + 1,
+          ancestors,
+          diagnostics,
+          limits,
+          budget,
+        );
+      } else {
+        diagnostics.push({
+          code: "SCHEMA_INVALID_ADDITIONAL_PROPERTIES",
+          path,
+          message: `Schema 'additionalProperties' at ${path} must be a boolean or an object schema`,
+        });
+      }
     }
 
     if ("items" in schema) {

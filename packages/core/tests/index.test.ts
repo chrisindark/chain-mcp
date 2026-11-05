@@ -498,10 +498,6 @@ describe("InMemoryToolRuntime", () => {
     ["boolean root schema", false],
     ["boolean items", { type: "array", items: false }],
     ["tuple items", { type: "array", items: [{ type: "string" }] }],
-    [
-      "object-valued additionalProperties",
-      { type: "object", additionalProperties: { type: "string" } },
-    ],
     ["empty enum", { enum: [] }],
     ["object enum entry", { enum: [{ value: 1 }] }],
     ["NaN enum entry", { enum: [Number.NaN] }],
@@ -1213,10 +1209,6 @@ describe("schema audit", () => {
     ).toEqual([
       { code: "SCHEMA_UNSUPPORTED_KEYWORD", path: "$.properties.name" },
       { code: "SCHEMA_INVALID_CONSTRAINT", path: "$.properties.count" },
-      {
-        code: "SCHEMA_INVALID_ADDITIONAL_PROPERTIES",
-        path: "$",
-      },
     ]);
   });
 

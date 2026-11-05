@@ -289,13 +289,23 @@ function translateSchema(
           result.additionalProperties = value;
           continue;
         }
-        // A schema-valued `additionalProperties` cannot be represented by the
-        // runtime. Dropping it would allow arbitrary values.
+        if (isPlainObject(value)) {
+          const translated = translateSchema(
+            value,
+            context,
+            depth + 1,
+            ancestors,
+            refStack,
+          );
+          if (translated === undefined) return undefined;
+          result.additionalProperties = translated;
+          continue;
+        }
         report(
           context,
           "error",
           "SCHEMA_UNSUPPORTED",
-          "Schema 'additionalProperties' must be boolean",
+          "Schema 'additionalProperties' must be boolean or an object schema",
         );
         return undefined;
       }

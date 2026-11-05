@@ -1864,6 +1864,18 @@ function validateValue(
           addIssue(state, `${path}.${key} is not allowed`);
         }
       }
+    } else if (isJsonObject(schema.additionalProperties)) {
+      for (const key of Object.keys(value)) {
+        if (Object.hasOwn(properties, key)) continue;
+        validateValue(
+          schema.additionalProperties as JsonSchema,
+          value[key],
+          `${path}.${key}`,
+          state,
+          depth + 1,
+          limits,
+        );
+      }
     }
   }
   if (Array.isArray(value)) {
