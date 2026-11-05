@@ -1,4 +1,8 @@
-import { MAX_SCHEMA_DEPTH, type JsonSchema } from "@chainmcp/core";
+import {
+  MAX_SCHEMA_DEPTH,
+  isValidPattern,
+  type JsonSchema,
+} from "@chainmcp/core";
 
 import { isPlainObject, stableStringify } from "./document.js";
 import { resolveLocalPointer } from "./refs.js";
@@ -248,6 +252,32 @@ function translateSchema(
       ) {
         const normalized = bounds[keyword];
         if (normalized !== undefined) result[keyword] = normalized;
+        continue;
+      }
+      if (keyword === "pattern") {
+        if (typeof value !== "string") {
+          report(
+            context,
+            "error",
+            "SCHEMA_INVALID",
+            "Schema 'pattern' must be a string",
+          );
+          return undefined;
+        }
+        if (!isValidPattern(value)) {
+          const severity = context.strict ? "error" : "warning";
+          report(
+            context,
+            severity,
+            "SCHEMA_UNSUPPORTED",
+            `Schema 'pattern' is not a valid RE2 regular expression and was ${
+              context.strict ? "rejected" : "dropped"
+            }`,
+          );
+          if (context.strict) return undefined;
+          continue;
+        }
+        result.pattern = value;
         continue;
       }
       if (SUPPORTED_CONSTRAINTS.has(keyword)) {

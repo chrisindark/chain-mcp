@@ -31,6 +31,7 @@ export {
   auditInputSchema,
   MAX_SCHEMA_DEPTH,
   DEFAULT_SCHEMA_VALIDATION_LIMITS,
+  isValidPattern,
   type SchemaValidationLimits,
 } from "./schema.js";
 export { CACHE_KEY_VERSION, MAX_CACHE_KEY_INPUT_BYTES } from "./cache-key.js";

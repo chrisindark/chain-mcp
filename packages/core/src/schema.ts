@@ -431,6 +431,11 @@ function auditConstraints(
 }
 
 /** Returns true when the runtime asserts this format on string values. */
+/** Returns true when `pattern` compiles under the RE2 engine. */
+export function isValidPattern(pattern: string): boolean {
+  return compilePattern(pattern) !== undefined;
+}
+
 export function isAssertedFormat(format: string): boolean {
   return ASSERTED_FORMATS.has(format);
 }
