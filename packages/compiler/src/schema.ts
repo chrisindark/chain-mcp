@@ -5,7 +5,7 @@ import {
 } from "@chainmcp/core";
 
 import { isPlainObject, stableStringify } from "./document.js";
-import { resolveLocalPointer } from "./refs.js";
+import { resolveExternalPointer, resolveLocalPointer } from "./refs.js";
 import type {
   CompileDiagnostic,
   DiagnosticSeverity,
@@ -18,6 +18,7 @@ export interface SchemaTranslationContext {
   strict: boolean;
   maxRefDepth: number;
   diagnostics: CompileDiagnostic[];
+  externalDocuments?: Record<string, Record<string, unknown>>;
 }
 
 export function translateInputSchema(
@@ -45,16 +46,6 @@ const UNSUPPORTED_COMPOSITION_KEYWORDS = new Set([
   "oneOf",
   "anyOf",
   "not",
-  "if",
-  "then",
-  "else",
-  "dependentSchemas",
-  "dependentRequired",
-  "patternProperties",
-  "propertyNames",
-  "contains",
-  "minContains",
-  "maxContains",
   "unevaluatedProperties",
   "unevaluatedItems",
 ]);
@@ -64,11 +55,7 @@ const UNSUPPORTED_COMPOSITION_KEYWORDS = new Set([
  * permissive mode drops them with a warning instead of silently weakening
  * validation.
  */
-const UNSUPPORTED_CONSTRAINTS = new Set([
-  "const",
-  "contentEncoding",
-  "contentMediaType",
-]);
+const UNSUPPORTED_CONSTRAINTS = new Set<string>([]);
 
 /**
  * Validation constraints preserved in compiled input schemas. The runtime
@@ -89,6 +76,9 @@ const SUPPORTED_CONSTRAINTS = new Set([
   "multipleOf",
   "pattern",
   "uniqueItems",
+  "const",
+  "contentEncoding",
+  "contentMediaType",
 ]);
 
 const ANNOTATION_KEYWORDS = new Set([
@@ -205,6 +195,43 @@ function translateSchema(
       }
     }
 
+    if (Object.hasOwn(schema, "patternProperties")) {
+      if (!isPlainObject(schema.patternProperties)) {
+        report(
+          context,
+          "error",
+          "SCHEMA_INVALID",
+          "Schema 'patternProperties' must be an object",
+        );
+        return undefined;
+      }
+      const entries: Array<[string, JsonSchema]> = [];
+      for (const [pattern, subschema] of Object.entries(
+        schema.patternProperties as Record<string, unknown>,
+      )) {
+        if (!isPlainObject(subschema)) {
+          report(
+            context,
+            "error",
+            "SCHEMA_INVALID",
+            "Schema 'patternProperties' values must be objects",
+          );
+          return undefined;
+        }
+        const translated = translateSchema(
+          subschema,
+          context,
+          depth + 1,
+          ancestors,
+          refStack,
+        );
+        if (translated === undefined) return undefined;
+        entries.push([pattern, translated]);
+      }
+      if (entries.length > 0)
+        result.patternProperties = Object.fromEntries(entries);
+    }
+
     if (Object.hasOwn(schema, "required")) {
       if (
         !Array.isArray(schema.required) ||
@@ -228,6 +255,7 @@ function translateSchema(
       if (
         keyword === "$ref" ||
         keyword === "properties" ||
+        keyword === "patternProperties" ||
         keyword === "required" ||
         keyword === "nullable"
       ) {
@@ -346,13 +374,117 @@ function translateSchema(
         result.not = t;
         continue;
       }
+      if (keyword === "if" || keyword === "then" || keyword === "else") {
+        const t = translateSchema(
+          value,
+          context,
+          depth + 1,
+          ancestors,
+          refStack,
+        );
+        if (t === undefined) return undefined;
+        (result as Record<string, unknown>)[keyword] = t;
+        continue;
+      }
+      if (keyword === "dependentRequired") {
+        if (!isPlainObject(value)) {
+          report(
+            context,
+            "error",
+            "SCHEMA_INVALID",
+            "Schema 'dependentRequired' must be an object",
+          );
+          return undefined;
+        }
+        (result as Record<string, unknown>).dependentRequired = value;
+        continue;
+      }
+      if (keyword === "dependentSchemas") {
+        if (!isPlainObject(value)) {
+          report(
+            context,
+            "error",
+            "SCHEMA_INVALID",
+            "Schema 'dependentSchemas' must be an object",
+          );
+          return undefined;
+        }
+        const entries: Array<[string, JsonSchema]> = [];
+        for (const [key, subschema] of Object.entries(value)) {
+          const t = translateSchema(
+            subschema,
+            context,
+            depth + 1,
+            ancestors,
+            refStack,
+          );
+          if (t === undefined) return undefined;
+          entries.push([key, t]);
+        }
+        result.dependentSchemas = Object.fromEntries(entries);
+        continue;
+      }
+      if (keyword === "propertyNames") {
+        const t = translateSchema(
+          value,
+          context,
+          depth + 1,
+          ancestors,
+          refStack,
+        );
+        if (t === undefined) return undefined;
+        result.propertyNames = t;
+        continue;
+      }
+      if (keyword === "contains") {
+        const t = translateSchema(
+          value,
+          context,
+          depth + 1,
+          ancestors,
+          refStack,
+        );
+        if (t === undefined) return undefined;
+        result.contains = t;
+        continue;
+      }
+      if (keyword === "minContains" || keyword === "maxContains") {
+        if (!Number.isSafeInteger(value) || (value as number) < 0) {
+          report(
+            context,
+            "error",
+            "SCHEMA_INVALID",
+            `Schema '${keyword}' must be a non-negative safe integer`,
+          );
+          return undefined;
+        }
+        (result as Record<string, unknown>)[keyword] = value;
+        continue;
+      }
       if (keyword === "items") {
+        if (Array.isArray(value)) {
+          // Tuple form -> canonical `prefixItems` (2020-12).
+          const prefix: JsonSchema[] = [];
+          for (const entry of value) {
+            const t = translateSchema(
+              entry,
+              context,
+              depth + 1,
+              ancestors,
+              refStack,
+            );
+            if (t === undefined) return undefined;
+            prefix.push(t);
+          }
+          result.prefixItems = prefix;
+          continue;
+        }
         if (!isPlainObject(value)) {
           report(
             context,
             "error",
             "SCHEMA_UNSUPPORTED",
-            "Schema 'items' must be an object; tuple and boolean forms are not supported",
+            "Schema 'items' must be an object or an array of schemas",
           );
           return undefined;
         }
@@ -365,6 +497,31 @@ function translateSchema(
         );
         if (items === undefined) return undefined;
         result.items = items;
+        continue;
+      }
+      if (keyword === "prefixItems") {
+        if (!Array.isArray(value)) {
+          report(
+            context,
+            "error",
+            "SCHEMA_INVALID",
+            "Schema 'prefixItems' must be an array of schemas",
+          );
+          return undefined;
+        }
+        const prefix: JsonSchema[] = [];
+        for (const entry of value) {
+          const t = translateSchema(
+            entry,
+            context,
+            depth + 1,
+            ancestors,
+            refStack,
+          );
+          if (t === undefined) return undefined;
+          prefix.push(t);
+        }
+        result.prefixItems = prefix;
         continue;
       }
       if (ANNOTATION_KEYWORDS.has(keyword)) {
@@ -442,26 +599,6 @@ function translateReference(
   refStack: readonly string[],
 ): JsonSchema | undefined {
   const ref = schema.$ref;
-  const siblings = Object.keys(schema).filter(
-    (key) =>
-      key !== "$ref" &&
-      key !== "summary" &&
-      key !== "description" &&
-      key !== "title" &&
-      key !== "example" &&
-      key !== "examples" &&
-      key !== "$comment" &&
-      key !== "default",
-  );
-  if (siblings.length > 0) {
-    report(
-      context,
-      "error",
-      "REF_SIBLINGS_UNSUPPORTED",
-      `Reference '${String(ref)}' has unsupported sibling keys: ${siblings.join(", ")}`,
-    );
-    return undefined;
-  }
   if (typeof ref !== "string") {
     report(context, "error", "REF_INVALID", "Schema '$ref' must be a string");
     return undefined;
@@ -484,7 +621,10 @@ function translateReference(
     );
     return undefined;
   }
-  const resolved = resolveLocalPointer(context.document, ref);
+  const resolved =
+    typeof ref === "string" && ref.startsWith("#")
+      ? resolveLocalPointer(context.document, ref)
+      : resolveExternalPointer(context.externalDocuments ?? {}, ref);
   if (!resolved.ok) {
     report(context, "error", resolved.code, resolved.message);
     return undefined;
@@ -498,10 +638,71 @@ function translateReference(
     );
     return undefined;
   }
-  return translateSchema(resolved.value, context, depth + 1, ancestors, [
-    ...refStack,
-    ref,
-  ]);
+  const translated = translateSchema(
+    resolved.value,
+    context,
+    depth + 1,
+    ancestors,
+    [...refStack, ref],
+  );
+  if (translated === undefined) return undefined;
+
+  // `$ref` siblings (OpenAPI 3.1): merge sibling keywords alongside the
+  // referenced schema. Annotation siblings override; validation siblings are
+  // merged when they don't conflict, otherwise rejected.
+  const siblingKeys = Object.keys(schema).filter((key) => key !== "$ref");
+  if (siblingKeys.length === 0) return translated;
+
+  const siblingSchema: Record<string, unknown> = {};
+  for (const key of siblingKeys) siblingSchema[key] = schema[key];
+  // `nullable` sibling needs a type; inject the referenced type if present.
+  if (
+    Object.hasOwn(siblingSchema, "nullable") &&
+    !Object.hasOwn(siblingSchema, "type") &&
+    typeof siblingSchema.nullable === "boolean" &&
+    siblingSchema.nullable &&
+    translated.type !== undefined
+  ) {
+    siblingSchema.type = translated.type;
+  }
+  const siblingTranslated = translateSchema(
+    siblingSchema,
+    context,
+    depth + 1,
+    ancestors,
+    refStack,
+  );
+  if (siblingTranslated === undefined) return undefined;
+
+  const merged: Record<string, unknown> = { ...(translated as object) };
+  for (const [key, value] of Object.entries(siblingTranslated as object)) {
+    if (key === "nullable") continue;
+    // Strip OpenAPI-only `nullable` from sibling (already applied via type).
+    if (
+      Object.hasOwn(merged, key) &&
+      stableStringify(merged[key]) !== stableStringify(value)
+    ) {
+      // For nullable: true the sibling type is derived from the ref; accept it.
+      if (
+        (key === "type" &&
+          (siblingSchema as Record<string, unknown>).nullable === true &&
+          typeof value === "string") ||
+        Array.isArray(value)
+      ) {
+        merged[key] = value;
+        continue;
+      }
+      report(
+        context,
+        "error",
+        "REF_SIBLINGS_UNSUPPORTED",
+        `Reference '${String(ref)}' sibling '${key}' conflicts with referenced schema`,
+      );
+      return undefined;
+    }
+    (merged as Record<string, unknown>)[key] = value;
+  }
+  return merged as JsonSchema;
 }
 
 const ALL_OF_ANNOTATIONS = new Set([
@@ -536,21 +737,68 @@ function translateAllOf(
     );
     return undefined;
   }
-  for (const keyword of Object.keys(schema)) {
-    if (
-      keyword === "allOf" ||
-      ALL_OF_ANNOTATIONS.has(keyword) ||
-      keyword.startsWith("x-")
-    ) {
-      continue;
+  const siblingValidationKeys = Object.keys(schema).filter(
+    (key) =>
+      key !== "allOf" && !ALL_OF_ANNOTATIONS.has(key) && !key.startsWith("x-"),
+  );
+  const hasSiblingValidation = siblingValidationKeys.length > 0;
+
+  // Translate all members first; flatten only when semantics-preserving.
+  const translatedMembers: JsonSchema[] = [];
+  for (const member of members) {
+    const t = translateSchema(member, context, depth + 1, ancestors, refStack);
+    if (t === undefined) return undefined;
+    translatedMembers.push(t);
+  }
+  const isFlattenable =
+    !hasSiblingValidation &&
+    translatedMembers.every((m) => {
+      if (!(
+        m.type === "object" ||
+        (Array.isArray(m.type) &&
+          m.type.length === 1 &&
+          m.type[0] === "object") ||
+        m.type === undefined
+      ))
+        return false;
+      return Object.keys(m).every(
+        (k) =>
+          k === "type" ||
+          k === "properties" ||
+          k === "required" ||
+          k === "additionalProperties" ||
+          ALL_OF_ANNOTATIONS.has(k) ||
+          k.startsWith("x-"),
+      );
+    });
+  if (!isFlattenable) {
+    // Preserve composition for the runtime (supports allOf). Sibling
+    // keywords are intersected alongside allOf.
+    const preserved: Record<string, unknown> = { allOf: translatedMembers };
+    for (const keyword of Object.keys(schema)) {
+      if (keyword === "allOf") continue;
+      if (ALL_OF_ANNOTATIONS.has(keyword) || keyword.startsWith("x-")) {
+        preserved[keyword] = schema[keyword];
+      }
     }
-    report(
-      context,
-      "error",
-      "SCHEMA_COMPOSITION_UNSUPPORTED",
-      `Schema 'allOf' cannot be combined with sibling keyword '${keyword}'`,
-    );
-    return undefined;
+    if (hasSiblingValidation) {
+      const siblingObj: Record<string, unknown> = {};
+      for (const key of siblingValidationKeys) siblingObj[key] = schema[key];
+      // Prevent infinite recursion into allOf sibling handling.
+      const siblingTranslated = translateSchema(
+        siblingObj,
+        context,
+        depth + 1,
+        ancestors,
+        refStack,
+      );
+      if (siblingTranslated === undefined) return undefined;
+      for (const [key, value] of Object.entries(siblingTranslated as object)) {
+        if (Object.hasOwn(preserved, key)) continue;
+        (preserved as Record<string, unknown>)[key] = value;
+      }
+    }
+    return preserved as JsonSchema;
   }
 
   const properties = new Map<string, JsonSchema>();
@@ -559,15 +807,7 @@ function translateAllOf(
   let additionalProperties: boolean | undefined;
   let objectTyped = false;
 
-  for (const [index, member] of members.entries()) {
-    const translated = translateSchema(
-      member,
-      context,
-      depth + 1,
-      ancestors,
-      refStack,
-    );
-    if (translated === undefined) return undefined;
+  for (const translated of translatedMembers) {
     if (
       translated.type === "object" ||
       (Array.isArray(translated.type) &&
@@ -575,33 +815,6 @@ function translateAllOf(
         translated.type[0] === "object")
     ) {
       objectTyped = true;
-    } else if (translated.type !== undefined) {
-      report(
-        context,
-        "error",
-        "SCHEMA_COMPOSITION_UNSUPPORTED",
-        `Schema 'allOf' member ${index} is not an object schema`,
-      );
-      return undefined;
-    }
-    for (const keyword of Object.keys(translated)) {
-      if (
-        keyword === "type" ||
-        keyword === "properties" ||
-        keyword === "required" ||
-        keyword === "additionalProperties" ||
-        ALL_OF_ANNOTATIONS.has(keyword) ||
-        keyword.startsWith("x-")
-      ) {
-        continue;
-      }
-      report(
-        context,
-        "error",
-        "SCHEMA_COMPOSITION_UNSUPPORTED",
-        `Schema 'allOf' member ${index} uses unsupported keyword '${keyword}'`,
-      );
-      return undefined;
     }
 
     if (Object.hasOwn(translated, "properties")) {
@@ -872,26 +1085,6 @@ function translateOutputReference(
   refStack: readonly string[],
 ): JsonSchema | undefined {
   const ref = schema.$ref;
-  const siblings = Object.keys(schema).filter(
-    (key) =>
-      key !== "$ref" &&
-      key !== "summary" &&
-      key !== "description" &&
-      key !== "title" &&
-      key !== "example" &&
-      key !== "examples" &&
-      key !== "$comment" &&
-      key !== "default",
-  );
-  if (siblings.length > 0) {
-    report(
-      context,
-      "error",
-      "REF_SIBLINGS_UNSUPPORTED",
-      `Reference '${String(ref)}' has unsupported sibling keys: ${siblings.join(", ")}`,
-    );
-    return undefined;
-  }
   if (typeof ref !== "string") {
     report(context, "error", "REF_INVALID", "Schema '$ref' must be a string");
     return undefined;
@@ -928,10 +1121,21 @@ function translateOutputReference(
     );
     return undefined;
   }
-  return translateOutput(resolved.value, context, depth + 1, ancestors, [
-    ...refStack,
-    ref,
-  ]);
+  const translated = translateOutput(
+    resolved.value,
+    context,
+    depth + 1,
+    ancestors,
+    [...refStack, ref],
+  );
+  if (translated === undefined) return undefined;
+  const merged: Record<string, unknown> = { ...(translated as object) };
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === "$ref") continue;
+    if (!Object.hasOwn(merged, key))
+      (merged as Record<string, unknown>)[key] = value;
+  }
+  return merged as JsonSchema;
 }
 
 function translateOutputSchemaValue(

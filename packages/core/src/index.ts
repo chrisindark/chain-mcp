@@ -1737,6 +1737,11 @@ function validateValue(
   ) {
     addIssue(state, `${path} must be one of the allowed values`);
   }
+  if (Object.hasOwn(schema, "const")) {
+    if (!Object.is(schema.const, value)) {
+      addIssue(state, `${path} must equal the constant value`);
+    }
+  }
 
   if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
     const matches = schema.anyOf.filter(
@@ -1802,6 +1807,40 @@ function validateValue(
       addIssue(state, `${path} must not match the schema in 'not'`);
     }
   }
+  if (isJsonObject(schema.if)) {
+    const ifMatches = validateJsonSchema(
+      schema.if as JsonSchema,
+      value,
+      MAX_VALIDATION_ISSUES,
+      limits,
+    ).valid;
+    if (ifMatches && isJsonObject(schema.then)) {
+      const thenResult = validateJsonSchema(
+        schema.then as JsonSchema,
+        value,
+        MAX_VALIDATION_ISSUES,
+        limits,
+      );
+      if (!thenResult.valid) {
+        for (const issue of thenResult.issues) addIssue(state, issue);
+        if (thenResult.issues.length === 0)
+          addIssue(state, `${path} must match the schema in 'then'`);
+      }
+    }
+    if (!ifMatches && isJsonObject(schema.else)) {
+      const elseResult = validateJsonSchema(
+        schema.else as JsonSchema,
+        value,
+        MAX_VALIDATION_ISSUES,
+        limits,
+      );
+      if (!elseResult.valid) {
+        for (const issue of elseResult.issues) addIssue(state, issue);
+        if (elseResult.issues.length === 0)
+          addIssue(state, `${path} must match the schema in 'else'`);
+      }
+    }
+  }
   if (typeof value === "string") {
     validateStringConstraints(schema, value, path, state);
   }
@@ -1844,6 +1883,43 @@ function validateValue(
         addIssue(state, `${path}.${key} is required`);
       }
     }
+    if (isJsonObject(schema.dependentRequired)) {
+      for (const [trigger, deps] of Object.entries(
+        schema.dependentRequired as Record<string, unknown>,
+      )) {
+        if (!Object.hasOwn(value, trigger) || !Array.isArray(deps)) continue;
+        for (const dep of deps) {
+          if (typeof dep === "string" && !Object.hasOwn(value, dep)) {
+            addIssue(
+              state,
+              `${path}.${dep} is required when '${trigger}' is present`,
+            );
+          }
+        }
+      }
+    }
+    if (isJsonObject(schema.dependentSchemas)) {
+      for (const [trigger, subschema] of Object.entries(
+        schema.dependentSchemas as Record<string, unknown>,
+      )) {
+        if (!Object.hasOwn(value, trigger) || !isJsonObject(subschema))
+          continue;
+        const depResult = validateJsonSchema(
+          subschema as JsonSchema,
+          value,
+          MAX_VALIDATION_ISSUES,
+          limits,
+        );
+        if (!depResult.valid) {
+          for (const issue of depResult.issues) addIssue(state, issue);
+          if (depResult.issues.length === 0)
+            addIssue(
+              state,
+              `${path} must match dependent schema for '${trigger}'`,
+            );
+        }
+      }
+    }
     for (const [key, propertySchema] of Object.entries(properties)) {
       if (Object.hasOwn(value, key) && isJsonObject(propertySchema)) {
         validateValue(
@@ -1856,17 +1932,50 @@ function validateValue(
         );
       }
     }
+    if (isJsonObject(schema.propertyNames)) {
+      for (const key of Object.keys(value)) {
+        const keyResult = validateJsonSchema(
+          schema.propertyNames as JsonSchema,
+          key,
+          MAX_VALIDATION_ISSUES,
+          limits,
+        );
+        if (!keyResult.valid) {
+          addIssue(state, `${path} has invalid property name '${key}'`);
+        }
+      }
+    }
+    const patternProperties = isJsonObject(schema.patternProperties)
+      ? (schema.patternProperties as Record<string, unknown>)
+      : {};
+    for (const [key, propValue] of Object.entries(value)) {
+      for (const [pattern, subschema] of Object.entries(patternProperties)) {
+        if (patternMatches(pattern, key) && isJsonObject(subschema)) {
+          validateValue(
+            subschema as JsonSchema,
+            propValue,
+            `${path}.${key}`,
+            state,
+            depth + 1,
+            limits,
+          );
+        }
+      }
+    }
     if (schema.additionalProperties === false) {
       for (const key of Object.keys(value)) {
         // `in` would treat inherited Object.prototype names as declared
         // properties and let undeclared keys such as 'toString' through.
-        if (!Object.hasOwn(properties, key)) {
-          addIssue(state, `${path}.${key} is not allowed`);
-        }
+        if (Object.hasOwn(properties, key)) continue;
+        if (Object.keys(patternProperties).some((p) => patternMatches(p, key)))
+          continue;
+        addIssue(state, `${path}.${key} is not allowed`);
       }
     } else if (isJsonObject(schema.additionalProperties)) {
       for (const key of Object.keys(value)) {
         if (Object.hasOwn(properties, key)) continue;
+        if (Object.keys(patternProperties).some((p) => patternMatches(p, key)))
+          continue;
         validateValue(
           schema.additionalProperties as JsonSchema,
           value[key],
@@ -1910,8 +2019,58 @@ function validateValue(
         seen.add(key);
       }
     }
+    if (isJsonObject(schema.contains)) {
+      let matches = 0;
+      for (const item of value) {
+        if (
+          validateJsonSchema(
+            schema.contains as JsonSchema,
+            item,
+            MAX_VALIDATION_ISSUES,
+            limits,
+          ).valid
+        ) {
+          matches += 1;
+        }
+      }
+      const minContains =
+        typeof schema.minContains === "number" ? schema.minContains : 1;
+      const maxContains =
+        typeof schema.maxContains === "number" ? schema.maxContains : undefined;
+      if (matches < minContains) {
+        addIssue(
+          state,
+          `${path} must contain at least ${minContains} matching item${minContains === 1 ? "" : "s"} (matched ${matches})`,
+        );
+      }
+      if (maxContains !== undefined && matches > maxContains) {
+        addIssue(
+          state,
+          `${path} must contain at most ${maxContains} matching item${maxContains === 1 ? "" : "s"} (matched ${matches})`,
+        );
+      }
+    }
+    const prefixItems = Array.isArray(schema.prefixItems)
+      ? (schema.prefixItems as unknown[])
+      : Array.isArray(schema.items)
+        ? (schema.items as unknown[])
+        : [];
+    prefixItems.forEach((prefixSchema, index) => {
+      if (index >= value.length) return;
+      if (isJsonObject(prefixSchema)) {
+        validateValue(
+          prefixSchema as JsonSchema,
+          value[index],
+          `${path}[${index}]`,
+          state,
+          depth + 1,
+          limits,
+        );
+      }
+    });
     if (isJsonObject(schema.items)) {
-      value.forEach((item, index) =>
+      value.forEach((item, index) => {
+        if (index < prefixItems.length) return;
         validateValue(
           schema.items as JsonSchema,
           item,
@@ -1919,8 +2078,8 @@ function validateValue(
           state,
           depth + 1,
           limits,
-        ),
-      );
+        );
+      });
     }
   }
 }

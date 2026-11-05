@@ -480,11 +480,6 @@ describe("InMemoryToolRuntime", () => {
 
   it.each<[string, ToolDefinition["inputSchema"]]>([
     ["$ref", { $ref: "#/definitions/item" }],
-    ["const", { const: "fixed" }],
-    ["contains", { type: "array", contains: { type: "string" } }],
-    ["patternProperties", { type: "object", patternProperties: {} }],
-    ["propertyNames", { type: "object", propertyNames: { type: "string" } }],
-    ["if", { if: { type: "string" }, then: { const: "x" } }],
     ["nullable", { type: "string", nullable: true }],
     ["$schema", { $schema: "https://json-schema.org/draft/2020-12/schema" }],
   ])(
@@ -497,7 +492,6 @@ describe("InMemoryToolRuntime", () => {
   it.each<[string, unknown]>([
     ["boolean root schema", false],
     ["boolean items", { type: "array", items: false }],
-    ["tuple items", { type: "array", items: [{ type: "string" }] }],
     ["empty enum", { enum: [] }],
     ["object enum entry", { enum: [{ value: 1 }] }],
     ["NaN enum entry", { enum: [Number.NaN] }],
@@ -1182,14 +1176,14 @@ describe("schema audit", () => {
   });
 
   it("reports unsupported keywords without throwing", () => {
-    const result = auditInputSchema({ patternProperties: {} });
+    const result = auditInputSchema({ unevaluatedProperties: true });
 
     expect(result.supported).toBe(false);
     expect(result.diagnostics).toEqual([
       {
         code: "SCHEMA_UNSUPPORTED_KEYWORD",
         path: "$",
-        message: "Schema keyword 'patternProperties' at $ is not supported",
+        message: "Schema keyword 'unevaluatedProperties' at $ is not supported",
       },
     ]);
   });
@@ -1198,7 +1192,7 @@ describe("schema audit", () => {
     const result = auditInputSchema({
       type: "object",
       properties: {
-        name: { type: "string", patternProperties: {} },
+        name: { type: "string", unevaluatedProperties: true },
         count: { type: "number", minimum: "zero" },
       },
       additionalProperties: { type: "string" },

@@ -71,6 +71,13 @@ export interface CompileOptions {
   maxRefDepth?: number;
   /** Maximum number of operations considered. Default 1,000; maximum 10,000. */
   maxOperations?: number;
+  /**
+   * Explicitly supplied external documents for remote `$ref`s, keyed by base
+   * URI (e.g. `"https://schemas.example.com/common.json"`). Remote refs are
+   * never fetched over the network; a ref resolves from this map or is
+   * rejected with `REF_REMOTE_UNSUPPORTED`.
+   */
+  externalDocuments?: Record<string, Record<string, unknown>>;
 }
 
 /**

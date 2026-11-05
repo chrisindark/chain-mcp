@@ -137,6 +137,7 @@ interface NormalizedOptions {
   maxSourceBytes: number;
   maxRefDepth: number;
   maxOperations: number;
+  externalDocuments: Record<string, Record<string, unknown>>;
 }
 
 interface ParameterInfo {
@@ -793,7 +794,46 @@ function collectParameters(
       });
       return undefined;
     }
-    if (Object.hasOwn(parameter, "content")) {
+    // Content-based parameter: promote single JSON content schema when no
+    // companion `schema` is present.
+    if (
+      Object.hasOwn(parameter, "content") &&
+      !Object.hasOwn(parameter, "schema")
+    ) {
+      const content = parameter.content;
+      if (isPlainObject(content) && Object.keys(content).length === 1) {
+        const [mediaType] = Object.keys(content);
+        const entry = (content as Record<string, unknown>)[mediaType ?? ""];
+        const base =
+          (mediaType ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+        if (
+          (base === "application/json" || base.endsWith("+json")) &&
+          isPlainObject(entry) &&
+          isPlainObject((entry as Record<string, unknown>).schema)
+        ) {
+          (parameter as Record<string, unknown>).schema = (
+            entry as Record<string, unknown>
+          ).schema;
+          delete (parameter as Record<string, unknown>).content;
+        } else {
+          diagnostics.push({
+            severity: "error",
+            code: "PARAMETER_UNSUPPORTED",
+            message: `Parameter '${parameter.name}' uses unsupported content media type '${mediaType ?? ""}'; only a single application/json entry is supported`,
+            location: parameterLocation,
+          });
+          return undefined;
+        }
+      } else {
+        diagnostics.push({
+          severity: "error",
+          code: "PARAMETER_UNSUPPORTED",
+          message: "Content-encoded parameters are not supported",
+          location: parameterLocation,
+        });
+        return undefined;
+      }
+    } else if (Object.hasOwn(parameter, "content")) {
       diagnostics.push({
         severity: "error",
         code: "PARAMETER_UNSUPPORTED",
@@ -1016,6 +1056,7 @@ function collectParameters(
       strict: settings.strict,
       maxRefDepth: settings.maxRefDepth,
       diagnostics,
+      externalDocuments: settings.externalDocuments,
     });
     if (schema === undefined) {
       // Graceful degradation applies only to union-type parameters: skip a
@@ -1602,6 +1643,12 @@ function normalizeOptions(options: CompileOptions): NormalizedOptions {
       DEFAULT_MAX_OPERATIONS,
       MAX_OPERATIONS_LIMIT,
     ),
+    externalDocuments:
+      options.externalDocuments &&
+      typeof options.externalDocuments === "object" &&
+      !Array.isArray(options.externalDocuments)
+        ? (options.externalDocuments as Record<string, Record<string, unknown>>)
+        : {},
   };
 }
 

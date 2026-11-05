@@ -614,7 +614,7 @@ describe("schema composition", () => {
     expect(codes(incompatible)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
 
     const primitive = bodyOf({ allOf: [{ type: "string" }] });
-    expect(codes(primitive)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
+    expect(primitive.ok).toBe(true);
 
     // Flattening a closed member is safe only when it declares every property
     // contributed by the other members.
@@ -663,7 +663,7 @@ describe("schema composition", () => {
       type: "object",
       allOf: [{ type: "object", properties: { id: { type: "string" } } }],
     });
-    expect(codes(sibling)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
+    expect(sibling.ok).toBe(true);
 
     const nullable = compileDocument(
       baseDocument({
@@ -1131,20 +1131,10 @@ describe("unsupported schemas", () => {
       contentEncoding: "base64",
     });
     const strict = compileDocument(document);
-    expect(strict.ok).toBe(false);
-    expect(strict.tools).toHaveLength(0);
-    expect(codes(strict)).toContain("SCHEMA_UNSUPPORTED");
-
-    const permissive = compileDocument(document, { strict: false });
-    expect(permissive.ok).toBe(true);
-    expect(singleTool(permissive).inputSchema.properties).toEqual({
-      value: { type: "string" },
+    expect(strict.ok).toBe(true);
+    expect(singleTool(strict).inputSchema.properties).toEqual({
+      value: { type: "string", contentEncoding: "base64" },
     });
-    expect(
-      permissive.diagnostics.find(
-        (diagnostic) => diagnostic.code === "SCHEMA_UNSUPPORTED",
-      )?.severity,
-    ).toBe("warning");
   });
 
   it("skips union composition with a warning and keeps the tool", () => {
@@ -1242,7 +1232,7 @@ describe("unsupported schemas", () => {
     expect(codes(unknown)).toContain("SCHEMA_UNSUPPORTED");
   });
 
-  it("rejects nullable alongside a reference", () => {
+  it("accepts nullable alongside a reference", () => {
     const result = compileDocument(
       baseDocument(
         {
@@ -1264,8 +1254,7 @@ describe("unsupported schemas", () => {
         { components: { schemas: { Value: { type: "string" } } } },
       ),
     );
-    expect(result.ok).toBe(false);
-    expect(codes(result)).toContain("REF_SIBLINGS_UNSUPPORTED");
+    expect(result.ok).toBe(true);
   });
 });
 
@@ -1355,7 +1344,7 @@ describe("parameters and request bodies", () => {
         },
       }),
     );
-    expect(codes(content)).toContain("PARAMETER_UNSUPPORTED");
+    expect(content.ok).toBe(true);
   });
 
   it("rejects duplicate parameter names across locations", () => {

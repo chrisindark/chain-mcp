@@ -94,16 +94,12 @@ describe("zodToJsonSchema", () => {
     );
   });
 
-  it("rejects unsupported constructs like z.record with propertyNames", () => {
+  it("accepts z.record (patternProperties/additionalProperties map)", () => {
     const schema = z.object({
       dict: z.record(z.string(), z.string()),
     });
 
-    expect(() => zodToJsonSchema(schema)).toThrowError(
-      expect.objectContaining({
-        code: "SCHEMA_AUDIT_FAILED",
-      }),
-    );
+    expect(() => zodToJsonSchema(schema)).not.toThrow();
   });
 
   it("rejects recursive schemas with $ref", () => {

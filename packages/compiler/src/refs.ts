@@ -136,3 +136,40 @@ export function resolveObjectReference(
   }
   return resolved.value;
 }
+
+/**
+ * Resolves a remote `$ref` from an explicitly supplied external-document
+ * map. Compilation never performs network I/O: a ref resolves only when its
+ * base URI is present in `externalDocuments`.
+ */
+export function resolveExternalPointer(
+  externalDocuments: Record<string, Record<string, unknown>>,
+  ref: unknown,
+): LocalRefResult {
+  if (typeof ref !== "string" || ref.trim().length === 0) {
+    return {
+      ok: false,
+      code: "REF_INVALID",
+      message: "Reference must be a non-empty string",
+    };
+  }
+  const hashIndex = ref.indexOf("#");
+  const base = hashIndex === -1 ? ref : ref.slice(0, hashIndex);
+  const pointerPart = hashIndex === -1 ? "#" : ref.slice(hashIndex);
+  if (base.length === 0) {
+    return {
+      ok: false,
+      code: "REF_REMOTE_UNSUPPORTED",
+      message: `Remote or non-local reference '${ref}' is not supported`,
+    };
+  }
+  const doc = (externalDocuments as Record<string, unknown>)[base];
+  if (!isPlainObject(doc)) {
+    return {
+      ok: false,
+      code: "REF_REMOTE_UNSUPPORTED",
+      message: `External document '${base}' was not supplied via CompileOptions.externalDocuments`,
+    };
+  }
+  return resolveLocalPointer(doc, pointerPart);
+}
