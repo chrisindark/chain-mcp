@@ -14,43 +14,63 @@ network service and does not require credentials.
 - pnpm 11
 - No API keys or external services
 
-## Install and build
+## Local-clone quick start (clone → build → init → serve → MCP client)
 
-From the repository root:
+The `@chainmcp/*` packages are not published to a registry yet, so the
+supported distribution is the local clone. This is the exact sequence that
+the test `packages/cli/tests/quick-start.test.ts` executes in a temp
+directory. Every command below is literally what a user copies and pastes.
 
 ```bash
+# 1. Clone and build the repository
+git clone https://github.com/chrisindark/chain-mcp.git
+cd chain-mcp
 pnpm install
 pnpm build
-```
 
-The example lives in `examples/petstore/`. Its contract declares two operations:
-`getItem` and `createItem`.
-
-## Scaffold a project from the local clone
-
-The `@chainmcp/*` packages are not published to a registry yet. Generate a
-standalone project that links the packages from this checkout:
-
-```bash
+# 2. Generate a standalone server project outside the workspace.
+#    --local-deps records the clone root explicitly, writes relative file:
+#    dependency specifiers, and adds a pnpm-workspace.yaml override block.
 node packages/cli/dist/bin.js init \
   --spec ./examples/petstore/openapi.yaml \
   --output ../my-mcp-server \
   --local-deps "$PWD"
 
+# 3. Install, build, and run the generated server (stdio MCP server)
 cd ../my-mcp-server
 pnpm install
 pnpm build
-pnpm start
+pnpm start        # stdio MCP server
 ```
 
-`--local-deps` records the repository root explicitly, writes relative `file:`
-dependency specifiers, and adds a `pnpm-workspace.yaml` override block. The
-override is required because linked workspace packages declare their siblings as
-`workspace:*`, which pnpm cannot resolve outside the monorepo.
+`--local-deps` is required because linked workspace packages declare their
+siblings as `workspace:*`, which pnpm cannot resolve outside the monorepo.
+Local mode never infers a repository from the current working directory:
+pass the clone root with `--local-deps`. Use `--workspace-deps` instead when
+the generated project lives inside the monorepo and should keep
+`workspace:*`.
 
-Local mode never infers a repository from the current working directory: pass
-the clone root with `--local-deps`. Use `--workspace-deps` instead when the
-generated project lives inside the monorepo and should keep `workspace:*`.
+### Connect to Claude Desktop
+
+Add the built server to your `claude_desktop_config.json` (absolute paths,
+and replace `/Users/you/my-mcp-server` with your generated project's
+directory):
+
+```json
+{
+  "mcpServers": {
+    "my-api": {
+      "command": "node",
+      "args": ["/Users/you/my-mcp-server/dist/server.js"]
+    }
+  }
+}
+```
+
+Open Claude Desktop (or Cursor) and your API tools appear automatically in
+the tool inventory. No registry access is required at any step: the
+generated project installs `@chainmcp/*` from the clone, and the example's
+upstream is the deterministic in-process transport described below.
 
 ## Inspect the tools
 

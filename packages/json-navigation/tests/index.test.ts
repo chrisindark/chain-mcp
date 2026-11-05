@@ -279,12 +279,13 @@ describe("JSON Navigation", () => {
       principal: { id: "user-1", scopes: [] },
     };
 
-    it("creates all 4 standard JSON navigation tools", () => {
+    it("creates all 5 standard JSON navigation tools", () => {
       expect(tools.map((t) => t.name)).toEqual([
         "json_inspect_shape",
         "json_select_path",
         "json_paginate",
         "json_filter",
+        "json_create_handle",
       ]);
     });
 
@@ -314,6 +315,19 @@ describe("JSON Navigation", () => {
       )) as PaginatedResult;
       expect(res.items).toEqual([3, 4]);
       expect(res.totalItems).toBe(5);
+    });
+
+    it("creates a handle, then navigates by handle without pasting the document", async () => {
+      const createHandleTool = tools[4]!;
+      const { handle } = (await createHandleTool.execute(
+        { json: { users: [{ id: 1 }, { id: 2 }] } },
+        dummyContext,
+      )) as { handle: string; bytes: number };
+      const res = await selectTool.execute(
+        { handle, path: "$.users[0].id" },
+        dummyContext,
+      );
+      expect(res).toBe(1);
     });
 
     it("executes json_filter tool", async () => {

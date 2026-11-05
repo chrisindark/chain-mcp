@@ -580,6 +580,205 @@ describe("serveHttp transport and inbound auth", () => {
     }
   });
 
+  it("GET /readyz returns ready with no dependency detail when no readiness deps are configured", async () => {
+    const runtime = createTestRuntime();
+    const serverHandle = await serveHttp(
+      runtime,
+      {
+        name: "ready-probe",
+        version: "1.0.0",
+        createContext: () => ({
+          requestId: "probe",
+          tenantId: "default",
+          principal: { id: "p", scopes: [] },
+        }),
+      },
+      { port: 0 },
+    );
+
+    try {
+      const res = await fetch(new URL("/readyz", serverHandle.url));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        status: "ready",
+        name: "ready-probe",
+        version: "1.0.0",
+      });
+    } finally {
+      await serverHandle.close();
+    }
+  });
+
+  it("GET /readyz reports each dependency and stays ready when all are healthy", async () => {
+    const runtime = createTestRuntime();
+    const serverHandle = await serveHttp(
+      runtime,
+      {
+        name: "ready-probe",
+        version: "1.0.0",
+        createContext: () => ({
+          requestId: "probe",
+          tenantId: "default",
+          principal: { id: "p", scopes: [] },
+        }),
+      },
+      {
+        port: 0,
+        readiness: {
+          deps: [
+            { name: "cache", check: async () => true },
+            { name: "rate-limiter", check: () => true, degradedReady: true },
+          ],
+        },
+      },
+    );
+
+    try {
+      const res = await fetch(new URL("/readyz", serverHandle.url));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        status: "ready",
+        name: "ready-probe",
+        version: "1.0.0",
+        deps: [
+          { name: "cache", ok: true },
+          { name: "rate-limiter", ok: true, degraded: true },
+        ],
+      });
+    } finally {
+      await serverHandle.close();
+    }
+  });
+
+  it("GET /readyz returns 503 when a fail-closed dependency is unreachable, without leaking error details", async () => {
+    const runtime = createTestRuntime();
+    const serverHandle = await serveHttp(
+      runtime,
+      {
+        name: "ready-probe",
+        version: "1.0.0",
+        createContext: () => ({
+          requestId: "probe",
+          tenantId: "default",
+          principal: { id: "p", scopes: [] },
+        }),
+      },
+      {
+        port: 0,
+        readiness: {
+          deps: [
+            { name: "cache", check: () => true },
+            {
+              name: "rate-limiter",
+              check: async () => {
+                throw new Error("redis://user:password@secret-host:6379 down");
+              },
+            },
+          ],
+        },
+      },
+    );
+
+    try {
+      const res = await fetch(new URL("/readyz", serverHandle.url));
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as {
+        status: string;
+        deps: Array<{ name: string; ok: boolean }>;
+      };
+      expect(body.status).toBe("not_ready");
+      expect(body.deps).toEqual([
+        { name: "cache", ok: true },
+        { name: "rate-limiter", ok: false },
+      ]);
+      expect(JSON.stringify(body)).not.toContain("password");
+      expect(JSON.stringify(body)).not.toContain("secret-host");
+    } finally {
+      await serverHandle.close();
+    }
+  });
+
+  it("GET /readyz stays ready (200, degraded) when a fail-open dependency is unreachable", async () => {
+    const runtime = createTestRuntime();
+    const serverHandle = await serveHttp(
+      runtime,
+      {
+        name: "ready-probe",
+        version: "1.0.0",
+        createContext: () => ({
+          requestId: "probe",
+          tenantId: "default",
+          principal: { id: "p", scopes: [] },
+        }),
+      },
+      {
+        port: 0,
+        readiness: {
+          deps: [
+            {
+              name: "rate-limiter",
+              check: () => false,
+              degradedReady: true,
+            },
+          ],
+        },
+      },
+    );
+
+    try {
+      const res = await fetch(new URL("/readyz", serverHandle.url));
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        status: string;
+        deps: Array<{ name: string; ok: boolean; degraded?: boolean }>;
+      };
+      expect(body.status).toBe("degraded");
+      expect(body.deps).toEqual([
+        { name: "rate-limiter", ok: false, degraded: true },
+      ]);
+    } finally {
+      await serverHandle.close();
+    }
+  });
+
+  it("GET /health remains liveness-only even when a dependency is down", async () => {
+    const runtime = createTestRuntime();
+    const serverHandle = await serveHttp(
+      runtime,
+      {
+        name: "ready-probe",
+        version: "1.0.0",
+        createContext: () => ({
+          requestId: "probe",
+          tenantId: "default",
+          principal: { id: "p", scopes: [] },
+        }),
+      },
+      {
+        port: 0,
+        readiness: {
+          deps: [
+            {
+              name: "rate-limiter",
+              check: () => {
+                throw new Error("down");
+              },
+            },
+          ],
+        },
+      },
+    );
+
+    try {
+      const res = await fetch(new URL("/health", serverHandle.url));
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { status: string };
+      expect(body.status).toBe("ok");
+    } finally {
+      await serverHandle.close();
+    }
+  });
+
   it("gracefully shuts down when AbortSignal fires", async () => {
     const runtime = createTestRuntime();
     const controller = new AbortController();

@@ -37,15 +37,67 @@ includes its JSON quotes and escapes, because that is what the model receives.
 
 ## Configuring a tokenizer
 
-No tokenizer is bundled. A generic character heuristic is not a faithful count
-for a specific model, so deployments supply an adapter that matches the model
-they target:
+No model-specific tokenizer is bundled. A generic character heuristic is not a
+faithful count for a specific model, so exact deployments supply an adapter that
+matches the model they target. The `tokenMetrics.tokenizer` setting selects one
+of three modes:
 
-```ts
-import { InMemoryToolRuntime, type Tokenizer } from "@chainmcp/core";
+| Mode          | Behavior                                                                           |
+| ------------- | ---------------------------------------------------------------------------------- |
+| `approximate` | Built-in character ratio (`charactersPerToken`, default 4); always `estimate`.     |
+| `exact`       | Requires `tokenMetrics.module` or a registered factory; startup fails without one. |
+| `none`        | Measurement is disabled.                                                           |
+
+### Exact measurement from a module
+
+CLI servers, generated servers, and dynamic gateways can load an exact adapter
+from a module:
+
+```yaml
+tokenMetrics:
+  enabled: true
+  tokenizer: exact
+  modelId: gpt-4o
+  module: ./tokenizer.mjs
+```
+
+Relative module paths are resolved from the directory containing the
+configuration file. The module must export a `createTokenizer(config)` function
+(named or default). It may be `async`; the returned adapter's `count` must remain
+synchronous:
+
+```js
 import { encodingForModel } from "your-tokenizer-library";
 
 const encoding = encodingForModel("gpt-4o");
+
+export function createTokenizer(config) {
+  return {
+    id: config.modelId,
+    measurement: "exact",
+    count: (text) => encoding.encode(text).length,
+  };
+}
+```
+
+The loader fails startup when exact measurement has no source
+(`TOKENIZER_SOURCE_REQUIRED`), when the module cannot be imported or does not
+export a factory (`TOKENIZER_MODULE_INVALID`), or when the returned adapter is
+invalid (`TOKENIZER_INVALID`). An exact configuration also requires the adapter's
+`id` to equal `tokenMetrics.modelId` and its `measurement` to be `"exact"`; an
+adapter that declares `"estimate"` is rejected rather than relabeled.
+
+### Exact measurement from a registered factory
+
+Embedding code can register a factory instead of using a module:
+
+```ts
+import {
+  buildRuntimeOptions,
+  loadTokenizerFromConfig,
+  registerTokenizerFactory,
+} from "@chainmcp/config";
+import { InMemoryToolRuntime, type Tokenizer } from "@chainmcp/core";
 
 const tokenizer: Tokenizer = {
   id: "gpt-4o",
@@ -53,14 +105,27 @@ const tokenizer: Tokenizer = {
   count: (text) => encoding.encode(text).length,
 };
 
-const runtime = new InMemoryToolRuntime({
-  tokenizer,
-  metrics: sink,
+registerTokenizerFactory("gpt-4o", () => tokenizer);
+
+const tokenizerFromConfig = await loadTokenizerFromConfig(config.tokenMetrics, {
+  baseDir: configDir,
 });
+const runtime = new InMemoryToolRuntime(
+  buildRuntimeOptions(config, { tokenizer: tokenizerFromConfig }),
+);
 ```
 
-If the available counter is approximate, set `measurement: "estimate"`. The
-runtime records the declaration verbatim and never upgrades it to `exact`.
+`buildRuntimeOptions()` is synchronous and cannot import modules. When
+`tokenMetrics.tokenizer: exact` is configured, it throws
+`TOKENIZER_SOURCE_REQUIRED` unless the loaded tokenizer is passed through
+`RuntimeOptions.tokenizer`. The CLI, gateway, and generated server load the
+tokenizer once and pass that same instance to the runtime, so budget checks and
+`tokenUsage` events use one adapter.
+
+If the available counter is approximate, use `tokenizer: approximate` or an
+adapter declaring `measurement: "estimate"`. The runtime records the declaration
+verbatim and never upgrades it to `exact`. Module code runs in-process and is
+trusted like the rest of the configuration; do not load untrusted modules.
 
 ## Exact versus estimated
 

@@ -31,8 +31,62 @@ export function filterData<T = unknown>(
 
 export function createJsonNavigationTools(
   limits?: NavigationLimits,
+  handleRegistry?: ResultHandleRegistry | HandleRegistryOptions,
 ): ToolDefinition[];
 ```
+
+### Result handles
+
+Large documents can be stored once and referenced by an opaque handle instead of being pasted back inline:
+
+```ts
+export const RESULT_HANDLE_EXPIRED: string;
+
+export class ResultHandleExpiredError extends JsonNavigationError {
+  readonly code: "RESULT_HANDLE_EXPIRED";
+}
+
+export class ResultHandleTooLargeError extends JsonNavigationError {
+  readonly code: "RESULT_HANDLE_TOO_LARGE";
+}
+
+export interface HandleRegistryOptions {
+  maxPerPrincipal?: number; // default 50
+  maxPerTenant?: number; // default 250
+  maxTotal?: number; // default 1,000
+  maxBytes?: number; // default 1,000,000 per document
+  maxTotalBytes?: number; // default 8,000,000 across all documents
+  ttlMs?: number; // default 600,000 (10 minutes)
+  minBytes?: number; // default 0; below this, storeIfLarge returns null
+  secret?: string; // per-registry HMAC secret; random when omitted
+  now?: () => number;
+}
+
+export class ResultHandleRegistry {
+  constructor(options?: HandleRegistryOptions);
+  readonly size: number;
+  readonly totalBytesUsed: number;
+  measureBytes(document: unknown): number;
+  store(
+    document: unknown,
+    key: { tenantId: string; principalId: string },
+  ): string;
+  storeIfLarge(
+    document: unknown,
+    key: { tenantId: string; principalId: string },
+  ): string | null;
+  resolve(
+    handle: string,
+    key: { tenantId: string; principalId: string },
+  ): unknown;
+}
+```
+
+The four navigation tools each accept either the inline `json` argument or a `handle`, plus a fifth tool:
+
+- `json_create_handle`: stores a document server-side and returns `{ handle, bytes }`.
+
+Handles are tenant- and principal-scoped, opacity-preserving (tenant/principal ids are never embedded), TTL'd, and LRU-bounded per principal, per tenant, and in total (with a total-bytes cap). Unknown, expired, evicted, tampered, cross-tenant, or cross-principal handles all fail with the same stable `RESULT_HANDLE_EXPIRED` error, so handle existence does not leak across scopes. Documents above the byte cap throw `ResultHandleTooLargeError` rather than being silently truncated.
 
 ### Invariants and Limits
 

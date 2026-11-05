@@ -150,23 +150,23 @@ flowchart LR
 
 ChainMcp is organized into 15 modular workspace packages:
 
-| Package                         | Purpose in One Sentence                                                                                                                                                             |
-| :------------------------------ | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`@chainmcp/core`**            | The brain: handles tool registry, input validation, execution timeouts, cancellation, token measurement, and caching interfaces.                                                    |
-| **`@chainmcp/compiler`**        | Reads OpenAPI 3.0/3.1 specs and compiles them into deterministic tool definitions with linear-time regex audits.                                                                    |
-| **`@chainmcp/authoring`**       | Lets you write tools directly in TypeScript with Zod schemas instead of needing an OpenAPI file.                                                                                    |
-| **`@chainmcp/executor`**        | Outbound HTTP client with SSRF defense, DNS pinning, redirect limits, and response byte caps.                                                                                       |
-| **`@chainmcp/server`**          | Wraps the official Model Context Protocol (MCP) SDK v2 for stdio and HTTP/SSE transports.                                                                                           |
-| **`@chainmcp/gateway`**         | Central multi-tenant hub for dynamically publishing, versioning, isolating, and rolling back contracts.                                                                             |
-| **`@chainmcp/auth`**            | Maps caller identity to permissions and injects upstream credentials (OAuth 2.0 Client Credentials, API keys, Bearer tokens).                                                       |
-| **`@chainmcp/rate-limit`**      | Token-bucket quotas (requests/min) and concurrency limiters with in-memory and Redis backends.                                                                                      |
-| **`@chainmcp/cache-redis`**     | Optional Redis adapter for persistent, distributed response caching.                                                                                                                |
-| **`@chainmcp/analytics`**       | Redacted structured logging, OpenTelemetry metrics, tracing, and sliding-window operational summaries.                                                                              |
-| **`@chainmcp/json-navigation`** | AI helper tools for paginating, slicing, inspecting, and filtering JSON documents supplied inline by the caller (no result handles; the whole document must already be in context). |
-| **`@chainmcp/config`**          | Validates `chainmcp.config.yaml` using strict Zod schemas.                                                                                                                          |
-| **`@chainmcp/cli`**             | Command-line tool (`chainmcp init`, `validate`, `build`, `serve`, `export`, `diff`).                                                                                                |
-| **`@chainmcp/declarative`**     | Validates versioned JSON HTTP tool descriptors and lowers them into the bounded executor (post-1.0).                                                                                |
-| **`@chainmcp/admin`**           | Self-hosted operator API and console for validating, previewing, publishing, and rolling back descriptors (post-1.0).                                                               |
+| Package                         | Purpose in One Sentence                                                                                                                                                                                                        |
+| :------------------------------ | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`@chainmcp/core`**            | The brain: handles tool registry, input validation, execution timeouts, cancellation, token measurement, and caching interfaces.                                                                                               |
+| **`@chainmcp/compiler`**        | Reads OpenAPI 3.0/3.1 specs and compiles them into deterministic tool definitions with linear-time regex audits.                                                                                                               |
+| **`@chainmcp/authoring`**       | Lets you write tools directly in TypeScript with Zod schemas instead of needing an OpenAPI file.                                                                                                                               |
+| **`@chainmcp/executor`**        | Outbound HTTP client with SSRF defense, DNS pinning, redirect limits, and response byte caps.                                                                                                                                  |
+| **`@chainmcp/server`**          | Wraps the official Model Context Protocol (MCP) SDK v2 for stdio and HTTP/SSE transports.                                                                                                                                      |
+| **`@chainmcp/gateway`**         | Central multi-tenant hub for dynamically publishing, versioning, isolating, and rolling back contracts.                                                                                                                        |
+| **`@chainmcp/auth`**            | Maps caller identity to permissions and injects upstream credentials (OAuth 2.0 Client Credentials, API keys, Bearer tokens).                                                                                                  |
+| **`@chainmcp/rate-limit`**      | Token-bucket quotas (requests/min) and concurrency limiters with in-memory and Redis backends.                                                                                                                                 |
+| **`@chainmcp/cache-redis`**     | Optional Redis adapter for persistent, distributed response caching.                                                                                                                                                           |
+| **`@chainmcp/analytics`**       | Redacted structured logging, OpenTelemetry metrics, tracing, and sliding-window operational summaries.                                                                                                                         |
+| **`@chainmcp/json-navigation`** | AI helper tools for paginating, slicing, inspecting, and filtering JSON documents. Documents supplied inline or by an opaque result handle stored server-side, so large payloads are not pasted back into the model's context. |
+| **`@chainmcp/config`**          | Validates `chainmcp.config.yaml` using strict Zod schemas.                                                                                                                                                                     |
+| **`@chainmcp/cli`**             | Command-line tool (`chainmcp init`, `validate`, `build`, `serve`, `export`, `diff`).                                                                                                                                           |
+| **`@chainmcp/declarative`**     | Validates versioned JSON HTTP tool descriptors and lowers them into the bounded executor (post-1.0).                                                                                                                           |
+| **`@chainmcp/admin`**           | Self-hosted operator API and console for validating, previewing, publishing, and rolling back descriptors (post-1.0).                                                                                                          |
 
 ---
 
@@ -223,7 +223,7 @@ connected exporter (or implement `MetricsSink` directly for another backend):
 ```
 chainmcp.tool.invocations    counter   tool invocations by tool.name, tenant.id, and outcome
 chainmcp.tool.duration       histogram tool execution duration in milliseconds
-chainmcp.tool.tokens         counter   tokens measured or estimated for tool results (a deployment must inject a Tokenizer for exact counts; otherwise counts are estimates)
+chainmcp.tool.tokens         counter   tokens measured or estimated for tool results (a deployment must configure an exact tokenizer module or factory for exact counts; otherwise counts are estimates)
 chainmcp.tool.payload_bytes  histogram serialized result byte sizes
 ```
 
@@ -283,25 +283,30 @@ You do not need to write complex code to use ChainMcp. Here is the 3-step path t
 
 ### Step 1: Initialize the Project
 
-Open your terminal in any directory and run:
+ChainMcp is not published to a registry yet, so run it from a local clone
+(the registry `npx @chainmcp/cli ...` form becomes available after publishing):
 
 ```bash
-npx @chainmcp/cli init --spec https://petstore.swagger.io/v2/swagger.json
-```
+git clone https://github.com/chrisindark/chain-mcp.git
+cd chain-mcp
+pnpm install
+pnpm build
 
-> [!NOTE]
-> The registry-hosted `npx` form becomes available after publishing. To use a
-> local clone today, run `node packages/cli/dist/bin.js init --spec <spec>
---local-deps <clone-root>` from the repository root and install the generated
-> project with `pnpm install`.
+node packages/cli/dist/bin.js init \
+  --spec https://petstore.swagger.io/v2/swagger.json \
+  --output ../my-mcp-server \
+  --local-deps "$PWD"
+cd ../my-mcp-server
+pnpm install
+```
 
 This inspects your API, creates an audited tool definition, and creates a clean `chainmcp.config.yaml`.
 
 ### Step 2: Build & Verify
 
 ```bash
-chainmcp validate
-chainmcp build
+pnpm build
+node ../chain-mcp/packages/cli/dist/bin.js validate
 ```
 
 ChainMcp verifies that all URLs are safe, all regular expressions are immune to ReDoS attacks, and that all inputs are bounded.

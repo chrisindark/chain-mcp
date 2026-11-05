@@ -1,21 +1,30 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   BaseUrlSchema,
   buildExecutorOptions,
+  buildReadinessDeps,
   buildRuntimeOptions,
   createAuthorizerFromConfig,
   createCacheStoreFromConfig,
+  createHandleRegistryOptionsFromConfig,
   createLoggerFromConfig,
   createNavigationLimitsFromConfig,
   createRateLimiterFromConfig,
   createTokenizerFromConfig,
   createUpstreamCredentialProviderFromConfig,
+  loadTokenizerFromConfig,
   logRateLimiterStartup,
   parseConfig,
   parseGatewayConfig,
+  registerTokenizerFactory,
   resolveLogLevel,
   safeParseConfig,
   safeParseGatewayConfig,
+  TokenizerConfigError,
+  unregisterTokenizerFactory,
 } from "../src/index.js";
 import { OperationScopeAuthorizer } from "@chainmcp/auth";
 import {
@@ -55,6 +64,7 @@ describe("configuration schema", () => {
         port: 3333,
         requestTimeoutMs: 15_000,
         shutdownTimeoutMs: 10_000,
+        toolsPageSize: 100,
         maxResponseBytes: 1_000_000,
         maxRequestBytes: 1_048_576,
         maxMultipartPartBytes: 1_048_576,
@@ -114,6 +124,7 @@ describe("configuration schema", () => {
         port: 3333,
         requestTimeoutMs: 15_000,
         shutdownTimeoutMs: 10_000,
+        toolsPageSize: 100,
         maxResponseBytes: 1_000_000,
         maxRequestBytes: 1_048_576,
         maxMultipartPartBytes: 1_048_576,
@@ -193,6 +204,37 @@ describe("configuration schema", () => {
         version: 1,
         name: "catalog",
         server: { shutdownTimeoutMs: -1 },
+      }),
+    ).toThrow();
+  });
+
+  it("accepts a custom tools page size, including zero (pagination disabled)", () => {
+    expect(
+      parseConfig({
+        version: 1,
+        name: "catalog",
+        server: { toolsPageSize: 25 },
+      }).server.toolsPageSize,
+    ).toBe(25);
+    expect(
+      parseConfig({
+        version: 1,
+        name: "catalog",
+        server: { toolsPageSize: 0 },
+      }).server.toolsPageSize,
+    ).toBe(0);
+    expect(() =>
+      parseConfig({
+        version: 1,
+        name: "catalog",
+        server: { toolsPageSize: -1 },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseConfig({
+        version: 1,
+        name: "catalog",
+        server: { toolsPageSize: 1.5 },
       }),
     ).toThrow();
   });
@@ -525,6 +567,142 @@ describe("rateLimit configuration and factory", () => {
     ).client;
     const cacheClient = (runtimeOptions.cache?.store as RedisCacheStore).client;
     expect(rateLimitClient).toBe(cacheClient);
+  });
+
+  it("buildReadinessDeps is empty when no Redis dependencies are configured", () => {
+    const config = parseConfig({ version: 1, name: "no-deps" });
+    expect(buildReadinessDeps(config, {})).toEqual([]);
+  });
+
+  it("buildReadinessDeps probes the Redis client and never writes (fail-closed limiter)", async () => {
+    const config = parseConfig({
+      version: 1,
+      name: "redis-ready",
+      rateLimit: {
+        enabled: true,
+        provider: "redis",
+        failurePolicy: "fail-closed",
+        redis: { url: "redis://127.0.0.1:6379" },
+      },
+    });
+    const evalCalls: string[] = [];
+    const client: RedisRateLimitClient = {
+      async eval(script) {
+        evalCalls.push(script);
+        return 1;
+      },
+    };
+    const limiter = createRateLimiterFromConfig(config.rateLimit, {
+      redisClient: client,
+    });
+    const deps = buildReadinessDeps(config, { rateLimiter: limiter });
+    expect(deps).toEqual([
+      { name: "rate-limiter", check: expect.any(Function) },
+    ]);
+    await expect(deps[0]!.check()).resolves.toBe(true);
+    expect(evalCalls).toEqual(["return 1"]);
+  });
+
+  it("buildReadinessDeps reports an unreachable fail-closed limiter as unhealthy", async () => {
+    const config = parseConfig({
+      version: 1,
+      name: "redis-down",
+      rateLimit: {
+        enabled: true,
+        provider: "redis",
+        failurePolicy: "fail-closed",
+        redis: { url: "redis://127.0.0.1:6379" },
+      },
+    });
+    const client: RedisRateLimitClient = {
+      async eval() {
+        throw new Error("ECONNREFUSED redis://user:password@secret-host");
+      },
+    };
+    const limiter = createRateLimiterFromConfig(config.rateLimit, {
+      redisClient: client,
+    });
+    const deps = buildReadinessDeps(config, { rateLimiter: limiter });
+    await expect(deps[0]!.check()).resolves.toBe(false);
+  });
+
+  it("buildReadinessDeps marks a fail-open limiter degradedReady", () => {
+    const config = parseConfig({
+      version: 1,
+      name: "redis-open",
+      rateLimit: {
+        enabled: true,
+        provider: "redis",
+        failurePolicy: "fail-open",
+        redis: { url: "redis://127.0.0.1:6379" },
+      },
+    });
+    const client: RedisRateLimitClient = {
+      async eval() {
+        return 1;
+      },
+    };
+    const limiter = createRateLimiterFromConfig(config.rateLimit, {
+      redisClient: client,
+    });
+    const deps = buildReadinessDeps(config, { rateLimiter: limiter });
+    expect(deps[0]?.degradedReady).toBe(true);
+  });
+
+  it("buildReadinessDeps probes the cache store with a read, never a write", async () => {
+    const config = parseConfig({
+      version: 1,
+      name: "cache-ready",
+      cache: {
+        enabled: true,
+        provider: "redis",
+        redis: { url: "redis://127.0.0.1:6379" },
+      },
+    });
+    const calls: string[] = [];
+    const cacheClient: RedisCacheClient = {
+      async get(key) {
+        calls.push(`get ${key}`);
+        return null;
+      },
+      async set(key) {
+        calls.push(`set ${key}`);
+      },
+      async delete(key) {
+        calls.push(`delete ${key}`);
+      },
+    };
+    const store = createCacheStoreFromConfig(config.cache, {
+      redisClient: cacheClient,
+    });
+    const deps = buildReadinessDeps(config, { cacheStore: store });
+    expect(deps[0]?.name).toBe("cache");
+    await expect(deps[0]!.check()).resolves.toBe(true);
+    expect(calls).toEqual(["get chainmcp:readiness:probe"]);
+  });
+
+  it("buildReadinessDeps reports an unreachable cache store as unhealthy", async () => {
+    const config = parseConfig({
+      version: 1,
+      name: "cache-down",
+      cache: {
+        enabled: true,
+        provider: "redis",
+        redis: { url: "redis://127.0.0.1:6379" },
+      },
+    });
+    const cacheClient: RedisCacheClient = {
+      async get() {
+        throw new Error("ECONNREFUSED");
+      },
+      async set() {},
+      async delete() {},
+    };
+    const store = createCacheStoreFromConfig(config.cache, {
+      redisClient: cacheClient,
+    });
+    const deps = buildReadinessDeps(config, { cacheStore: store });
+    await expect(deps[0]!.check()).resolves.toBe(false);
   });
 
   it("logRateLimiterStartup logs connection health and quota summary without secrets", async () => {
@@ -954,7 +1132,47 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
         maxResultBytes: 50_000,
         maxVisitedNodes: 50_000,
         timeoutMs: 5_000,
+        handles: {
+          enabled: true,
+          maxPerPrincipal: 50,
+          maxPerTenant: 250,
+          maxTotal: 1_000,
+          maxBytes: 1_000_000,
+          maxTotalBytes: 8_000_000,
+          ttlMs: 600_000,
+          minBytes: 0,
+        },
       });
+    });
+
+    it("maps handle config into registry options when enabled", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test",
+        jsonNavigation: { handles: { enabled: true, maxPerPrincipal: 10 } },
+      });
+      expect(
+        createHandleRegistryOptionsFromConfig(config.jsonNavigation),
+      ).toEqual({
+        maxPerPrincipal: 10,
+        maxPerTenant: 250,
+        maxTotal: 1_000,
+        maxBytes: 1_000_000,
+        maxTotalBytes: 8_000_000,
+        ttlMs: 600_000,
+        minBytes: 0,
+      });
+    });
+
+    it("returns undefined handle options when handles are disabled", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test",
+        jsonNavigation: { handles: { enabled: false } },
+      });
+      expect(
+        createHandleRegistryOptionsFromConfig(config.jsonNavigation),
+      ).toBeUndefined();
     });
 
     it("maps config into NavigationLimits", () => {
@@ -1198,6 +1416,253 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
       expect(tokenizer?.count("12345678")).toBe(2);
       expect(tokenizer?.count("12345")).toBe(2);
       expect(tokenizer?.count("")).toBe(0);
+    });
+
+    it("fails fast when exact measurement has no tokenizer source", () => {
+      expect(() =>
+        createTokenizerFromConfig({
+          enabled: true,
+          tokenizer: "exact",
+          modelId: "gpt-4o",
+          charactersPerToken: 4,
+        }),
+      ).toThrowError(
+        expect.objectContaining({ code: "TOKENIZER_SOURCE_REQUIRED" }),
+      );
+    });
+
+    it("loads an exact tokenizer from a registered factory", async () => {
+      const adapter = {
+        id: "gpt-4o",
+        measurement: "exact" as const,
+        count: (text: string) => text.length,
+      };
+      const factory = vi.fn(() => adapter);
+      registerTokenizerFactory("gpt-4o", factory);
+      try {
+        const tokenizer = await loadTokenizerFromConfig({
+          enabled: true,
+          tokenizer: "exact",
+          modelId: "gpt-4o",
+          charactersPerToken: 4,
+        });
+
+        expect(factory).toHaveBeenCalledOnce();
+        expect(tokenizer).toBe(adapter);
+        expect(tokenizer?.measurement).toBe("exact");
+      } finally {
+        unregisterTokenizerFactory("gpt-4o");
+      }
+    });
+
+    it("rejects an exact factory that declares an estimate", async () => {
+      registerTokenizerFactory("gpt-4o", () => ({
+        id: "gpt-4o",
+        measurement: "estimate",
+        count: () => 1,
+      }));
+      try {
+        await expect(
+          loadTokenizerFromConfig({
+            enabled: true,
+            tokenizer: "exact",
+            modelId: "gpt-4o",
+            charactersPerToken: 4,
+          }),
+        ).rejects.toMatchObject({ code: "TOKENIZER_INVALID" });
+      } finally {
+        unregisterTokenizerFactory("gpt-4o");
+      }
+    });
+
+    it("wraps tokenizer factory failures with a stable code", async () => {
+      registerTokenizerFactory("gpt-4o", () => {
+        throw new Error("factory exploded");
+      });
+      try {
+        await expect(
+          loadTokenizerFromConfig({
+            enabled: true,
+            tokenizer: "exact",
+            modelId: "gpt-4o",
+            charactersPerToken: 4,
+          }),
+        ).rejects.toMatchObject({ code: "TOKENIZER_FACTORY_FAILED" });
+      } finally {
+        unregisterTokenizerFactory("gpt-4o");
+      }
+    });
+
+    it("rejects an exact configuration with no registered factory", async () => {
+      await expect(
+        loadTokenizerFromConfig({
+          enabled: true,
+          tokenizer: "exact",
+          modelId: "unregistered-model",
+          charactersPerToken: 4,
+        }),
+      ).rejects.toMatchObject({ code: "TOKENIZER_SOURCE_REQUIRED" });
+    });
+
+    it("wraps tokenizer module load failures with a stable code", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "chainmcp-tokenizer-"));
+      try {
+        await expect(
+          loadTokenizerFromConfig(
+            {
+              enabled: true,
+              tokenizer: "exact",
+              modelId: "gpt-4o",
+              charactersPerToken: 4,
+              module: "./missing-tokenizer.mjs",
+            },
+            { baseDir: dir },
+          ),
+        ).rejects.toMatchObject({ code: "TOKENIZER_MODULE_INVALID" });
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects blank tokenizer factory registrations", () => {
+      expect(() =>
+        registerTokenizerFactory(" ", () => ({
+          id: "x",
+          measurement: "exact",
+          count: () => 1,
+        })),
+      ).toThrow(TypeError);
+    });
+
+    it("loads an exact tokenizer module relative to the config directory", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "chainmcp-tokenizer-"));
+      try {
+        await writeFile(
+          join(dir, "tokenizer.mjs"),
+          `export function createTokenizer(config) {
+            return {
+              id: config.modelId,
+              measurement: "exact",
+              count: (text) => text.length,
+            };
+          }\n`,
+          "utf8",
+        );
+
+        const tokenizer = await loadTokenizerFromConfig(
+          {
+            enabled: true,
+            tokenizer: "exact",
+            modelId: "gpt-4o-mini",
+            charactersPerToken: 4,
+            module: "./tokenizer.mjs",
+          },
+          { baseDir: dir },
+        );
+
+        expect(tokenizer?.id).toBe("gpt-4o-mini");
+        expect(tokenizer?.measurement).toBe("exact");
+        expect(tokenizer?.count("hello")).toBe(5);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects module adapters that do not match modelId", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "chainmcp-tokenizer-"));
+      try {
+        await writeFile(
+          join(dir, "tokenizer.mjs"),
+          `export default function createTokenizer() {
+            return {
+              id: "other-model",
+              measurement: "exact",
+              count: (text) => text.length,
+            };
+          }\n`,
+          "utf8",
+        );
+
+        await expect(
+          loadTokenizerFromConfig(
+            {
+              enabled: true,
+              tokenizer: "exact",
+              modelId: "gpt-4o",
+              charactersPerToken: 4,
+              module: "./tokenizer.mjs",
+            },
+            { baseDir: dir },
+          ),
+        ).rejects.toMatchObject({ code: "TOKENIZER_INVALID" });
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects tokenizer modules without a factory export", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "chainmcp-tokenizer-"));
+      try {
+        await writeFile(
+          join(dir, "tokenizer.mjs"),
+          `export const tokenizer = {
+            id: "gpt-4o",
+            measurement: "exact",
+            count: (text) => text.length,
+          };\n`,
+          "utf8",
+        );
+
+        await expect(
+          loadTokenizerFromConfig(
+            {
+              enabled: true,
+              tokenizer: "exact",
+              modelId: "gpt-4o",
+              charactersPerToken: 4,
+              module: "./tokenizer.mjs",
+            },
+            { baseDir: dir },
+          ),
+        ).rejects.toMatchObject({ code: "TOKENIZER_MODULE_INVALID" });
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("requires tokenMetrics.tokenizer: exact when module is configured", () => {
+      const result = safeParseConfig({
+        version: 1,
+        name: "invalid-tokenizer-module",
+        tokenMetrics: { module: "./tokenizer.mjs" },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0]?.message).toContain(
+          "tokenMetrics.module requires tokenMetrics.tokenizer: exact",
+        );
+      }
+    });
+
+    it("rejects exact configuration in buildRuntimeOptions unless a tokenizer is injected", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "exact-without-factory",
+        tokenMetrics: { enabled: true, tokenizer: "exact", modelId: "gpt-4o" },
+      });
+
+      expect(() => buildRuntimeOptions(config)).toThrow(TokenizerConfigError);
+
+      const adapter = {
+        id: "gpt-4o",
+        measurement: "exact" as const,
+        count: (text: string) => text.length,
+      };
+      const runtimeOptions = buildRuntimeOptions(config, {
+        tokenizer: adapter,
+      });
+      expect(runtimeOptions.tokenizer).toBe(adapter);
     });
 
     it("wires cache, tokenizer, and projector into buildRuntimeOptions", () => {

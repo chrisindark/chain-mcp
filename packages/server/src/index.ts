@@ -20,6 +20,7 @@ import {
   type Transport,
 } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { createHash } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
 
 export type {
@@ -38,6 +39,11 @@ export interface McpServerOptions {
     request: McpRequestContext,
   ) => ToolContext | Promise<ToolContext>;
   maxResponseBytes?: number;
+  /**
+   * Maximum number of tools returned per `tools/list` page. Defaults to 100;
+   * `0` disables pagination and answers every listing in one page.
+   */
+  toolsPageSize?: number;
   listChanged?: boolean;
   onclose?: () => void;
 }
@@ -68,6 +74,17 @@ export interface StdioServeOptions {
 
 const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000;
 const MAX_ALLOWED_RESPONSE_BYTES = 100_000_000;
+const DEFAULT_TOOLS_PAGE_SIZE = 100;
+const TOOLS_CURSOR_VERSION = 1;
+const STALE_TOOLS_CURSOR_MESSAGE =
+  "STALE_CURSOR: The tools/list cursor is invalid or no longer valid for the current tool listing";
+
+type ListedTool = {
+  name: string;
+  description: string;
+  // The audited subset guarantees an object root.
+  inputSchema: { type: "object"; [key: string]: unknown };
+};
 
 /** Bridges the shared runtime to the official MCP SDK. */
 export function createMcpServer(
@@ -85,19 +102,27 @@ export function createMcpServer(
       `maxResponseBytes must be a positive safe integer no greater than ${MAX_ALLOWED_RESPONSE_BYTES}`,
     );
   }
+  const toolsPageSize = normalizeToolsPageSize(options.toolsPageSize);
 
   const server = new McpServer({
     name: options.name,
     version: options.version,
   });
   if (runtime.tenantMode === "multi-tenant") {
-    installMultiTenantToolHandlers(server, runtime, options, maxResponseBytes);
+    installMultiTenantToolHandlers(
+      server,
+      runtime,
+      options,
+      maxResponseBytes,
+      toolsPageSize,
+    );
   } else {
     // The adapter snapshots tools at creation, which is exact for
     // single-tenant runtimes. The runtime declares its tenancy mode on the
     // public `ToolRuntime` interface, so a multi-tenant runtime cannot be
     // mistaken for a single-tenant one and listed without a caller context.
-    for (const tool of runtime.listTools()) {
+    const runtimeTools = sortToolsByName(runtime.listTools());
+    for (const tool of runtimeTools) {
       assertServerToolSchema(tool.name, tool.inputSchema);
       server.registerTool(
         tool.name,
@@ -120,6 +145,9 @@ export function createMcpServer(
           return server.server.projectCallToolResult(result, undefined);
         },
       );
+    }
+    if (runtimeTools.length > 0) {
+      installSingleTenantToolsListHandler(server, runtimeTools, toolsPageSize);
     }
   }
 
@@ -235,39 +263,30 @@ async function toolCallResult(
  * runtimes (ADR 0008). Listings are identity-scoped against the same tenant
  * registry that `callTool` resolves against, so discovery and invocation
  * cannot disagree, and per-call authorization still runs on every invocation.
- * Protocol pagination is not implemented: like the snapshot path, every listing
- * answers once with no `nextCursor`.
+ * Listings are paginated with a revision-bound cursor shared with the
+ * single-tenant snapshot path.
  */
 function installMultiTenantToolHandlers(
   server: McpServer,
   runtime: ToolRuntime,
   options: McpServerOptions,
   maxResponseBytes: number,
+  toolsPageSize: number,
 ): void {
   // Multi-tenant handlers declare tool capabilities including listChanged support.
   const listChanged = options.listChanged ?? true;
   server.server.registerCapabilities({ tools: { listChanged } });
-  server.server.setRequestHandler("tools/list", async (_request, ctx) => {
+  server.server.setRequestHandler("tools/list", async (request, ctx) => {
     try {
       const context = await establishContext(options, ctx);
-      const tools = runtime.listTools(context).map((tool) => {
-        assertServerToolSchema(tool.name, tool.inputSchema);
-        const inputSchemaJson = fromJsonSchema(
-          tool.inputSchema as Parameters<typeof fromJsonSchema>[0],
-        )["~standard"].jsonSchema.input({ target: "draft-2020-12" });
-        return {
-          name: tool.name,
-          description: tool.description,
-          // The audited subset guarantees an object root.
-          inputSchema: inputSchemaJson as {
-            type: "object";
-            [key: string]: unknown;
-          },
-        };
-      });
-      return { tools };
+      const tools = sortToolsByName(runtime.listTools(context)).map(
+        toListedTool,
+      );
+      return toolsPage(tools, toolsPageSize, request.params?.cursor);
     } catch (error) {
-      // Fail closed without leaking listing internals.
+      // Cursor failures are client-actionable and must keep their protocol
+      // code; everything else fails closed without leaking listing internals.
+      if (error instanceof ProtocolError) throw error;
       const message =
         error instanceof RuntimeError
           ? safeRuntimeErrorMessage(error)
@@ -292,6 +311,146 @@ function installMultiTenantToolHandlers(
       undefined,
     );
   });
+}
+
+/**
+ * Serves the single-tenant snapshot with pagination. The SDK installs its own
+ * `tools/list` handler as a side effect of `registerTool`, so this replaces it
+ * once every tool has been registered.
+ */
+function installSingleTenantToolsListHandler(
+  server: McpServer,
+  runtimeTools: ReturnType<ToolRuntime["listTools"]>,
+  toolsPageSize: number,
+): void {
+  const tools = runtimeTools.map(toListedTool);
+  const revision = toolsListingRevision(tools);
+  server.server.setRequestHandler("tools/list", (request) =>
+    toolsPage(tools, toolsPageSize, request.params?.cursor, revision),
+  );
+}
+
+/** Converts one runtime tool into the MCP-listed shape after schema audit. */
+function toListedTool(tool: {
+  name: string;
+  description: string;
+  inputSchema: JsonSchema;
+}): ListedTool {
+  assertServerToolSchema(tool.name, tool.inputSchema);
+  const inputSchemaJson = fromJsonSchema(
+    tool.inputSchema as Parameters<typeof fromJsonSchema>[0],
+  )["~standard"].jsonSchema.input({ target: "draft-2020-12" });
+  return {
+    name: tool.name,
+    description: tool.description,
+    // The audited subset guarantees an object root.
+    inputSchema: inputSchemaJson as ListedTool["inputSchema"],
+  };
+}
+
+/** Deterministic ordering independent of the runtime's registration order. */
+function sortToolsByName<T extends { name: string }>(
+  tools: ReadonlyArray<T>,
+): T[] {
+  return [...tools].sort((left, right) =>
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+  );
+}
+
+function normalizeToolsPageSize(value: number | undefined): number {
+  const pageSize = value ?? DEFAULT_TOOLS_PAGE_SIZE;
+  if (!Number.isSafeInteger(pageSize) || pageSize < 0) {
+    throw new TypeError(
+      "toolsPageSize must be a non-negative safe integer (0 disables pagination)",
+    );
+  }
+  return pageSize;
+}
+
+/**
+ * Opaque, revision-bound cursor page. Callers see only the encoded cursor; the
+ * revision binds it to one exact listing so a page cannot silently continue
+ * over a changed tool set.
+ */
+function toolsPage(
+  tools: readonly ListedTool[],
+  pageSize: number,
+  cursor: string | undefined,
+  revision: string = toolsListingRevision(tools),
+): { tools: ListedTool[]; nextCursor?: string } {
+  let offset = 0;
+  if (cursor !== undefined) {
+    const decoded = decodeToolsCursor(cursor);
+    if (decoded.revision !== revision || decoded.offset > tools.length) {
+      throw staleToolsCursor();
+    }
+    offset = decoded.offset;
+  }
+  if (pageSize === 0) {
+    return { tools: [...tools] };
+  }
+  const end = Math.min(offset + pageSize, tools.length);
+  const page: { tools: ListedTool[]; nextCursor?: string } = {
+    tools: tools.slice(offset, end),
+  };
+  if (end < tools.length) {
+    page.nextCursor = Buffer.from(
+      JSON.stringify({
+        v: TOOLS_CURSOR_VERSION,
+        r: revision,
+        o: end,
+      }),
+      "utf8",
+    ).toString("base64url");
+  }
+  return page;
+}
+
+function toolsListingRevision(tools: readonly ListedTool[]): string {
+  const digest = createHash("sha256");
+  for (const tool of tools) {
+    digest.update(tool.name);
+    digest.update("\u0000");
+    digest.update(tool.description);
+    digest.update("\u0000");
+    digest.update(JSON.stringify(tool.inputSchema));
+    digest.update("\u0001");
+  }
+  return digest.digest("hex").slice(0, 32);
+}
+
+function decodeToolsCursor(cursor: string): {
+  revision: string;
+  offset: number;
+} {
+  try {
+    const parsed: unknown = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8"),
+    );
+    if (typeof parsed === "object" && parsed !== null) {
+      const candidate = parsed as Record<string, unknown>;
+      if (
+        candidate.v === TOOLS_CURSOR_VERSION &&
+        typeof candidate.r === "string" &&
+        typeof candidate.o === "number" &&
+        Number.isSafeInteger(candidate.o) &&
+        candidate.o >= 0
+      ) {
+        return { revision: candidate.r, offset: candidate.o };
+      }
+    }
+  } catch {
+    // Fall through to the stable cursor error below.
+  }
+  throw staleToolsCursor();
+}
+
+function staleToolsCursor(): ProtocolError {
+  return new ProtocolError(
+    ProtocolErrorCode.InvalidParams,
+    STALE_TOOLS_CURSOR_MESSAGE,
+    { code: "STALE_CURSOR" },
+  );
 }
 
 /**

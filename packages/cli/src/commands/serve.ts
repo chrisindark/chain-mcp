@@ -4,8 +4,11 @@ import { dirname, resolve } from "node:path";
 import { compileOpenApi } from "@chainmcp/compiler";
 import {
   buildExecutorOptions,
+  buildReadinessDeps,
   buildRuntimeOptions,
+  createHandleRegistryOptionsFromConfig,
   createNavigationLimitsFromConfig,
+  loadTokenizerFromConfig,
   logRateLimiterStartup,
   parseConfig,
   type ChainMcpConfig,
@@ -60,9 +63,13 @@ export async function serveCommand(
     });
   }
 
+  const tokenizer = await loadTokenizerFromConfig(config.tokenMetrics, {
+    baseDir: cwd,
+  });
   const explicitTenant = options.tenantId ?? config.tenant;
   const runtimeOptions = buildRuntimeOptions(config, {
     ...(explicitTenant !== undefined ? { tenantId: explicitTenant } : {}),
+    ...(tokenizer !== undefined ? { tokenizer } : {}),
   });
   const runtime = new InMemoryToolRuntime(runtimeOptions);
   await logRateLimiterStartup(config.rateLimit, {
@@ -94,14 +101,17 @@ export async function serveCommand(
     // Register JSON navigation tools if enabled
     if (config.jsonNavigation.enabled) {
       const limits = createNavigationLimitsFromConfig(config.jsonNavigation);
-      const navTools = createJsonNavigationTools(limits);
+      const handles = createHandleRegistryOptionsFromConfig(
+        config.jsonNavigation,
+      );
+      const navTools = createJsonNavigationTools(limits, handles);
       for (const navTool of navTools) {
         runtime.register(navTool);
       }
     }
 
     totalToolCount =
-      loaded.tools.length + (config.jsonNavigation.enabled ? 4 : 0);
+      loaded.tools.length + (config.jsonNavigation.enabled ? 5 : 0);
   } else {
     // 1. Compile contract
     let specContent = validation.specContent;
@@ -155,14 +165,17 @@ export async function serveCommand(
     // Register JSON navigation tools if enabled
     if (config.jsonNavigation.enabled) {
       const limits = createNavigationLimitsFromConfig(config.jsonNavigation);
-      const navTools = createJsonNavigationTools(limits);
+      const handles = createHandleRegistryOptionsFromConfig(
+        config.jsonNavigation,
+      );
+      const navTools = createJsonNavigationTools(limits, handles);
       for (const navTool of navTools) {
         runtime.register(navTool);
       }
     }
 
     totalToolCount =
-      compiled.tools.length + (config.jsonNavigation.enabled ? 4 : 0);
+      compiled.tools.length + (config.jsonNavigation.enabled ? 5 : 0);
   }
 
   const transport = options.transport ?? config.server.transport ?? "stdio";
@@ -189,6 +202,7 @@ export async function serveCommand(
         name: config.name,
         version: "0.1.0",
         maxResponseBytes: config.server.maxResponseBytes,
+        toolsPageSize: config.server.toolsPageSize,
         createContext: (request) => {
           const auth = request.authInfo;
           const authTenant =
@@ -236,6 +250,12 @@ export async function serveCommand(
           config.server.enableDnsRebindingProtection,
         requestTimeoutMs: config.server.requestTimeoutMs,
         shutdownTimeoutMs: config.server.shutdownTimeoutMs,
+        readiness: {
+          deps: buildReadinessDeps(config, {
+            rateLimiter: runtimeOptions.rateLimiter,
+            cacheStore: runtimeOptions.cache?.store,
+          }),
+        },
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
       },
     );
@@ -257,6 +277,7 @@ export async function serveCommand(
       name: config.name,
       version: "0.1.0",
       maxResponseBytes: config.server.maxResponseBytes,
+      toolsPageSize: config.server.toolsPageSize,
       createContext: (request) => {
         const auth = request.authInfo;
         const authTenant =

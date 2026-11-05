@@ -427,9 +427,11 @@ negative, fractional, non-finite, or unsafe count also fails closed with
 `OUTPUT_POLICY_VIOLATION`, because the budget cannot be verified. The count is
 recorded as `tokenUsage` with the adapter's exact/estimate label.
 
-Exact measurement requires a configured tokenizer factory; until one is registered, `packages/config/src/index.ts:435` only accepts `measurement: approximate | none`, so `maxTokens` enforcement is approximate in every CLI deployment. Budgets are
-integers in the adapter's token units; with an estimate adapter the limit is
-only as accurate as the estimate.
+Exact measurement requires an exact `Tokenizer`. `@chainmcp/config` loads one
+from `tokenMetrics.tokenizer: exact` plus a module or registered factory, and
+fails startup when no source is configured; `approximate` remains an estimate.
+Budgets are integers in the adapter's token units; with an estimate adapter the
+limit is only as accurate as the estimate.
 
 `output.fields` selects the built-in field projector:
 

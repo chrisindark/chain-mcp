@@ -42,3 +42,12 @@ export {
 } from "./filter.js";
 
 export { createJsonNavigationTools } from "./tools.js";
+
+export {
+  RESULT_HANDLE_EXPIRED,
+  ResultHandleExpiredError,
+  ResultHandleRegistry,
+  ResultHandleTooLargeError,
+  type HandleRegistryOptions,
+  type PrincipalScope,
+} from "./handles.js";

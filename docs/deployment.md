@@ -266,6 +266,42 @@ For clustered deployments using Redis for distributed caching (`@chainmcp/cache-
 - **Key Partitioning:** Caching keys use the configured `cache.redis.keyPrefix` (default `chainmcp:cache:`) while rate limiter keys use `rateLimit.redis.keyPrefix` (default `chainmcp:ratelimit:`), allowing both subsystems to operate safely against the same Redis cluster without key collision.
 - **Outage Policy:** When Redis is degraded or unreachable, distributed caching fails open (bypassing the cache without failing the tool invocation), while rate limiting follows `rateLimit.failurePolicy` (failing closed with `UPSTREAM_FAILURE` by default to protect upstreams, or failing open if explicitly configured).
 
+### Liveness and Readiness Probes
+
+Three probe endpoints are served on the HTTP server:
+
+- `GET /health` and `GET /livez` are **liveness-only**. They return `200`
+  `{"status":"ok", "name", "version"}` without touching any dependency, so
+  orchestrators can distinguish "process alive" from "ready to serve" and
+  never restart a healthy process because a dependency is down. They are
+  also excluded from the shutdown drain budget.
+- `GET /readyz` is a **readiness** probe: it reports dependency
+  reachability and follows the configured failure policy. With no
+  dependencies configured it returns `200 {"status":"ready"}`. The CLI and
+  generated servers wire Redis-backed dependencies automatically via
+  `buildReadinessDeps(config, { rateLimiter, cacheStore })`:
+  the rate limiter probes `eval("return 1")` and the cache store probes a
+  read of an absent key (both prove liveness without writing).
+  - A healthy deployment returns `200 {"status":"ready", "deps":[{"name":"rate-limiter","ok":true},{"name":"cache","ok":true}]}`.
+  - A rate limiter with `rateLimit.failurePolicy: fail-open` that is
+    unreachable keeps the probe at `200 {"status":"degraded", ...}`: the
+    server keeps serving tools without rate limiting, exactly as the call
+    path does (`docs/rate-limiting.md`).
+  - A `fail-closed` limiter that is unreachable, or any cache outage,
+    returns `503 {"status":"not_ready", ...}`: tools would fail with
+    `UPSTREAM_FAILURE` anyway, so the orchestrator should not route
+    traffic here.
+  - Probes are bounded by a 500 ms timeout; a hung Redis cannot stall the
+    probe. Error details are never mirrored — only pass/fail per
+    dependency, so a Redis URL or credential can never leak through the
+    probe response.
+- Embedded `serveHttp` users opt in by passing `readiness: { deps: [...] }`
+  (see `packages/server/API.md`); each dep is a `check` returning
+  `boolean` and an optional `degradedReady` flag for fail-open semantics.
+
+Point your orchestrator's liveness probe at `/health` (or `/livez`) and
+its readiness probe at `/readyz`.
+
 ### Process Signals and Teardown
 
 `@chainmcp/server` listens for `SIGINT` (Ctrl+C) and `SIGTERM` signals. Signal

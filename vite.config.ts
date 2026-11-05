@@ -2,6 +2,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 
+import { COVERAGE_THRESHOLDS } from "./scripts/coverage-thresholds.mjs";
 import { printCoverageReport } from "./scripts/print-coverage.mjs";
 
 const MIME_TYPES: Record<string, string> = {
@@ -121,11 +122,18 @@ export default defineConfig({
         "**/dist/**",
         "**/.next/**",
       ],
+      // Per-package floors (P1-4): single source of truth is
+      // scripts/coverage-thresholds.mjs, shared with scripts/check-coverage.mjs.
+      // Vitest enforces these on the root run; the gate script enforces them
+      // in CI from the exported summary, including package renames.
       thresholds: {
-        lines: 80,
-        functions: 80,
-        branches: 70,
-        statements: 80,
+        ...COVERAGE_THRESHOLDS.global,
+        ...Object.fromEntries(
+          Object.entries(COVERAGE_THRESHOLDS.packages).map(([pkg, value]) => [
+            `packages/${pkg}/src/**`,
+            value,
+          ]),
+        ),
       },
     },
   },

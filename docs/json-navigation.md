@@ -118,11 +118,47 @@ Supported operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `contains`, `in`, `e
 | `maxResultBytes`  | 50,000  | 10,000,000 | Maximum UTF-8 bytes allowed in the serialized output.           |
 | `timeoutMs`       | 5,000   | 60,000     | Execution time deadline in milliseconds.                        |
 
-## 5. MCP Tool Definitions
+## 5. Result Handles
 
-`createJsonNavigationTools(limits?)` generates four ready-to-register `ToolDefinition`s:
+Large documents do not need to be pasted back inline. Call
+`json_create_handle` once to store a document server-side and get back an
+opaque handle (`{ handle, bytes }`); every navigation tool then accepts
+either the inline `json` argument or a `handle`. The handle is preferred
+for large documents, and is distinguished in the tool descriptions.
 
-- `json_inspect_shape`: Takes `{ json, maxDepth?, maxKeys? }` and returns the `ShapeSummary`.
-- `json_select_path`: Takes `{ json, path }` and returns selected nodes.
-- `json_paginate`: Takes `{ json, offset?, limit?, page?, pageSize? }` and returns `PaginatedResult`.
-- `json_filter`: Takes `{ json, field, op, value? }` and returns filtered array elements.
+Handles are:
+
+- **Tenant- and principal-scoped.** A handle created by one principal
+  cannot be navigated by another principal, even in the same tenant, and a
+  handle created in one tenant cannot be navigated in another.
+- **Opaque.** `rhv1.<counter>.<tag>` — the tenant and principal ids are
+  never embedded (the tag is an HMAC of `tenantId|principalId|counter`
+  under a per-registry secret), so a tampered handle fails verification
+  and cannot be rebound to another scope.
+- **Bounded and TTL'd.** Per-principal LRU (`maxPerPrincipal`, default
+  50), per-tenant cap (`maxPerTenant`, default 250), absolute cap
+  (`maxTotal`, default 1,000), per-document byte cap (`maxBytes`, default
+  1,000,000), total byte cap (`maxTotalBytes`, default 8,000,000), and a
+  TTL (`ttlMs`, default 600,000 ms / 10 minutes). Documents above the
+  byte cap throw `ResultHandleTooLargeError` rather than being silently
+  truncated.
+- **Stable across failures.** Unknown, expired, evicted, tampered,
+  cross-tenant, and cross-principal handles all fail with the same stable
+  `RESULT_HANDLE_EXPIRED` error, so handle existence does not leak across
+  scopes.
+
+These knobs are configurable under `jsonNavigation.handles` in
+`chainmcp.config.yaml` (see `CONFIGURATION.md`); use
+`createHandleRegistryOptionsFromConfig` to build registry options from a
+parsed config, or pass a `ResultHandleRegistry` directly to
+`createJsonNavigationTools(limits, registry)`.
+
+## 6. MCP Tool Definitions
+
+`createJsonNavigationTools(limits?, handleRegistry?)` generates five ready-to-register `ToolDefinition`s:
+
+- `json_inspect_shape`: Takes `{ json? | handle?, maxDepth?, maxKeys? }` and returns the `ShapeSummary`.
+- `json_select_path`: Takes `{ json? | handle?, path }` and returns selected nodes.
+- `json_paginate`: Takes `{ json? | handle?, offset?, limit?, page?, pageSize? }` and returns `PaginatedResult`.
+- `json_filter`: Takes `{ json? | handle?, field, op, value? }` and returns filtered array elements.
+- `json_create_handle`: Takes `{ json }` and returns `{ handle, bytes }`.

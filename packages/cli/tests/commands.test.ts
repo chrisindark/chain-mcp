@@ -436,6 +436,10 @@ components:
       expect(serverSource).toContain("options?.baseUrl ??");
       expect(serverSource).toContain("config.contract?.baseUrl ??");
       expect(serverSource).not.toContain("api.example.com");
+      expect(serverSource).toContain(
+        "loadTokenizerFromConfig(config.tokenMetrics",
+      );
+      expect(serverSource).toContain("baseDir: projectRoot");
     });
 
     it("asserts renderServerTs does not fallback to default tenant", () => {
@@ -446,6 +450,21 @@ components:
       expect(serverSource).not.toContain('?? "default"');
       expect(serverSource).not.toContain("?? 'default'");
       expect(serverSource).toContain("TENANT_REQUIRED");
+    });
+
+    it("asserts the emitted main-module guard resolves symlinked entry paths", () => {
+      const serverSource = renderServerTs({
+        version: "0.1.0",
+        compilerVersion: COMPILER_VERSION,
+      });
+      // A raw import.meta.url === process.argv[1] comparison silently turns the
+      // generated server into a no-op when the project path is a symlink
+      // (macOS /var -> /private/var temp dirs, symlinked checkouts).
+      expect(serverSource).not.toContain(
+        "fileURLToPath(import.meta.url) === process.argv[1]",
+      );
+      expect(serverSource).toContain("function isMainModule()");
+      expect(serverSource).toContain("realpathSync(entry) === self");
     });
   });
 
@@ -598,10 +617,86 @@ components:
 
       expect(serverHandle.ok).toBe(true);
       expect(serverHandle.serverName).toBe("pet-catalog-api");
-      // 1 API tool + 4 JSON navigation tools = 5 tools
-      expect(serverHandle.toolCount).toBe(5);
+      // 1 API tool + 5 JSON navigation tools = 6 tools
+      expect(serverHandle.toolCount).toBe(6);
 
       // Close server
+      await serverHandle.close();
+      await serverHandle.closed;
+    });
+
+    it("fails fast when exact token measurement has no tokenizer source", async () => {
+      const targetDir = join(tempDir, "serve-exact-tokenizer-missing");
+      await initCommand({
+        spec: specPath,
+        output: targetDir,
+        cwd: tempDir,
+      });
+
+      await writeFile(
+        join(targetDir, "chainmcp.config.yaml"),
+        `
+version: 1
+name: exact-tokenizer-server
+contract:
+  source: ./spec/openapi.yaml
+security:
+  allowedUpstreamHosts:
+    - api.petstore.test
+tokenMetrics:
+  enabled: true
+  tokenizer: exact
+  modelId: gpt-4o
+`,
+        "utf8",
+      );
+
+      await expect(serveCommand({ cwd: targetDir })).rejects.toThrow(
+        /no tokenizer source is configured/,
+      );
+    });
+
+    it("loads an exact tokenizer module relative to the configuration file", async () => {
+      const targetDir = join(tempDir, "serve-exact-tokenizer-module");
+      await initCommand({
+        spec: specPath,
+        output: targetDir,
+        cwd: tempDir,
+      });
+
+      await writeFile(
+        join(targetDir, "tokenizer.mjs"),
+        `export function createTokenizer(config) {
+          return {
+            id: config.modelId,
+            measurement: "exact",
+            count: (text) => text.length,
+          };
+        }\n`,
+        "utf8",
+      );
+      await writeFile(
+        join(targetDir, "chainmcp.config.yaml"),
+        `
+version: 1
+name: exact-tokenizer-server
+contract:
+  source: ./spec/openapi.yaml
+security:
+  allowedUpstreamHosts:
+    - api.petstore.test
+tokenMetrics:
+  enabled: true
+  tokenizer: exact
+  modelId: gpt-4o
+  module: ./tokenizer.mjs
+`,
+        "utf8",
+      );
+
+      const serverHandle = await serveCommand({ cwd: targetDir });
+
+      expect(serverHandle.ok).toBe(true);
       await serverHandle.close();
       await serverHandle.closed;
     });
@@ -901,8 +996,8 @@ rateLimit:
 
       expect(devHandle.ok).toBe(true);
       expect(devHandle.toolNames).toContain("test_dev_tool");
-      // 1 custom tool + 4 JSON navigation tools = 5 tools
-      expect(devHandle.toolCount).toBe(5);
+      // 1 custom tool + 5 JSON navigation tools = 6 tools
+      expect(devHandle.toolCount).toBe(6);
 
       await devHandle.close();
       await devHandle.closed;

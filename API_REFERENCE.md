@@ -35,6 +35,7 @@ When launching HTTP transports via `serveHttp`, the following security configura
 - `allowedOrigins` (`string[]`, optional): Allowed Origin header hostnames for browser and DNS rebinding protection. Unlisted origins are rejected with 403 Forbidden when protection is enabled.
 - `enableDnsRebindingProtection` (`boolean`, optional; default `false`): Enables strict Host and Origin allowlist validation.
 - `requestTimeoutMs` (`number`, optional; default `15000`): Request timeout in milliseconds applied to the HTTP server and incoming body reads.
+- `toolsPageSize` (`number`, optional; default `100`): Maximum tools returned per `tools/list` page. `0` disables pagination. Pages are ordered by tool name; a `nextCursor` issued for a different tenant or an older tool listing is rejected with the stable `STALE_CURSOR` error.
 
 ---
 

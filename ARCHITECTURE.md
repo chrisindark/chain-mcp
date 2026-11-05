@@ -465,8 +465,12 @@ guessing.
 
 Adapters declare their own exactness; the runtime never relabels an estimate as
 exact. No tokenizer is bundled, because a generic heuristic is not a faithful
-count for a specific model. Deployments that only have an approximation must
-label it `estimate` and must not promise savings from it.
+count for a specific model. `@chainmcp/config` loads exact adapters from
+`tokenMetrics.module` or a factory registered with
+`registerTokenizerFactory()`; `exact` without a source fails startup, an
+adapter's `id` must match `modelId`, and an adapter declaring `estimate` is
+rejected. Deployments that only have an approximation must label it `estimate`
+and must not promise savings from it.
 
 A tool that declares `output.maxTokens` gets a hard budget on the serialized
 projected result. The runtime applies projection first, then counts, then

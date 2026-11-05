@@ -77,6 +77,24 @@ export interface HttpServeOptions {
   shutdownTimeoutMs?: number | undefined;
   /** Install SIGINT/SIGTERM handlers and set standard process exit codes (default true). */
   handleProcessSignals?: boolean | undefined;
+  /**
+   * Opt-in `/readyz` readiness checks. Liveness (`/health`, `/livez`) stays
+   * dependency-free; `/readyz` also reflects each check in `deps`. When
+   * omitted, `/readyz` returns ready with no dependency detail.
+   */
+  readiness?:
+    | {
+        /** Dependencies to report on /readyz. Each `check` returns true when healthy. */
+        deps?:
+          | Array<{
+              name: string;
+              check: () => boolean | Promise<boolean>;
+              /** When true, a failed check still leaves the server ready (e.g. rate-limiter `fail-open`). */
+              degradedReady?: boolean | undefined;
+            }>
+          | undefined;
+      }
+    | undefined;
 }
 
 export interface ConnectedHttpServer extends ConnectedMcpServer {
@@ -763,7 +781,7 @@ export async function serveHttp(
         }
       }
 
-      // Health and liveness probe
+      // Health and liveness probe (liveness-only: never touches dependencies)
       if (
         requestUrl.pathname === "/health" ||
         requestUrl.pathname === "/livez"
@@ -777,6 +795,41 @@ export async function serveHttp(
             version: options.version,
           }),
         );
+        return;
+      }
+
+      // Readiness probe: dependency reachability, following the configured
+      // failure policy. A failed check with `degradedReady: true` (e.g. a
+      // rate limiter configured `fail-open`) keeps the server ready; a
+      // failed check without it (e.g. `fail-closed`) returns 503. Error
+      // details are never mirrored — only pass/fail per dependency.
+      if (requestUrl.pathname === "/readyz") {
+        const deps: Array<{ name: string; ok: boolean; degraded?: boolean }> =
+          [];
+        for (const dep of httpOptions.readiness?.deps ?? []) {
+          let ok = false;
+          try {
+            ok = (await dep.check()) === true;
+          } catch {
+            ok = false;
+          }
+          deps.push({
+            name: dep.name,
+            ok,
+            ...(dep.degradedReady ? { degraded: true } : {}),
+          });
+        }
+        const notReady = deps.some((d) => !d.ok && !d.degraded);
+        const degraded = deps.some((d) => !d.ok && d.degraded);
+        const payload: Record<string, unknown> = {
+          status: notReady ? "not_ready" : degraded ? "degraded" : "ready",
+          name: options.name,
+          version: options.version,
+        };
+        if (deps.length > 0) payload.deps = deps;
+        res.statusCode = notReady ? 503 : 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify(payload));
         return;
       }
 
