@@ -34,6 +34,7 @@ import type {
   CompileResult,
   CompiledEncoding,
   CompiledOperation,
+  CompiledServer,
   CompiledResponse,
   CompiledSecurityScheme,
   ContractCompiler,
@@ -137,6 +138,7 @@ interface NormalizedOptions {
   maxSourceBytes: number;
   maxRefDepth: number;
   maxOperations: number;
+  externalDocuments: Record<string, Record<string, unknown>>;
 }
 
 interface ParameterInfo {
@@ -223,6 +225,22 @@ export function compileOpenApi(
   const securitySchemes = parseSecuritySchemes(document, version, diagnostics, {
     strict: settings.strict,
   });
+  const documentServers = parseServersField(
+    document.servers,
+    diagnostics,
+    "#/servers",
+  );
+  void documentServers;
+  if (documentServers === null) {
+    return buildResult({
+      tools: [],
+      diagnostics,
+      securitySchemes,
+      sourceHash,
+      contractRevision,
+      openapiVersion: version,
+    });
+  }
   let globalSecurity: readonly SecurityRequirement[] = [];
   if (Object.hasOwn(document, "security")) {
     const parsedGlobalSecurity = parseSecurityRequirements(
@@ -288,16 +306,12 @@ export function compileOpenApi(
 
     const pathItemStart = diagnostics.length;
 
-    if (Object.hasOwn(pathItem, "servers")) {
-      diagnostics.push({
-        severity: settings.strict ? "error" : "warning",
-        code: "UNSUPPORTED_SERVERS",
-        message:
-          "Path-item 'servers' override is not supported; all operations route through the configured upstream baseUrl. Remove the field or set strict: false to ignore with a warning",
-        location: pointer("paths", path, "servers"),
-      });
-      if (settings.strict) continue;
-    }
+    const pathItemServers = parseServersField(
+      (pathItem as Record<string, unknown>).servers,
+      diagnostics,
+      pointer("paths", path, "servers"),
+    );
+    if (pathItemServers === null) continue;
 
     const pathParameterStart = diagnostics.length;
     const pathParameters = collectParameters(
@@ -347,6 +361,7 @@ export function compileOpenApi(
         securitySchemes,
         globalSecurity,
         globalSecurityLocation: "#/security",
+        pathItemServers: pathItemServers ?? undefined,
       });
       if (compiled !== undefined) tools.push(compiled);
     }
@@ -417,6 +432,7 @@ interface CompileOperationArguments {
   securitySchemes: Readonly<Record<string, CompiledSecurityScheme>>;
   globalSecurity: readonly SecurityRequirement[];
   globalSecurityLocation: string;
+  pathItemServers?: readonly CompiledServer[] | undefined;
 }
 
 function compileOperation(
@@ -438,6 +454,7 @@ function compileOperation(
     securitySchemes,
     globalSecurity,
     globalSecurityLocation,
+    pathItemServers,
   } = arguments_;
   const operationStart = diagnostics.length;
 
@@ -461,16 +478,12 @@ function compileOperation(
     });
   }
 
-  if (Object.hasOwn(rawOperation, "servers")) {
-    diagnostics.push({
-      severity: settings.strict ? "error" : "warning",
-      code: "UNSUPPORTED_SERVERS",
-      message:
-        "Operation 'servers' override is not supported; all operations route through the configured upstream baseUrl. Remove the field or set strict: false to ignore with a warning",
-      location: pointer("paths", path, method, "servers"),
-    });
-    if (settings.strict) return undefined;
-  }
+  const operationServers = parseServersField(
+    (rawOperation as Record<string, unknown>).servers,
+    diagnostics,
+    pointer("paths", path, method, "servers"),
+  );
+  if (operationServers === null) return undefined;
 
   if (Object.hasOwn(rawOperation, "callbacks")) {
     diagnostics.push({
@@ -712,6 +725,15 @@ function compileOperation(
     security,
     authentication,
     sourceLocation: operationLocation,
+    // Only operation/path-item `servers` override the configured baseUrl.
+    // Document-level `servers` are informational; deployment baseUrl wins.
+    ...(((operationServers ?? pathItemServers) as
+      readonly CompiledServer[] | undefined) !== undefined
+      ? {
+          servers: (operationServers ??
+            pathItemServers) as readonly CompiledServer[],
+        }
+      : {}),
     ...(operationWarnings.length > 0 ? { warnings: operationWarnings } : {}),
   };
 }
@@ -793,7 +815,46 @@ function collectParameters(
       });
       return undefined;
     }
-    if (Object.hasOwn(parameter, "content")) {
+    // Content-based parameter: promote single JSON content schema when no
+    // companion `schema` is present.
+    if (
+      Object.hasOwn(parameter, "content") &&
+      !Object.hasOwn(parameter, "schema")
+    ) {
+      const content = parameter.content;
+      if (isPlainObject(content) && Object.keys(content).length === 1) {
+        const [mediaType] = Object.keys(content);
+        const entry = (content as Record<string, unknown>)[mediaType ?? ""];
+        const base =
+          (mediaType ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+        if (
+          (base === "application/json" || base.endsWith("+json")) &&
+          isPlainObject(entry) &&
+          isPlainObject((entry as Record<string, unknown>).schema)
+        ) {
+          (parameter as Record<string, unknown>).schema = (
+            entry as Record<string, unknown>
+          ).schema;
+          delete (parameter as Record<string, unknown>).content;
+        } else {
+          diagnostics.push({
+            severity: "error",
+            code: "PARAMETER_UNSUPPORTED",
+            message: `Parameter '${parameter.name}' uses unsupported content media type '${mediaType ?? ""}'; only a single application/json entry is supported`,
+            location: parameterLocation,
+          });
+          return undefined;
+        }
+      } else {
+        diagnostics.push({
+          severity: "error",
+          code: "PARAMETER_UNSUPPORTED",
+          message: "Content-encoded parameters are not supported",
+          location: parameterLocation,
+        });
+        return undefined;
+      }
+    } else if (Object.hasOwn(parameter, "content")) {
       diagnostics.push({
         severity: "error",
         code: "PARAMETER_UNSUPPORTED",
@@ -874,31 +935,47 @@ function collectParameters(
         parameterHasError = true;
       } else {
         const style = parameter.style;
-        if (parameterIn === "query" && style !== "form") {
+        const allowedByIn: Record<string, readonly string[]> = {
+          query: ["form", "spaceDelimited", "pipeDelimited", "deepObject"],
+          cookie: ["form"],
+          path: ["simple", "label", "matrix"],
+          header: ["simple"],
+        };
+        const allowed = allowedByIn[parameterIn] ?? [];
+        const styleForChecks = style;
+        if (!allowed.includes(styleForChecks)) {
           diagnostics.push({
             severity: settings.strict ? "error" : "warning",
             code: "PARAMETER_UNSUPPORTED",
-            message: `Query parameter '${parameter.name}' specifies unsupported style '${style}'; only 'form' is supported for query parameters. Remove 'style' or use 'form'`,
-            location: `${parameterLocation}/style`,
-          });
-          if (settings.strict) parameterHasError = true;
-        } else if (parameterIn === "cookie" && style !== "form") {
-          diagnostics.push({
-            severity: settings.strict ? "error" : "warning",
-            code: "PARAMETER_UNSUPPORTED",
-            message: `Cookie parameter '${parameter.name}' specifies unsupported style '${style}'; only 'form' is supported for cookie parameters. Remove 'style' or use 'form'`,
+            message: `Parameter '${parameter.name}' in ${parameterIn} specifies unsupported style '${styleForChecks}'; supported styles for ${parameterIn} are ${allowed.join(", ")}`,
             location: `${parameterLocation}/style`,
           });
           if (settings.strict) parameterHasError = true;
         } else if (
-          (parameterIn === "path" || parameterIn === "header") &&
-          style !== "simple"
+          (parameterIn === "query" || parameterIn === "cookie") &&
+          (styleForChecks === "spaceDelimited" ||
+            styleForChecks === "pipeDelimited") &&
+          Object.hasOwn(parameter, "explode") &&
+          (parameter.explode as unknown) === true
         ) {
           diagnostics.push({
             severity: settings.strict ? "error" : "warning",
             code: "PARAMETER_UNSUPPORTED",
-            message: `${parameterIn === "path" ? "Path" : "Header"} parameter '${parameter.name}' specifies unsupported style '${style}'; only 'simple' is supported for ${parameterIn} parameters. Remove 'style' or use 'simple'`,
-            location: `${parameterLocation}/style`,
+            message: `Parameter '${parameter.name}' specifies unsupported explode: true for style '${styleForChecks}'; only explode: false is supported`,
+            location: `${parameterLocation}/explode`,
+          });
+          if (settings.strict) parameterHasError = true;
+        } else if (
+          parameterIn === "query" &&
+          styleForChecks === "deepObject" &&
+          Object.hasOwn(parameter, "explode") &&
+          (parameter.explode as unknown) === false
+        ) {
+          diagnostics.push({
+            severity: settings.strict ? "error" : "warning",
+            code: "PARAMETER_UNSUPPORTED",
+            message: `Query parameter '${parameter.name}' specifies unsupported explode: false for style 'deepObject'; only explode: true is supported`,
+            location: `${parameterLocation}/explode`,
           });
           if (settings.strict) parameterHasError = true;
         }
@@ -916,26 +993,10 @@ function collectParameters(
         parameterHasError = true;
       } else {
         const explode = parameter.explode;
-        if (parameterIn === "query" && !explode) {
-          diagnostics.push({
-            severity: settings.strict ? "error" : "warning",
-            code: "PARAMETER_UNSUPPORTED",
-            message: `Query parameter '${parameter.name}' specifies unsupported explode: false; only explode: true is supported for query parameters. Remove 'explode' or set to true`,
-            location: `${parameterLocation}/explode`,
-          });
-          if (settings.strict) parameterHasError = true;
-        } else if (
-          (parameterIn === "path" || parameterIn === "header") &&
-          explode
-        ) {
-          diagnostics.push({
-            severity: settings.strict ? "error" : "warning",
-            code: "PARAMETER_UNSUPPORTED",
-            message: `${parameterIn === "path" ? "Path" : "Header"} parameter '${parameter.name}' specifies unsupported explode: true; only explode: false is supported for ${parameterIn} parameters. Remove 'explode' or set to false`,
-            location: `${parameterLocation}/explode`,
-          });
-          if (settings.strict) parameterHasError = true;
-        }
+        // Explode/style compatibility for spaceDelimited/pipeDelimited/deepObject
+        // is enforced in the style block above; all other explode booleans are
+        // accepted (executor honors them).
+        void explode;
       }
     }
 
@@ -985,13 +1046,7 @@ function collectParameters(
         });
         if (settings.strict) parameterHasError = true;
       } else if (parameter.allowEmptyValue) {
-        diagnostics.push({
-          severity: settings.strict ? "error" : "warning",
-          code: "PARAMETER_UNSUPPORTED",
-          message: `Query parameter '${parameter.name}' specifies unsupported allowEmptyValue: true. Remove 'allowEmptyValue' or set to false`,
-          location: `${parameterLocation}/allowEmptyValue`,
-        });
-        if (settings.strict) parameterHasError = true;
+        // allowEmptyValue: true is accepted; executor appends `name=` for empty values.
       }
     }
 
@@ -1016,6 +1071,7 @@ function collectParameters(
       strict: settings.strict,
       maxRefDepth: settings.maxRefDepth,
       diagnostics,
+      externalDocuments: settings.externalDocuments,
     });
     if (schema === undefined) {
       // Graceful degradation applies only to union-type parameters: skip a
@@ -1408,6 +1464,124 @@ function resolveOperationSecurity(
   return { requirements, location: `${location}/security` };
 }
 
+function parseServersField(
+  value: unknown,
+  diagnostics: CompileDiagnostic[],
+  location: string,
+): readonly CompiledServer[] | undefined | null {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0) {
+    diagnostics.push({
+      severity: "error",
+      code: "DOCUMENT_INVALID",
+      message: "Servers must be a non-empty array",
+      location,
+    });
+    return null;
+  }
+  const result: CompiledServer[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (!isPlainObject(entry) || typeof entry.url !== "string") {
+      diagnostics.push({
+        severity: "error",
+        code: "DOCUMENT_INVALID",
+        message: `Servers entry ${index} must be an object with a string 'url'`,
+        location: `${location}/${index}`,
+      });
+      return null;
+    }
+    let variables:
+      Record<string, { default: string; enum?: readonly string[] }> | undefined;
+    if (Object.hasOwn(entry, "variables")) {
+      if (!isPlainObject(entry.variables)) {
+        diagnostics.push({
+          severity: "error",
+          code: "DOCUMENT_INVALID",
+          message: `Servers entry ${index} 'variables' must be an object`,
+          location: `${location}/${index}/variables`,
+        });
+        return null;
+      }
+      variables = {};
+      for (const [name, v] of Object.entries(
+        entry.variables as Record<string, unknown>,
+      )) {
+        if (!isPlainObject(v) || typeof v.default !== "string") {
+          diagnostics.push({
+            severity: "error",
+            code: "DOCUMENT_INVALID",
+            message: `Server variable '${name}' must declare a string 'default'`,
+            location: `${location}/${index}/variables/${name}`,
+          });
+          return null;
+        }
+        const varEntry: { default: string; enum?: readonly string[] } = {
+          default: v.default,
+        };
+        if (Object.hasOwn(v, "enum")) {
+          if (
+            !Array.isArray(v.enum) ||
+            !v.enum.every((e) => typeof e === "string")
+          ) {
+            diagnostics.push({
+              severity: "error",
+              code: "DOCUMENT_INVALID",
+              message: `Server variable '${name}' 'enum' must be an array of strings`,
+              location: `${location}/${index}/variables/${name}/enum`,
+            });
+            return null;
+          }
+          varEntry.enum = v.enum;
+        }
+        variables[name] = varEntry;
+      }
+    }
+    const url = entry.url;
+    // Relative server URLs are allowed (resolved against baseUrl at runtime);
+    // absolute URLs must be http(s) without credentials.
+    if (!url.startsWith("/")) {
+      // absolute form: try URL parse after variable substitution with defaults.
+      const substituted = substituteServerVariables(url, variables);
+      try {
+        const parsed = new URL(substituted);
+        if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+          throw new Error("protocol");
+        }
+        if (parsed.username || parsed.password) throw new Error("credentials");
+      } catch {
+        diagnostics.push({
+          severity: "error",
+          code: "DOCUMENT_INVALID",
+          message: `Server URL '${url}' must be an absolute http(s) URL without credentials (after variable substitution) or a path-relative URL starting with '/'`,
+          location: `${location}/${index}/url`,
+        });
+        return null;
+      }
+    } else if (url.includes("://")) {
+      diagnostics.push({
+        severity: "error",
+        code: "DOCUMENT_INVALID",
+        message: `Server URL '${url}' must be an absolute http(s) URL or a path-relative URL starting with '/'`,
+        location: `${location}/${index}/url`,
+      });
+      return null;
+    }
+    result.push(variables ? { url, variables } : { url });
+  }
+  return result;
+}
+
+function substituteServerVariables(
+  template: string,
+  variables: Record<string, { default: string }> | undefined,
+): string {
+  if (!variables) return template;
+  return template.replace(
+    /\{([^{}]+)\}/g,
+    (_m, name: string) => variables[name]?.default ?? `{${name}}`,
+  );
+}
+
 function readOpenApiVersion(
   document: Record<string, unknown>,
   diagnostics: CompileDiagnostic[],
@@ -1557,6 +1731,7 @@ function hashTool(tool: CompiledOperation): string {
       responses: tool.responses,
       security: tool.security,
       authentication: tool.authentication,
+      servers: tool.servers ?? null,
       ...(tool.warnings !== undefined && tool.warnings.length > 0
         ? { warnings: tool.warnings }
         : {}),
@@ -1602,6 +1777,12 @@ function normalizeOptions(options: CompileOptions): NormalizedOptions {
       DEFAULT_MAX_OPERATIONS,
       MAX_OPERATIONS_LIMIT,
     ),
+    externalDocuments:
+      options.externalDocuments &&
+      typeof options.externalDocuments === "object" &&
+      !Array.isArray(options.externalDocuments)
+        ? (options.externalDocuments as Record<string, Record<string, unknown>>)
+        : {},
   };
 }
 

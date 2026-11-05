@@ -614,7 +614,7 @@ describe("schema composition", () => {
     expect(codes(incompatible)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
 
     const primitive = bodyOf({ allOf: [{ type: "string" }] });
-    expect(codes(primitive)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
+    expect(primitive.ok).toBe(true);
 
     // Flattening a closed member is safe only when it declares every property
     // contributed by the other members.
@@ -663,7 +663,7 @@ describe("schema composition", () => {
       type: "object",
       allOf: [{ type: "object", properties: { id: { type: "string" } } }],
     });
-    expect(codes(sibling)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
+    expect(sibling.ok).toBe(true);
 
     const nullable = compileDocument(
       baseDocument({
@@ -1131,20 +1131,10 @@ describe("unsupported schemas", () => {
       contentEncoding: "base64",
     });
     const strict = compileDocument(document);
-    expect(strict.ok).toBe(false);
-    expect(strict.tools).toHaveLength(0);
-    expect(codes(strict)).toContain("SCHEMA_UNSUPPORTED");
-
-    const permissive = compileDocument(document, { strict: false });
-    expect(permissive.ok).toBe(true);
-    expect(singleTool(permissive).inputSchema.properties).toEqual({
-      value: { type: "string" },
+    expect(strict.ok).toBe(true);
+    expect(singleTool(strict).inputSchema.properties).toEqual({
+      value: { type: "string", contentEncoding: "base64" },
     });
-    expect(
-      permissive.diagnostics.find(
-        (diagnostic) => diagnostic.code === "SCHEMA_UNSUPPORTED",
-      )?.severity,
-    ).toBe("warning");
   });
 
   it("skips union composition with a warning and keeps the tool", () => {
@@ -1176,15 +1166,12 @@ describe("unsupported schemas", () => {
       }),
       { strict: false },
     );
-    // The union-typed parameters are skipped with parameter-named warnings,
-    // but the unrelated unknown-keyword parameter keeps operation-dropping
-    // semantics, so the operation is still omitted and the compile fails.
+    // Unknown keyword still drops the operation.
     expect(result.ok).toBe(false);
     expect(result.tools).toHaveLength(0);
-    expect(codes(result)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
     expect(codes(result)).toContain("SCHEMA_UNSUPPORTED");
 
-    const degraded = compileDocument(
+    const supported = compileDocument(
       baseDocument({
         "/x": {
           get: operation({
@@ -1192,7 +1179,7 @@ describe("unsupported schemas", () => {
             parameters: [
               { name: "keep", in: "query", schema: { type: "string" } },
               {
-                name: "skip",
+                name: "union",
                 in: "query",
                 schema: { oneOf: [{ type: "string" }, { type: "integer" }] },
               },
@@ -1202,29 +1189,13 @@ describe("unsupported schemas", () => {
       }),
       { strict: false },
     );
-    expect(degraded.ok).toBe(true);
-    expect(degraded.tools).toHaveLength(1);
-    expect(codes(degraded)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
-    const names = degraded.diagnostics
-      .filter((d) => d.code === "SCHEMA_COMPOSITION_UNSUPPORTED")
-      .map((d) => d.message);
-    expect(
-      names.some(
-        (m) => m.includes("Skipping parameter 'skip'") && m.includes("get /x"),
-      ),
-    ).toBe(true);
-    expect(
-      degraded.diagnostics.some(
-        (d) =>
-          d.code === "SCHEMA_COMPOSITION_UNSUPPORTED" &&
-          d.severity === "warning",
-      ),
-    ).toBe(true);
-    const props = degraded.tools[0]?.inputSchema.properties ?? {};
+    expect(supported.ok).toBe(true);
+    expect(supported.tools).toHaveLength(1);
+    const props = supported.tools[0]?.inputSchema.properties ?? {};
     expect(props).toHaveProperty("keep");
-    expect(props).not.toHaveProperty("skip");
+    expect(props).toHaveProperty("union");
 
-    // Strict mode still rejects the whole operation.
+    // Strict mode also accepts now-supported union schemas.
     const strictResult = compileDocument(
       baseDocument({
         "/x": {
@@ -1240,12 +1211,11 @@ describe("unsupported schemas", () => {
         },
       }),
     );
-    expect(strictResult.ok).toBe(false);
-    expect(strictResult.tools).toHaveLength(0);
-    expect(codes(strictResult)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
+    expect(strictResult.ok).toBe(true);
+    expect(strictResult.tools).toHaveLength(1);
   });
 
-  it("rejects schema-valued additionalProperties and unknown keywords", () => {
+  it("accepts schema-valued additionalProperties and rejects unknown keywords", () => {
     const additional = compileDocument(
       parameterDocument({
         type: "object",
@@ -1253,7 +1223,7 @@ describe("unsupported schemas", () => {
       }),
       { strict: false },
     );
-    expect(codes(additional)).toContain("SCHEMA_UNSUPPORTED");
+    expect(additional.ok).toBe(true);
 
     const unknown = compileDocument(
       parameterDocument({ type: "string", unknownKeyword: true }),
@@ -1262,7 +1232,7 @@ describe("unsupported schemas", () => {
     expect(codes(unknown)).toContain("SCHEMA_UNSUPPORTED");
   });
 
-  it("rejects nullable alongside a reference", () => {
+  it("accepts nullable alongside a reference", () => {
     const result = compileDocument(
       baseDocument(
         {
@@ -1284,8 +1254,7 @@ describe("unsupported schemas", () => {
         { components: { schemas: { Value: { type: "string" } } } },
       ),
     );
-    expect(result.ok).toBe(false);
-    expect(codes(result)).toContain("REF_SIBLINGS_UNSUPPORTED");
+    expect(result.ok).toBe(true);
   });
 });
 
@@ -1375,7 +1344,7 @@ describe("parameters and request bodies", () => {
         },
       }),
     );
-    expect(codes(content)).toContain("PARAMETER_UNSUPPORTED");
+    expect(content.ok).toBe(true);
   });
 
   it("rejects duplicate parameter names across locations", () => {
@@ -2061,7 +2030,7 @@ describe("document validation", () => {
 });
 
 describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
-  it("rejects operation-level servers in strict mode and warns in permissive mode", () => {
+  it("accepts operation-level servers overrides", () => {
     const doc = baseDocument({
       "/items": {
         get: operation({
@@ -2070,44 +2039,15 @@ describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
       },
     });
 
-    // strict: true (default)
     const strictResult = compileDocument(doc, { strict: true });
-    expect(strictResult.ok).toBe(false);
-    expect(codes(strictResult)).toContain("UNSUPPORTED_SERVERS");
-    const strictDiag = strictResult.diagnostics.find(
-      (d) => d.code === "UNSUPPORTED_SERVERS",
-    );
-    expect(strictDiag?.severity).toBe("error");
-    expect(strictDiag?.location).toBe("#/paths/~1items/get/servers");
-    expect(strictDiag?.message).toContain(
-      "Operation 'servers' override is not supported",
-    );
-    expect(strictDiag?.message).toContain("strict: false");
-    expect(strictResult.tools).toHaveLength(0);
-
-    // strict: false (permissive mode)
-    const permissiveResult = compileDocument(doc, { strict: false });
-    expect(permissiveResult.ok).toBe(true);
-    expect(codes(permissiveResult)).toContain("UNSUPPORTED_SERVERS");
-    const permissiveDiag = permissiveResult.diagnostics.find(
-      (d) => d.code === "UNSUPPORTED_SERVERS",
-    );
-    expect(permissiveDiag?.severity).toBe("warning");
-    expect(permissiveResult.tools).toHaveLength(1);
-    expect(permissiveResult.manifest.warnings).toBeDefined();
-    expect(
-      permissiveResult.manifest.warnings?.some(
-        (w) => w.code === "UNSUPPORTED_SERVERS",
-      ),
-    ).toBe(true);
-    expect(
-      permissiveResult.tools[0]?.warnings?.some(
-        (w) => w.code === "UNSUPPORTED_SERVERS",
-      ),
-    ).toBe(true);
+    expect(strictResult.ok).toBe(true);
+    expect(strictResult.tools).toHaveLength(1);
+    expect(strictResult.tools[0]?.servers).toEqual([
+      { url: "https://override.example.com" },
+    ]);
   });
 
-  it("rejects path-item-level servers in strict mode and warns in permissive mode", () => {
+  it("accepts path-item-level servers overrides", () => {
     const doc = baseDocument({
       "/items": {
         servers: [{ url: "https://path-override.example.com" }],
@@ -2116,33 +2056,11 @@ describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
     });
 
     const strictResult = compileDocument(doc, { strict: true });
-    expect(strictResult.ok).toBe(false);
-    expect(codes(strictResult)).toContain("UNSUPPORTED_SERVERS");
-    const strictDiag = strictResult.diagnostics.find(
-      (d) => d.code === "UNSUPPORTED_SERVERS",
-    );
-    expect(strictDiag?.severity).toBe("error");
-    expect(strictDiag?.location).toBe("#/paths/~1items/servers");
-    expect(strictResult.tools).toHaveLength(0);
-
-    const permissiveResult = compileDocument(doc, { strict: false });
-    expect(permissiveResult.ok).toBe(true);
-    expect(codes(permissiveResult)).toContain("UNSUPPORTED_SERVERS");
-    const permissiveDiag = permissiveResult.diagnostics.find(
-      (d) => d.code === "UNSUPPORTED_SERVERS",
-    );
-    expect(permissiveDiag?.severity).toBe("warning");
-    expect(permissiveResult.tools).toHaveLength(1);
-    expect(
-      permissiveResult.manifest.warnings?.some(
-        (w) => w.code === "UNSUPPORTED_SERVERS",
-      ),
-    ).toBe(true);
-    expect(
-      permissiveResult.tools[0]?.warnings?.some(
-        (w) => w.code === "UNSUPPORTED_SERVERS",
-      ),
-    ).toBe(true);
+    expect(strictResult.ok).toBe(true);
+    expect(strictResult.tools).toHaveLength(1);
+    expect(strictResult.tools[0]?.servers).toEqual([
+      { url: "https://path-override.example.com" },
+    ]);
   });
 
   it("rejects operation-level callbacks in strict mode and warns in permissive mode", () => {
@@ -2195,7 +2113,7 @@ describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
     ).toBe(true);
   });
 
-  it("rejects non-default parameter style, explode, and allowReserved combinations in strict mode and warns in permissive mode", () => {
+  it("accepts serialization styles and rejects allowReserved:true in strict mode and warns in permissive mode", () => {
     const docWithCustomStyle = baseDocument({
       "/items": {
         get: operation({
@@ -2211,30 +2129,9 @@ describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
       },
     });
 
-    // style: "deepObject"
+    // style: "deepObject" is supported
     const strictStyle = compileDocument(docWithCustomStyle, { strict: true });
-    expect(strictStyle.ok).toBe(false);
-    expect(codes(strictStyle)).toContain("PARAMETER_UNSUPPORTED");
-    const styleDiag = strictStyle.diagnostics.find(
-      (d) => d.code === "PARAMETER_UNSUPPORTED",
-    );
-    expect(styleDiag?.severity).toBe("error");
-    expect(styleDiag?.location).toBe("#/paths/~1items/get/parameters/0/style");
-    expect(styleDiag?.message).toContain(
-      "Query parameter 'filter' specifies unsupported style 'deepObject'",
-    );
-    expect(styleDiag?.message).toContain("only 'form' is supported");
-
-    const permissiveStyle = compileDocument(docWithCustomStyle, {
-      strict: false,
-    });
-    expect(permissiveStyle.ok).toBe(true);
-    expect(codes(permissiveStyle)).toContain("PARAMETER_UNSUPPORTED");
-    expect(
-      permissiveStyle.manifest.warnings?.some(
-        (w) => w.code === "PARAMETER_UNSUPPORTED",
-      ),
-    ).toBe(true);
+    expect(strictStyle.ok).toBe(true);
 
     // explode: false
     const docWithExplodeFalse = baseDocument({
@@ -2255,29 +2152,7 @@ describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
     const strictExplode = compileDocument(docWithExplodeFalse, {
       strict: true,
     });
-    expect(strictExplode.ok).toBe(false);
-    expect(codes(strictExplode)).toContain("PARAMETER_UNSUPPORTED");
-    const explodeDiag = strictExplode.diagnostics.find(
-      (d) => d.code === "PARAMETER_UNSUPPORTED",
-    );
-    expect(explodeDiag?.severity).toBe("error");
-    expect(explodeDiag?.location).toBe(
-      "#/paths/~1items/get/parameters/0/explode",
-    );
-    expect(explodeDiag?.message).toContain(
-      "Query parameter 'tags' specifies unsupported explode: false",
-    );
-
-    const permissiveExplode = compileDocument(docWithExplodeFalse, {
-      strict: false,
-    });
-    expect(permissiveExplode.ok).toBe(true);
-    expect(codes(permissiveExplode)).toContain("PARAMETER_UNSUPPORTED");
-    expect(
-      permissiveExplode.manifest.warnings?.some(
-        (w) => w.code === "PARAMETER_UNSUPPORTED",
-      ),
-    ).toBe(true);
+    expect(strictExplode.ok).toBe(true);
 
     // allowReserved: true
     const docWithAllowReserved = baseDocument({
@@ -2448,9 +2323,7 @@ describe("RM-05 OpenAPI ignored constructs rejection and validation", () => {
     const result = compileDocument(doc, { strict: false });
     expect(result.ok).toBe(true);
     const resultCodes = codes(result);
-    expect(resultCodes).toContain("UNSUPPORTED_SERVERS");
     expect(resultCodes).toContain("UNSUPPORTED_CALLBACKS");
-    expect(resultCodes).toContain("PARAMETER_UNSUPPORTED");
 
     // All diagnostics must have code, message, severity, and location
     for (const d of result.diagnostics) {

@@ -28,6 +28,8 @@ export type {
   CompiledAuthenticationScheme,
   CompiledEncoding,
   CompiledOperation,
+  CompiledServer,
+  CompiledServerVariable,
   CompiledParameter,
   CompiledRequestBody,
   CompiledResponse,

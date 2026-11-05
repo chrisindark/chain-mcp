@@ -272,7 +272,7 @@ wildcard warnings on loopback, and disallowed preflight/normal requests in
 
 ### P0-10 — Clarify large-response caps vs. pagination
 
-**Status: open.**
+**Status: done (2026-11-05).** Added a cross-referenced note explaining the three mechanisms (upstream result cap, `tools/list` pagination, handle-based JSON navigation), their defaults, and that exceeding `maxResponseBytes` is a hard failure. Notes added to `docs/troubleshooting.md`, `docs/json-navigation.md`, and the generated-server README template. `pnpm docs:check` passes. Additive (docs).
 
 **Problem.** There are three distinct "large response" mechanisms and they are easy to confuse: (1) upstream tool results are hard-capped by `server.maxResponseBytes` (default 1 MiB) and abort with `UPSTREAM_FAILURE` when exceeded — they are **not** paginated; (2) the server's `tools/list` catalog is paginated by `server.toolsPageSize` (default 100) with a revision-bound opaque cursor; (3) large upstream JSON payloads are explored through `@chainmcp/json-navigation` using server-side result handles (`json_create_handle`) plus `json_paginate`/`json_select_path`. Users hitting the cap often expect automatic pagination that does not exist, and the relationship between the cap and the navigation tools is not stated in one place.
 

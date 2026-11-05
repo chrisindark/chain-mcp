@@ -138,7 +138,6 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       name: { type: "string" },
       "base-url": { type: "string" },
       "out-dir": { type: "string" },
-      transport: { type: "string" },
       port: { type: "string" },
       host: { type: "string" },
       path: { type: "string" },
@@ -149,6 +148,7 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       check: { type: "boolean", default: false },
       json: { type: "boolean", default: false },
       "allow-http": { type: "boolean", default: false },
+      transport: { type: "string" },
       "allow-unauthenticated-http": { type: "boolean", default: false },
       "require-contract": { type: "boolean", default: false },
       "local-deps": { type: "string" },
@@ -186,6 +186,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
           : {}),
         ...(asBoolean(values["allow-http"]) !== undefined
           ? { allowHttp: asBoolean(values["allow-http"]) }
+          : {}),
+        ...(asString(values.transport) !== undefined
+          ? { transport: asString(values.transport) as "stdio" | "http" }
           : {}),
         ...(asBoolean(values.blank) !== undefined
           ? { blank: asBoolean(values.blank) }

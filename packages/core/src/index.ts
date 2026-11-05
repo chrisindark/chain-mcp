@@ -11,10 +11,11 @@ import {
   isAssertedFormat,
   isJsonObject,
   matchesFormat,
-  MAX_SCHEMA_DEPTH,
   patternMatches,
   stableValueKey,
+  DEFAULT_SCHEMA_VALIDATION_LIMITS,
   type JsonSchema,
+  type SchemaValidationLimits,
 } from "./schema.js";
 import { assertFieldSelection } from "./field-projection.js";
 import type { FieldSelection } from "./field-projection.js";
@@ -26,7 +27,13 @@ export type {
   SchemaDiagnostic,
   SchemaDiagnosticCode,
 } from "./schema.js";
-export { auditInputSchema, MAX_SCHEMA_DEPTH } from "./schema.js";
+export {
+  auditInputSchema,
+  MAX_SCHEMA_DEPTH,
+  DEFAULT_SCHEMA_VALIDATION_LIMITS,
+  isValidPattern,
+  type SchemaValidationLimits,
+} from "./schema.js";
 export { CACHE_KEY_VERSION, MAX_CACHE_KEY_INPUT_BYTES } from "./cache-key.js";
 export {
   stringifyBounded,
@@ -1660,13 +1667,27 @@ export function validateJsonSchema(
   schema: JsonSchema,
   value: unknown,
   maxIssues = MAX_VALIDATION_ISSUES,
+  limits = DEFAULT_SCHEMA_VALIDATION_LIMITS,
 ): SchemaValidationResult {
   const state: ValidationState = {
     issues: [],
     maxIssues,
     truncated: false,
   };
-  validateValue(schema, value, "$", state, 0);
+  // Enforce input size bound before structural validation.
+  let serializedSize = 0;
+  try {
+    serializedSize = new TextEncoder().encode(JSON.stringify(value)).length;
+  } catch {
+    serializedSize = limits.maxInputSizeBytes + 1;
+  }
+  if (serializedSize > limits.maxInputSizeBytes) {
+    state.issues.push(
+      `$ exceeds the maximum input size of ${limits.maxInputSizeBytes} bytes`,
+    );
+    return { valid: false, issues: state.issues };
+  }
+  validateValue(schema, value, "$", state, 0, limits);
   const issues = state.truncated
     ? [...state.issues, `further issues omitted after ${state.maxIssues}`]
     : state.issues;
@@ -1696,11 +1717,12 @@ function validateValue(
   path: string,
   state: ValidationState,
   depth: number,
+  limits: SchemaValidationLimits,
 ): void {
-  if (depth > MAX_SCHEMA_DEPTH) {
+  if (depth > limits.maxInputDepth) {
     addIssue(
       state,
-      `${path} exceeds the maximum validation depth of ${MAX_SCHEMA_DEPTH}`,
+      `${path} exceeds the maximum validation depth of ${limits.maxInputDepth}`,
     );
     return;
   }
@@ -1715,6 +1737,110 @@ function validateValue(
   ) {
     addIssue(state, `${path} must be one of the allowed values`);
   }
+  if (Object.hasOwn(schema, "const")) {
+    if (!Object.is(schema.const, value)) {
+      addIssue(state, `${path} must equal the constant value`);
+    }
+  }
+
+  if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
+    const matches = schema.anyOf.filter(
+      (branch) =>
+        isJsonObject(branch) &&
+        validateJsonSchema(
+          branch as JsonSchema,
+          value,
+          MAX_VALIDATION_ISSUES,
+          limits,
+        ).valid,
+    ).length;
+    if (matches === 0) {
+      addIssue(state, `${path} must match at least one schema in anyOf`);
+    }
+  }
+  if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
+    const matches = schema.oneOf.filter(
+      (branch) =>
+        isJsonObject(branch) &&
+        validateJsonSchema(
+          branch as JsonSchema,
+          value,
+          MAX_VALIDATION_ISSUES,
+          limits,
+        ).valid,
+    ).length;
+    if (matches !== 1) {
+      addIssue(
+        state,
+        `${path} must match exactly one schema in oneOf (matched ${matches})`,
+      );
+    }
+  }
+  if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
+    for (const [index, branch] of schema.allOf.entries()) {
+      if (!isJsonObject(branch)) continue;
+      const result = validateJsonSchema(
+        branch as JsonSchema,
+        value,
+        MAX_VALIDATION_ISSUES,
+        limits,
+      );
+      if (!result.valid) {
+        for (const issue of result.issues) {
+          addIssue(state, issue);
+        }
+        if (result.issues.length === 0) {
+          addIssue(state, `${path} must match allOf branch ${index}`);
+        }
+      }
+    }
+  }
+  if (isJsonObject(schema.not)) {
+    if (
+      validateJsonSchema(
+        schema.not as JsonSchema,
+        value,
+        MAX_VALIDATION_ISSUES,
+        limits,
+      ).valid
+    ) {
+      addIssue(state, `${path} must not match the schema in 'not'`);
+    }
+  }
+  if (isJsonObject(schema.if)) {
+    const ifMatches = validateJsonSchema(
+      schema.if as JsonSchema,
+      value,
+      MAX_VALIDATION_ISSUES,
+      limits,
+    ).valid;
+    if (ifMatches && isJsonObject(schema.then)) {
+      const thenResult = validateJsonSchema(
+        schema.then as JsonSchema,
+        value,
+        MAX_VALIDATION_ISSUES,
+        limits,
+      );
+      if (!thenResult.valid) {
+        for (const issue of thenResult.issues) addIssue(state, issue);
+        if (thenResult.issues.length === 0)
+          addIssue(state, `${path} must match the schema in 'then'`);
+      }
+    }
+    if (!ifMatches && isJsonObject(schema.else)) {
+      const elseResult = validateJsonSchema(
+        schema.else as JsonSchema,
+        value,
+        MAX_VALIDATION_ISSUES,
+        limits,
+      );
+      if (!elseResult.valid) {
+        for (const issue of elseResult.issues) addIssue(state, issue);
+        if (elseResult.issues.length === 0)
+          addIssue(state, `${path} must match the schema in 'else'`);
+      }
+    }
+  }
   if (typeof value === "string") {
     validateStringConstraints(schema, value, path, state);
   }
@@ -1722,6 +1848,13 @@ function validateValue(
     validateNumberConstraints(schema, value, path, state);
   }
   if (isJsonObject(value)) {
+    if (Object.keys(value).length > limits.maxObjectProperties) {
+      addIssue(
+        state,
+        `${path} must have at most ${limits.maxObjectProperties} properties`,
+      );
+      return;
+    }
     const properties = isJsonObject(schema.properties) ? schema.properties : {};
     const required = Array.isArray(schema.required) ? schema.required : [];
     const propertyCount = Object.keys(value).length;
@@ -1750,6 +1883,43 @@ function validateValue(
         addIssue(state, `${path}.${key} is required`);
       }
     }
+    if (isJsonObject(schema.dependentRequired)) {
+      for (const [trigger, deps] of Object.entries(
+        schema.dependentRequired as Record<string, unknown>,
+      )) {
+        if (!Object.hasOwn(value, trigger) || !Array.isArray(deps)) continue;
+        for (const dep of deps) {
+          if (typeof dep === "string" && !Object.hasOwn(value, dep)) {
+            addIssue(
+              state,
+              `${path}.${dep} is required when '${trigger}' is present`,
+            );
+          }
+        }
+      }
+    }
+    if (isJsonObject(schema.dependentSchemas)) {
+      for (const [trigger, subschema] of Object.entries(
+        schema.dependentSchemas as Record<string, unknown>,
+      )) {
+        if (!Object.hasOwn(value, trigger) || !isJsonObject(subschema))
+          continue;
+        const depResult = validateJsonSchema(
+          subschema as JsonSchema,
+          value,
+          MAX_VALIDATION_ISSUES,
+          limits,
+        );
+        if (!depResult.valid) {
+          for (const issue of depResult.issues) addIssue(state, issue);
+          if (depResult.issues.length === 0)
+            addIssue(
+              state,
+              `${path} must match dependent schema for '${trigger}'`,
+            );
+        }
+      }
+    }
     for (const [key, propertySchema] of Object.entries(properties)) {
       if (Object.hasOwn(value, key) && isJsonObject(propertySchema)) {
         validateValue(
@@ -1758,20 +1928,73 @@ function validateValue(
           `${path}.${key}`,
           state,
           depth + 1,
+          limits,
         );
+      }
+    }
+    if (isJsonObject(schema.propertyNames)) {
+      for (const key of Object.keys(value)) {
+        const keyResult = validateJsonSchema(
+          schema.propertyNames as JsonSchema,
+          key,
+          MAX_VALIDATION_ISSUES,
+          limits,
+        );
+        if (!keyResult.valid) {
+          addIssue(state, `${path} has invalid property name '${key}'`);
+        }
+      }
+    }
+    const patternProperties = isJsonObject(schema.patternProperties)
+      ? (schema.patternProperties as Record<string, unknown>)
+      : {};
+    for (const [key, propValue] of Object.entries(value)) {
+      for (const [pattern, subschema] of Object.entries(patternProperties)) {
+        if (patternMatches(pattern, key) && isJsonObject(subschema)) {
+          validateValue(
+            subschema as JsonSchema,
+            propValue,
+            `${path}.${key}`,
+            state,
+            depth + 1,
+            limits,
+          );
+        }
       }
     }
     if (schema.additionalProperties === false) {
       for (const key of Object.keys(value)) {
         // `in` would treat inherited Object.prototype names as declared
         // properties and let undeclared keys such as 'toString' through.
-        if (!Object.hasOwn(properties, key)) {
-          addIssue(state, `${path}.${key} is not allowed`);
-        }
+        if (Object.hasOwn(properties, key)) continue;
+        if (Object.keys(patternProperties).some((p) => patternMatches(p, key)))
+          continue;
+        addIssue(state, `${path}.${key} is not allowed`);
+      }
+    } else if (isJsonObject(schema.additionalProperties)) {
+      for (const key of Object.keys(value)) {
+        if (Object.hasOwn(properties, key)) continue;
+        if (Object.keys(patternProperties).some((p) => patternMatches(p, key)))
+          continue;
+        validateValue(
+          schema.additionalProperties as JsonSchema,
+          value[key],
+          `${path}.${key}`,
+          state,
+          depth + 1,
+          limits,
+        );
       }
     }
   }
   if (Array.isArray(value)) {
+    if (value.length > limits.maxArrayLength) {
+      addIssue(
+        state,
+        `${path} must have at most ${limits.maxArrayLength} items`,
+      );
+      return;
+    }
     if (typeof schema.minItems === "number" && value.length < schema.minItems) {
       addIssue(state, `${path} must have at least ${schema.minItems} items`);
     }
@@ -1796,16 +2019,67 @@ function validateValue(
         seen.add(key);
       }
     }
+    if (isJsonObject(schema.contains)) {
+      let matches = 0;
+      for (const item of value) {
+        if (
+          validateJsonSchema(
+            schema.contains as JsonSchema,
+            item,
+            MAX_VALIDATION_ISSUES,
+            limits,
+          ).valid
+        ) {
+          matches += 1;
+        }
+      }
+      const minContains =
+        typeof schema.minContains === "number" ? schema.minContains : 1;
+      const maxContains =
+        typeof schema.maxContains === "number" ? schema.maxContains : undefined;
+      if (matches < minContains) {
+        addIssue(
+          state,
+          `${path} must contain at least ${minContains} matching item${minContains === 1 ? "" : "s"} (matched ${matches})`,
+        );
+      }
+      if (maxContains !== undefined && matches > maxContains) {
+        addIssue(
+          state,
+          `${path} must contain at most ${maxContains} matching item${maxContains === 1 ? "" : "s"} (matched ${matches})`,
+        );
+      }
+    }
+    const prefixItems = Array.isArray(schema.prefixItems)
+      ? (schema.prefixItems as unknown[])
+      : Array.isArray(schema.items)
+        ? (schema.items as unknown[])
+        : [];
+    prefixItems.forEach((prefixSchema, index) => {
+      if (index >= value.length) return;
+      if (isJsonObject(prefixSchema)) {
+        validateValue(
+          prefixSchema as JsonSchema,
+          value[index],
+          `${path}[${index}]`,
+          state,
+          depth + 1,
+          limits,
+        );
+      }
+    });
     if (isJsonObject(schema.items)) {
-      value.forEach((item, index) =>
+      value.forEach((item, index) => {
+        if (index < prefixItems.length) return;
         validateValue(
           schema.items as JsonSchema,
           item,
           `${path}[${index}]`,
           state,
           depth + 1,
-        ),
-      );
+          limits,
+        );
+      });
     }
   }
 }

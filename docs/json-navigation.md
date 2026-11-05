@@ -6,6 +6,16 @@ Upstream HTTP APIs frequently return extensive or nested JSON documents (multipl
 
 `@chainmcp/json-navigation` provides safe, linear-time, resource-bounded JSON exploration tools and functions. It enables callers and models to inspect document shapes, query targeted paths, paginate arrays, and apply field filters without evaluating untrusted code or exceeding CPU and memory budgets.
 
+## 1b. Caps vs. pagination
+
+Three mechanisms are often confused:
+
+- **`server.maxResponseBytes` (default 1 MiB)** hard-caps upstream tool results and aborts with `UPSTREAM_FAILURE` when exceeded. It is not a page and is not paginated.
+- **`server.toolsPageSize` (default 100)** paginates the `tools/list` catalog via a revision-bound opaque cursor.
+- **`@chainmcp/json-navigation`** explores large upstream JSON via server-side result handles (`json_create_handle`) plus `json_paginate` / `json_select_path`.
+
+Exceeding `maxResponseBytes` is a hard failure; handle-based navigation cannot bypass it. See `docs/troubleshooting.md` ("Large responses, caps, and pagination").
+
 ## 2. Security and Invariants
 
 1. **Authorization and projection parity:** JSON navigation operates strictly on data the caller has already been authorized to access. It is an exploration layer, not an access-control bypass. If a response is projected or filtered upstream, navigation tools only see the projected result.

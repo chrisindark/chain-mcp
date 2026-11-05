@@ -188,7 +188,7 @@ describe("upstream executor request mapping", () => {
     await expect(tool.execute({}, context)).resolves.toBeNull();
   });
 
-  it("rejects object query values, nulls, and header injection", async () => {
+  it("rejects nested object query values, nulls, and header injection", async () => {
     const tool = createUpstreamExecutor(
       options(new FakeTransport([])),
     ).createTool(
@@ -201,7 +201,7 @@ describe("upstream executor request mapping", () => {
     );
 
     await expectRuntimeError(
-      tool.execute({ q: { nested: true } }, context),
+      tool.execute({ q: { nested: { deep: true } } }, context),
       "UPSTREAM_FAILURE",
       "Upstream request could not be constructed",
     );

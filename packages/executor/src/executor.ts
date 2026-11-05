@@ -110,6 +110,7 @@ export function isValidRequestHeaderName(name: string): boolean {
 
 interface NormalizedExecutorOptions {
   baseUrl: URL;
+  allowInsecureHttp: boolean;
   policy: DestinationPolicy;
   resolver: HostResolver;
   transport: UpstreamTransport;
@@ -208,7 +209,11 @@ async function executeOperation(
     let current = buildInitialRequest(
       operation,
       input,
-      settings.baseUrl,
+      resolveEffectiveBaseUrl(
+        operation,
+        settings.baseUrl,
+        settings.allowInsecureHttp,
+      ),
       settings.maxRequestBytes,
       settings.policy.maxUrlLength,
       credentials,
@@ -444,6 +449,7 @@ function normalizeOptions(
 
   return {
     baseUrl,
+    allowInsecureHttp,
     policy: {
       allowedHosts,
       protocol: baseUrl.protocol as "http:" | "https:",
@@ -619,6 +625,46 @@ async function resolveUpstreamCredentials(
   throw new RuntimeError("AUTH_REQUIRED", "Authentication required");
 }
 
+function resolveEffectiveBaseUrl(
+  operation: {
+    servers?: readonly {
+      url: string;
+      variables?: Readonly<Record<string, { default: string }>>;
+    }[];
+  },
+  fallback: URL,
+  allowInsecureHttp: boolean,
+): URL {
+  const server = operation.servers?.[0];
+  if (!server) return fallback;
+  const substituted = server.url.replace(
+    /\{([^{}]+)\}/g,
+    (_m, name: string) => server.variables?.[name]?.default ?? `{${name}}`,
+  );
+  let base: URL;
+  try {
+    base = substituted.startsWith("/")
+      ? new URL(substituted, fallback)
+      : new URL(substituted);
+  } catch {
+    throw new RequestBuildError("Operation server URL could not be built");
+  }
+  if (base.username || base.password) {
+    throw new RequestBuildError(
+      "Operation server URL must not contain credentials",
+    );
+  }
+  if (base.protocol !== "https:" && base.protocol !== "http:") {
+    throw new RequestBuildError("Operation server URL must use HTTP or HTTPS");
+  }
+  if (base.protocol === "http:" && !allowInsecureHttp) {
+    throw new RequestBuildError(
+      "Operation server URL uses HTTP; set allowInsecureHttp to opt in",
+    );
+  }
+  return base;
+}
+
 function buildInitialRequest(
   operation: CompiledOperation,
   input: unknown,
@@ -645,7 +691,7 @@ function buildInitialRequest(
   for (const parameter of operation.parameters) {
     if (parameter.in !== "query") continue;
     if (!Object.hasOwn(values, parameter.name)) continue;
-    appendQuery(url, parameter.name, values[parameter.name], maxUrlLength);
+    appendQuery(url, parameter, values[parameter.name], maxUrlLength);
   }
 
   // A null prototype prevents a header named `__proto__` from mutating the
@@ -663,7 +709,10 @@ function buildInitialRequest(
     if (RESERVED_REQUEST_HEADERS.has(parameter.name.toLowerCase())) {
       throw new RequestBuildError("Header parameter is reserved");
     }
-    headers[parameter.name] = serializeHeader(valueOf(values, parameter.name));
+    headers[parameter.name] = serializeHeader(
+      valueOf(values, parameter.name),
+      parameter,
+    );
   }
 
   for (const parameter of operation.parameters) {
@@ -706,7 +755,7 @@ function buildInitialRequest(
         } else if (cred.location === "query") {
           validateCredentialName(cred.name, "query");
           url.searchParams.delete(cred.name);
-          appendQuery(url, cred.name, cred.value, maxUrlLength);
+          appendQuery(url, { name: cred.name }, cred.value, maxUrlLength);
         } else if (cred.location === "cookie") {
           validateCredentialName(cred.name, "cookie");
           injectCookie(headers, cred.name, cred.value);
@@ -809,6 +858,83 @@ function buildInitialRequest(
   };
 }
 
+function serializePathParameter(
+  parameter: { name: string; style?: string; explode?: boolean },
+  value: unknown,
+  name: string,
+  maxUrlLength: number,
+): string {
+  const style = parameter.style ?? "simple";
+  const explode = parameter.explode ?? false;
+  const enc = (leaf: string): string => {
+    if (leaf.length > maxUrlLength) {
+      throw new RequestBuildError("Upstream URL is too long");
+    }
+    return encodeURIComponent(leaf);
+  };
+  const leaf = (v: unknown): string => serializeLeaf(v);
+  const simpleFalse = (): string => {
+    if (Array.isArray(value))
+      return value.map((item) => enc(leaf(item))).join(",");
+    if (isPlainRecord(value)) {
+      const flat: string[] = [];
+      for (const [k, v] of flattenRecord(value)) flat.push(enc(k), enc(v));
+      return flat.join(",");
+    }
+    return enc(leaf(value));
+  };
+  const simpleTrue = (): string => {
+    if (Array.isArray(value))
+      return value.map((item) => enc(leaf(item))).join(",");
+    if (isPlainRecord(value)) {
+      return flattenRecord(value)
+        .map(([k, v]) => `${enc(k)}=${enc(v)}`)
+        .join(",");
+    }
+    return enc(leaf(value));
+  };
+  let result: string;
+  if (style === "label") {
+    if (explode) {
+      if (Array.isArray(value)) {
+        result = "." + value.map((item) => enc(leaf(item))).join(".");
+      } else if (isPlainRecord(value)) {
+        result =
+          "." +
+          flattenRecord(value)
+            .map(([k, v]) => `${enc(k)}=${enc(v)}`)
+            .join(".");
+      } else {
+        result = "." + enc(leaf(value));
+      }
+    } else {
+      result = "." + simpleFalse();
+    }
+  } else if (style === "matrix") {
+    if (explode) {
+      if (Array.isArray(value)) {
+        result = value
+          .map((item) => `;${enc(name)}=${enc(leaf(item))}`)
+          .join("");
+      } else if (isPlainRecord(value)) {
+        result = flattenRecord(value)
+          .map(([k, v]) => `;${enc(k)}=${enc(v)}`)
+          .join("");
+      } else {
+        result = `;${enc(name)}=${enc(leaf(value))}`;
+      }
+    } else {
+      result = `;${enc(name)}=${simpleFalse()}`;
+    }
+  } else {
+    result = explode ? simpleTrue() : simpleFalse();
+  }
+  if (result.length > maxUrlLength) {
+    throw new RequestBuildError("Upstream URL is too long");
+  }
+  return result;
+}
+
 function buildPath(
   operation: CompiledOperation,
   values: Readonly<Record<string, unknown>>,
@@ -831,14 +957,14 @@ function buildPath(
       if (!Object.hasOwn(values, name) || values[name] === undefined) {
         throw new RequestBuildError("Path parameter is missing");
       }
-      let serialized: string;
       let encoded: string;
       try {
-        serialized = serializePrimitive(values[name], "path");
-        if (serialized.length > maxUrlLength) {
-          throw new RequestBuildError("Upstream URL is too long");
-        }
-        encoded = encodeURIComponent(serialized);
+        encoded = serializePathParameter(
+          parameter,
+          values[name],
+          name,
+          maxUrlLength,
+        );
       } catch (error) {
         if (error instanceof RequestBuildError) throw error;
         throw new RequestBuildError("Path parameter could not be encoded", {
@@ -873,30 +999,116 @@ function buildPath(
   return path;
 }
 
+function serializeLeaf(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "boolean") return value ? "true" : "false";
+  throw new RequestBuildError("Parameter must be a string, number, or boolean");
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Flatten a record to [key, leaf] pairs (one level; deeper nesting via deepObject). */
+function flattenRecord(
+  value: Record<string, unknown>,
+): Array<[string, string]> {
+  const entries: Array<[string, string]> = [];
+  for (const [k, v] of Object.entries(value)) {
+    entries.push([k, serializeLeaf(v)]);
+  }
+  return entries;
+}
+
 function appendQuery(
   url: URL,
-  name: string,
+  parameter: { name: string; style?: string; explode?: boolean },
   value: unknown,
   maxUrlLength: number,
 ): void {
+  const name = parameter.name;
   if (name.length > maxUrlLength) {
     throw new RequestBuildError("Upstream URL is too long");
   }
-  const append = (item: unknown): void => {
-    const serialized = serializePrimitive(item, "query");
-    if (serialized.length > maxUrlLength) {
+  const appendOnce = (key: string, serialized: string): void => {
+    if (serialized.length > maxUrlLength || key.length > maxUrlLength) {
       throw new RequestBuildError("Upstream URL is too long");
     }
-    url.searchParams.append(name, serialized);
+    url.searchParams.append(key, serialized);
     if (url.href.length > maxUrlLength) {
       throw new RequestBuildError("Upstream URL is too long");
     }
   };
-  if (Array.isArray(value)) {
-    for (const item of value) append(item);
+  const style = parameter.style ?? "form";
+  // Default explode: form/deepObject => true, others => false.
+  const explode =
+    parameter.explode ??
+    (style === "form" || style === "deepObject" ? true : false);
+
+  if (style === "deepObject") {
+    if (!isPlainRecord(value)) {
+      throw new RequestBuildError("deepObject parameter must be an object");
+    }
+    const walk = (prefix: string, record: Record<string, unknown>): void => {
+      for (const [k, v] of Object.entries(record)) {
+        if (isPlainRecord(v)) {
+          walk(`${prefix}[${k}]`, v);
+        } else if (Array.isArray(v)) {
+          for (const item of v)
+            appendOnce(`${prefix}[${k}]`, serializeLeaf(item));
+        } else {
+          appendOnce(`${prefix}[${k}]`, serializeLeaf(v));
+        }
+      }
+    };
+    walk(name, value);
     return;
   }
-  append(value);
+
+  if (style === "spaceDelimited" || style === "pipeDelimited") {
+    const delim = style === "spaceDelimited" ? " " : "|";
+    if (isPlainRecord(value)) {
+      const flat: string[] = [];
+      for (const [k, v] of flattenRecord(value)) flat.push(k, v);
+      appendOnce(name, flat.join(delim));
+      return;
+    }
+    if (Array.isArray(value)) {
+      appendOnce(name, value.map((item) => serializeLeaf(item)).join(delim));
+      return;
+    }
+    appendOnce(name, serializeLeaf(value));
+    return;
+  }
+
+  // form (default)
+  if (explode) {
+    if (isPlainRecord(value)) {
+      for (const [k, v] of Object.entries(value)) {
+        appendOnce(k, serializeLeaf(v));
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) appendOnce(name, serializeLeaf(item));
+      return;
+    }
+    appendOnce(name, serializeLeaf(value));
+    return;
+  }
+  // form explode=false: single parameter, comma-joined.
+  if (isPlainRecord(value)) {
+    const flat: string[] = [];
+    for (const [k, v] of flattenRecord(value)) flat.push(k, v);
+    appendOnce(name, flat.join(","));
+    return;
+  }
+  if (Array.isArray(value)) {
+    appendOnce(name, value.map((item) => serializeLeaf(item)).join(","));
+    return;
+  }
+  appendOnce(name, serializeLeaf(value));
 }
 
 function serializePrimitive(
@@ -911,7 +1123,10 @@ function serializePrimitive(
   );
 }
 
-function serializeHeader(value: unknown): string {
+function serializeHeader(
+  value: unknown,
+  parameter?: { style?: string; explode?: boolean },
+): string {
   if (Array.isArray(value)) {
     const parts: string[] = [];
     let length = 0;
@@ -924,6 +1139,19 @@ function serializeHeader(value: unknown): string {
       parts.push(part);
     }
     return assertHeaderValue(parts.join(","));
+  }
+  if (isPlainRecord(value)) {
+    const explode = parameter?.explode ?? false;
+    if (explode) {
+      return assertHeaderValue(
+        flattenRecord(value)
+          .map(([k, v]) => `${k}=${v}`)
+          .join(","),
+      );
+    }
+    const flat: string[] = [];
+    for (const [k, v] of flattenRecord(value)) flat.push(k, v);
+    return assertHeaderValue(flat.join(","));
   }
   return assertHeaderValue(serializePrimitive(value, "query"));
 }

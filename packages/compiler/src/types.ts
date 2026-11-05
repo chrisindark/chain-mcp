@@ -71,6 +71,13 @@ export interface CompileOptions {
   maxRefDepth?: number;
   /** Maximum number of operations considered. Default 1,000; maximum 10,000. */
   maxOperations?: number;
+  /**
+   * Explicitly supplied external documents for remote `$ref`s, keyed by base
+   * URI (e.g. `"https://schemas.example.com/common.json"`). Remote refs are
+   * never fetched over the network; a ref resolves from this map or is
+   * rejected with `REF_REMOTE_UNSUPPORTED`.
+   */
+  externalDocuments?: Record<string, Record<string, unknown>>;
 }
 
 /**
@@ -190,6 +197,16 @@ export interface CompiledAuthenticationPolicy {
  * to a runtime `ToolDefinition`; credential injection and response validation
  * remain deferred.
  */
+export interface CompiledServerVariable {
+  default: string;
+  enum?: readonly string[];
+}
+
+export interface CompiledServer {
+  url: string;
+  variables?: Readonly<Record<string, CompiledServerVariable>>;
+}
+
 export interface CompiledOperation {
   name: string;
   description: string;
@@ -212,6 +229,7 @@ export interface CompiledOperation {
   /** Explicit OR/AND authentication policy derived from `security`. */
   authentication: CompiledAuthenticationPolicy;
   sourceLocation: string;
+  servers?: readonly CompiledServer[];
   warnings?: readonly CompileDiagnostic[];
 }
 

@@ -31,6 +31,26 @@ export interface SchemaAuditResult {
 
 export const MAX_SCHEMA_DEPTH = 32;
 
+export interface SchemaValidationLimits {
+  maxSchemaDepth: number;
+  maxSchemaNodes: number;
+  maxUnionBranches: number;
+  maxInputDepth: number;
+  maxInputSizeBytes: number;
+  maxArrayLength: number;
+  maxObjectProperties: number;
+}
+
+export const DEFAULT_SCHEMA_VALIDATION_LIMITS: SchemaValidationLimits = {
+  maxSchemaDepth: 32,
+  maxSchemaNodes: 2000,
+  maxUnionBranches: 20,
+  maxInputDepth: 50,
+  maxInputSizeBytes: 1_048_576,
+  maxArrayLength: 10_000,
+  maxObjectProperties: 1_000,
+};
+
 /** Maximum accepted regular-expression length for the `pattern` keyword. */
 export const MAX_PATTERN_LENGTH = 4_096;
 
@@ -67,6 +87,24 @@ const SUPPORTED_SCHEMA_KEYWORDS = new Set([
   "uniqueItems",
   "minProperties",
   "maxProperties",
+  "anyOf",
+  "oneOf",
+  "allOf",
+  "not",
+  "const",
+  "patternProperties",
+  "dependentRequired",
+  "dependentSchemas",
+  "if",
+  "then",
+  "else",
+  "contains",
+  "minContains",
+  "maxContains",
+  "propertyNames",
+  "prefixItems",
+  "contentEncoding",
+  "contentMediaType",
 ]);
 
 const NON_NEGATIVE_INTEGER_CONSTRAINTS = new Set([
@@ -116,9 +154,20 @@ const SUPPORTED_SCHEMA_TYPES = new Set([
  * Returns every unsupported construct with a stable code, path, and message.
  * Callers must treat a non-empty diagnostics list as unsupported.
  */
-export function auditInputSchema(schema: unknown): SchemaAuditResult {
+export function auditInputSchema(
+  schema: unknown,
+  limits: SchemaValidationLimits = DEFAULT_SCHEMA_VALIDATION_LIMITS,
+): SchemaAuditResult {
   const diagnostics: SchemaDiagnostic[] = [];
-  auditSchema(schema, "$", 0, new Set(), diagnostics);
+  const budget = { nodes: 0 };
+  auditSchema(schema, "$", 0, new Set(), diagnostics, limits, budget);
+  if (budget.nodes > limits.maxSchemaNodes) {
+    diagnostics.push({
+      code: "SCHEMA_TOO_DEEP",
+      path: "$",
+      message: `Schema exceeds the maximum node count of ${limits.maxSchemaNodes}`,
+    });
+  }
   return { supported: diagnostics.length === 0, diagnostics };
 }
 
@@ -128,6 +177,8 @@ function auditSchema(
   depth: number,
   ancestors: Set<object>,
   diagnostics: SchemaDiagnostic[],
+  limits: SchemaValidationLimits,
+  budget: { nodes: number },
 ): void {
   if (!isJsonObject(schema)) {
     diagnostics.push({
@@ -137,14 +188,15 @@ function auditSchema(
     });
     return;
   }
-  if (depth > MAX_SCHEMA_DEPTH) {
+  if (depth > limits.maxSchemaDepth) {
     diagnostics.push({
       code: "SCHEMA_TOO_DEEP",
       path,
-      message: `Schema at ${path} exceeds the maximum depth of ${MAX_SCHEMA_DEPTH}`,
+      message: `Schema at ${path} exceeds the maximum depth of ${limits.maxSchemaDepth}`,
     });
     return;
   }
+  budget.nodes += 1;
   if (ancestors.has(schema)) {
     diagnostics.push({
       code: "SCHEMA_CYCLE",
@@ -225,28 +277,86 @@ function auditSchema(
             depth + 1,
             ancestors,
             diagnostics,
+            limits,
+            budget,
           );
         }
       }
     }
 
-    if (
-      "additionalProperties" in schema &&
-      typeof schema.additionalProperties !== "boolean"
-    ) {
-      diagnostics.push({
-        code: "SCHEMA_INVALID_ADDITIONAL_PROPERTIES",
-        path,
-        message: `Schema 'additionalProperties' at ${path} must be a boolean`,
-      });
+    if ("patternProperties" in schema) {
+      if (!isJsonObject(schema.patternProperties)) {
+        diagnostics.push({
+          code: "SCHEMA_INVALID_PROPERTIES",
+          path,
+          message: `Schema 'patternProperties' at ${path} must be an object`,
+        });
+      } else {
+        for (const [pattern, subschema] of Object.entries(
+          schema.patternProperties,
+        )) {
+          if (compilePattern(pattern) === undefined) {
+            diagnostics.push({
+              code: "SCHEMA_INVALID_PATTERN",
+              path,
+              message: `Schema 'patternProperties' key '${pattern}' at ${path} is not a valid RE2 regular expression`,
+            });
+          }
+          auditSchema(
+            subschema,
+            `${path}.patternProperties.${pattern}`,
+            depth + 1,
+            ancestors,
+            diagnostics,
+            limits,
+            budget,
+          );
+        }
+      }
+    }
+
+    if ("additionalProperties" in schema) {
+      const value = schema.additionalProperties;
+      if (typeof value === "boolean") {
+        // ok
+      } else if (isJsonObject(value)) {
+        auditSchema(
+          value,
+          `${path}.additionalProperties`,
+          depth + 1,
+          ancestors,
+          diagnostics,
+          limits,
+          budget,
+        );
+      } else {
+        diagnostics.push({
+          code: "SCHEMA_INVALID_ADDITIONAL_PROPERTIES",
+          path,
+          message: `Schema 'additionalProperties' at ${path} must be a boolean or an object schema`,
+        });
+      }
     }
 
     if ("items" in schema) {
-      if (!isJsonObject(schema.items)) {
+      if (Array.isArray(schema.items)) {
+        // Tuple form (draft-07): each entry is a positional schema.
+        for (const [index, entry] of schema.items.entries()) {
+          auditSchema(
+            entry,
+            `${path}.items[${index}]`,
+            depth + 1,
+            ancestors,
+            diagnostics,
+            limits,
+            budget,
+          );
+        }
+      } else if (!isJsonObject(schema.items)) {
         diagnostics.push({
           code: "SCHEMA_INVALID_ITEMS",
           path,
-          message: `Schema 'items' at ${path} must be an object schema; tuple and boolean forms are not supported`,
+          message: `Schema 'items' at ${path} must be an object schema or an array of schemas`,
         });
       } else {
         auditSchema(
@@ -255,8 +365,166 @@ function auditSchema(
           depth + 1,
           ancestors,
           diagnostics,
+          limits,
+          budget,
         );
       }
+    }
+
+    if ("prefixItems" in schema) {
+      if (!Array.isArray(schema.prefixItems)) {
+        diagnostics.push({
+          code: "SCHEMA_INVALID_ITEMS",
+          path,
+          message: `Schema 'prefixItems' at ${path} must be an array of schemas`,
+        });
+      } else {
+        for (const [index, entry] of schema.prefixItems.entries()) {
+          auditSchema(
+            entry,
+            `${path}.prefixItems[${index}]`,
+            depth + 1,
+            ancestors,
+            diagnostics,
+            limits,
+            budget,
+          );
+        }
+      }
+    }
+
+    for (const keyword of ["anyOf", "oneOf", "allOf"] as const) {
+      if (!(keyword in schema)) continue;
+      const value = schema[keyword];
+      if (!Array.isArray(value) || value.length === 0) {
+        diagnostics.push({
+          code: "SCHEMA_INVALID_CONSTRAINT",
+          path,
+          message: `Schema '${keyword}' at ${path} must be a non-empty array of schemas`,
+        });
+        continue;
+      }
+      if (value.length > limits.maxUnionBranches) {
+        diagnostics.push({
+          code: "SCHEMA_INVALID_CONSTRAINT",
+          path,
+          message: `Schema '${keyword}' at ${path} exceeds the maximum of ${limits.maxUnionBranches} branches`,
+        });
+      }
+      for (const [index, entry] of value.entries()) {
+        auditSchema(
+          entry,
+          `${path}.${keyword}[${index}]`,
+          depth + 1,
+          ancestors,
+          diagnostics,
+          limits,
+          budget,
+        );
+      }
+    }
+
+    for (const keyword of ["if", "then", "else"] as const) {
+      if (!(keyword in schema)) continue;
+      auditSchema(
+        schema[keyword],
+        `${path}.${keyword}`,
+        depth + 1,
+        ancestors,
+        diagnostics,
+        limits,
+        budget,
+      );
+    }
+    if ("dependentRequired" in schema) {
+      if (!isJsonObject(schema.dependentRequired)) {
+        diagnostics.push({
+          code: "SCHEMA_INVALID_CONSTRAINT",
+          path,
+          message: `Schema 'dependentRequired' at ${path} must be an object`,
+        });
+      } else {
+        for (const [key, value] of Object.entries(schema.dependentRequired)) {
+          if (
+            !Array.isArray(value) ||
+            !value.every((v) => typeof v === "string")
+          ) {
+            diagnostics.push({
+              code: "SCHEMA_INVALID_CONSTRAINT",
+              path,
+              message: `Schema 'dependentRequired' entry '${key}' at ${path} must be an array of strings`,
+            });
+          }
+        }
+      }
+    }
+    if ("dependentSchemas" in schema) {
+      if (!isJsonObject(schema.dependentSchemas)) {
+        diagnostics.push({
+          code: "SCHEMA_INVALID_CONSTRAINT",
+          path,
+          message: `Schema 'dependentSchemas' at ${path} must be an object`,
+        });
+      } else {
+        for (const [key, subschema] of Object.entries(
+          schema.dependentSchemas,
+        )) {
+          auditSchema(
+            subschema,
+            `${path}.dependentSchemas.${key}`,
+            depth + 1,
+            ancestors,
+            diagnostics,
+            limits,
+            budget,
+          );
+        }
+      }
+    }
+
+    if ("contains" in schema) {
+      auditSchema(
+        schema.contains,
+        `${path}.contains`,
+        depth + 1,
+        ancestors,
+        diagnostics,
+        limits,
+        budget,
+      );
+    }
+    for (const keyword of ["minContains", "maxContains"] as const) {
+      if (!(keyword in schema)) continue;
+      const v = schema[keyword];
+      if (!Number.isSafeInteger(v) || (v as number) < 0) {
+        diagnostics.push({
+          code: "SCHEMA_INVALID_CONSTRAINT",
+          path,
+          message: `Schema '${keyword}' at ${path} must be a non-negative safe integer`,
+        });
+      }
+    }
+    if ("propertyNames" in schema) {
+      auditSchema(
+        schema.propertyNames,
+        `${path}.propertyNames`,
+        depth + 1,
+        ancestors,
+        diagnostics,
+        limits,
+        budget,
+      );
+    }
+    if ("not" in schema) {
+      auditSchema(
+        schema.not,
+        `${path}.not`,
+        depth + 1,
+        ancestors,
+        diagnostics,
+        limits,
+        budget,
+      );
     }
   } finally {
     ancestors.delete(schema);
@@ -346,6 +614,11 @@ function auditConstraints(
 }
 
 /** Returns true when the runtime asserts this format on string values. */
+/** Returns true when `pattern` compiles under the RE2 engine. */
+export function isValidPattern(pattern: string): boolean {
+  return compilePattern(pattern) !== undefined;
+}
+
 export function isAssertedFormat(format: string): boolean {
   return ASSERTED_FORMATS.has(format);
 }
