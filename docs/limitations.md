@@ -214,7 +214,9 @@ exact` with a module or registered factory; no model-specific tokenizer is
 
 ## Platform and packaging
 
-- **Node.js 20.11+ (20 and 22 LTS) only.** See `docs/supported-versions.md`.
+- **Node.js 22.13+ (22 LTS) only.** pnpm 11 imports `node:sqlite`, so Node.js
+  20 cannot run the toolchain; Node.js 20 is also end-of-life. See
+  `docs/supported-versions.md`.
 - **Linux and macOS are the supported operating systems.** Windows is neither
   tested nor listed as supported.
 - **PostgreSQL is not implemented.** It appears as intended architecture in the

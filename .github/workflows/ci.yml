@@ -13,8 +13,13 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     strategy:
+      # A failing leg must never cancel a passing one; cancellations hide the
+      # real result (see P2-0).
+      fail-fast: false
       matrix:
-        node-version: ["20.x", "22.x"]
+        # pnpm 11 requires Node.js >= 22.13 (it imports node:sqlite), and
+        # Node 20 reached end-of-life in April 2026.
+        node-version: ["22.x"]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -65,7 +70,12 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const body = fs.readFileSync('coverage/coverage-summary.md', 'utf8');
+            const summaryPath = 'coverage/coverage-summary.md';
+            if (!fs.existsSync(summaryPath)) {
+              core.warning('Coverage summary not found; skipping the PR comment.');
+              return;
+            }
+            const body = fs.readFileSync(summaryPath, 'utf8');
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -92,8 +102,10 @@ jobs:
   inspector:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        node-version: ["20.x", "22.x"]
+        # Same Node floor as the checks job (pnpm 11 needs >= 22.13).
+        node-version: ["22.x"]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

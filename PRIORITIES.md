@@ -440,6 +440,86 @@ behavior changes.
 
 ## P2 — Hardening and completeness
 
+### P2-0 — Make CI report the truth and stop failing on toolchain drift
+
+**Status: done (2026-11-05).** Investigation of the failing `staging` / PR #57
+runs found four distinct problems, only two of which were product defects in
+the usual sense.
+
+**1. Node 20 legs could never install pnpm.** `checks (20.x)` and
+`inspector (20.x)` failed in `actions/setup-node@v4` before any repo command
+ran: `ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:sqlite` plus
+`warn: This version of pnpm requires at least Node.js v22.13`. `pnpm@11.0.0`
+imports `node:sqlite`, and Node.js 20 reached end-of-life in April 2026, so
+the 20.x matrix entries were unreachable by construction. The matrix for
+`checks` and `inspector` is now `["22.x"]`, `package.json` declares
+`engines.node: ">=22.13"`, and the living docs (`docs/supported-versions.md`,
+`docs/getting-started.md`, `DEVELOPMENT.md`, `docs/limitations.md`,
+`RELEASES.md`) say 22.13+.
+
+**2. `fail-fast` hid the passing legs.** `checks (22.x)` and
+`inspector (22.x)` were reported as "cancelled", not failed: the 20.x leg
+failed first and GitHub cancelled the rest. Job inspection shows the 22.x
+`inspector` leg had already passed both conformance checks and the 22.x
+`checks` leg had completed `pnpm install` when the cancellation arrived.
+Both jobs now set `fail-fast: false`, so a failing leg can never mask the
+result of another.
+
+**3. The coverage job had two independent failures.** `Run tests with
+coverage` failed because `packages/cli/tests/quick-start.test.ts` (new in
+P1-6) and the older `local-install.test.ts` both ran
+`pnpm install --offline`, which on a cold runner cannot resolve the
+generated project's third-party semver ranges
+(`ERR_PNPM_NO_OFFLINE_META: Failed to resolve @types/node@>=22.19.0
+<23.0.0-0`). Separately, `Comment coverage summary on PR` failed with
+`ENOENT: coverage/coverage-summary.md` whenever the gate step failed. The
+comment step now warns and returns when the summary is absent.
+
+**4. `Redis integration` was never failing.** It passed in every inspected
+run (47s in PR run `42029055949`, and success in `42028867935`,
+`42029085789`, and `41839068713`). The "failing after 22s" state was a stale
+UI/cancellation artifact, not a service problem; no change was made.
+
+**Cold-store contract.** Offline installs are no longer a hard requirement
+the test cannot meet. `packages/cli/tests/support/generated-install.ts` adds
+`installGeneratedProject()`, which tries `--offline` first and retries with
+`--prefer-offline` only when pnpm reports
+`ERR_PNPM_NO_OFFLINE_META`/`ERR_PNPM_NO_OFFLINE_TARBALL`; any other failure
+still propagates. The guarantee the product actually makes is narrower than
+"no network at all": `@chainmcp/*` come from the clone, while `zod`, `yaml`,
+`typescript`, and `@types/node` are ordinary npm dependencies.
+`assertChainMcpPackagesFromClone()` therefore asserts that every
+`@chainmcp/*` dependency is a `file:` specifier and is installed at the
+version the clone declares. It deliberately does **not** assert that the
+installed path is inside the clone: pnpm materializes `file:` dependencies
+into the project's own virtual store
+(`node_modules/.pnpm/@chainmcp+core@file+...`), so a path assertion is
+always false. Because nothing under `@chainmcp/*` is published, a successful
+install is itself evidence the packages came from the clone; the version
+comparison catches a stale copy and the spec check catches a regression back
+to a registry range.
+
+The fallback is pinned by `packages/cli/tests/generated-install.test.ts`
+(8 tests) using a fake `pnpm` on `PATH`, which is the only reliable way to
+reproduce a cold store: redirecting pnpm's store locally makes pnpm
+re-download its own `pnpm-11.0.0.tgz` instead of exercising the metadata
+path, so a real cold-store simulation is not reproducible on a warm
+developer machine. The tests cover: offline success stays offline, both
+cold-store codes trigger exactly one `--prefer-offline` retry, and unrelated
+pnpm errors are not swallowed.
+
+**Documentation correction.** `README.md` and `docs/getting-started.md`
+claimed "no registry access is required at any step". That is false for a
+first install because of the third-party dependencies; both now state that
+`@chainmcp/*` come from the clone, third-party packages come from npm the
+first time, and `pnpm install --offline` needs a warm pnpm store. The
+documented quick start already used plain `pnpm install`, so no command
+changed.
+
+**Limitation.** The ADRs that selected Node.js 20.11 (`docs/adr/0001`,
+`docs/adr/0027`) are left as historical records; the living docs above are
+authoritative for the supported floor.
+
 ### P2-1 — MCP remote-client auth interoperability
 
 No `/.well-known/oauth-protected-resource`, no JWKS fetch/rotation (a single static public key is required), and the 401 lacks `resource_metadata` (`packages/server/src/http.ts:737`). Needed for remote MCP connectors that expect OAuth resource metadata. Keep the authorization server out of scope.
@@ -504,6 +584,6 @@ A priority is complete only when:
 
 ## Recommended order
 
-`P0-1 → P0-2 → P0-3 → P0-4 → P0-5 → P0-6 → P0-7 → P0-8 → P1-1 → P1-3 → P1-4 → P1-5 → P1-2 → P1-6 → P2 items`
+`P0-1 → P0-2 → P0-3 → P0-4 → P0-5 → P0-6 → P0-7 → P0-8 → P1-1 → P1-3 → P1-4 → P1-5 → P1-2 → P1-6 → P2-0 → remaining P2 items`
 
-P0-1 and P0-2 are the first true release blockers for a local-clone user; P0-3 through P0-7 close the integrity, secret, and safety gaps; P0-8 must be last so it describes the finished state.
+P0-1 and P0-2 are the first true release blockers for a local-clone user; P0-3 through P0-7 close the integrity, secret, and safety gaps; P0-8 must be last so it describes the finished state. P2-0 came before the other P2 items because a CI that reports false failures cannot verify any of them.
