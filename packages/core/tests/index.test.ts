@@ -480,11 +480,7 @@ describe("InMemoryToolRuntime", () => {
 
   it.each<[string, ToolDefinition["inputSchema"]]>([
     ["$ref", { $ref: "#/definitions/item" }],
-    ["anyOf", { anyOf: [{ type: "string" }] }],
-    ["oneOf", { oneOf: [{ type: "string" }] }],
-    ["allOf", { allOf: [{ type: "string" }] }],
     ["const", { const: "fixed" }],
-    ["not", { not: { type: "string" } }],
     ["contains", { type: "array", contains: { type: "string" } }],
     ["patternProperties", { type: "object", patternProperties: {} }],
     ["propertyNames", { type: "object", propertyNames: { type: "string" } }],
@@ -1190,14 +1186,14 @@ describe("schema audit", () => {
   });
 
   it("reports unsupported keywords without throwing", () => {
-    const result = auditInputSchema({ anyOf: [{ type: "string" }] });
+    const result = auditInputSchema({ patternProperties: {} });
 
     expect(result.supported).toBe(false);
     expect(result.diagnostics).toEqual([
       {
         code: "SCHEMA_UNSUPPORTED_KEYWORD",
         path: "$",
-        message: "Schema keyword 'anyOf' at $ is not supported",
+        message: "Schema keyword 'patternProperties' at $ is not supported",
       },
     ]);
   });

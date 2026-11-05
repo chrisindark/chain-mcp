@@ -269,6 +269,43 @@ function translateSchema(
         );
         return undefined;
       }
+      if (keyword === "anyOf" || keyword === "oneOf") {
+        if (!Array.isArray(value) || value.length === 0) {
+          report(
+            context,
+            "error",
+            "SCHEMA_INVALID",
+            `Schema '${keyword}' must be a non-empty array of schemas`,
+          );
+          return undefined;
+        }
+        const translated: JsonSchema[] = [];
+        for (const entry of value) {
+          const t = translateSchema(
+            entry,
+            context,
+            depth + 1,
+            ancestors,
+            refStack,
+          );
+          if (t === undefined) return undefined;
+          translated.push(t);
+        }
+        result[keyword] = translated;
+        continue;
+      }
+      if (keyword === "not") {
+        const t = translateSchema(
+          value,
+          context,
+          depth + 1,
+          ancestors,
+          refStack,
+        );
+        if (t === undefined) return undefined;
+        result.not = t;
+        continue;
+      }
       if (keyword === "items") {
         if (!isPlainObject(value)) {
           report(

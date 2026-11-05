@@ -31,6 +31,26 @@ export interface SchemaAuditResult {
 
 export const MAX_SCHEMA_DEPTH = 32;
 
+export interface SchemaValidationLimits {
+  maxSchemaDepth: number;
+  maxSchemaNodes: number;
+  maxUnionBranches: number;
+  maxInputDepth: number;
+  maxInputSizeBytes: number;
+  maxArrayLength: number;
+  maxObjectProperties: number;
+}
+
+export const DEFAULT_SCHEMA_VALIDATION_LIMITS: SchemaValidationLimits = {
+  maxSchemaDepth: 32,
+  maxSchemaNodes: 2000,
+  maxUnionBranches: 20,
+  maxInputDepth: 50,
+  maxInputSizeBytes: 1_048_576,
+  maxArrayLength: 10_000,
+  maxObjectProperties: 1_000,
+};
+
 /** Maximum accepted regular-expression length for the `pattern` keyword. */
 export const MAX_PATTERN_LENGTH = 4_096;
 
@@ -67,6 +87,10 @@ const SUPPORTED_SCHEMA_KEYWORDS = new Set([
   "uniqueItems",
   "minProperties",
   "maxProperties",
+  "anyOf",
+  "oneOf",
+  "allOf",
+  "not",
 ]);
 
 const NON_NEGATIVE_INTEGER_CONSTRAINTS = new Set([
@@ -116,9 +140,20 @@ const SUPPORTED_SCHEMA_TYPES = new Set([
  * Returns every unsupported construct with a stable code, path, and message.
  * Callers must treat a non-empty diagnostics list as unsupported.
  */
-export function auditInputSchema(schema: unknown): SchemaAuditResult {
+export function auditInputSchema(
+  schema: unknown,
+  limits: SchemaValidationLimits = DEFAULT_SCHEMA_VALIDATION_LIMITS,
+): SchemaAuditResult {
   const diagnostics: SchemaDiagnostic[] = [];
-  auditSchema(schema, "$", 0, new Set(), diagnostics);
+  const budget = { nodes: 0 };
+  auditSchema(schema, "$", 0, new Set(), diagnostics, limits, budget);
+  if (budget.nodes > limits.maxSchemaNodes) {
+    diagnostics.push({
+      code: "SCHEMA_TOO_DEEP",
+      path: "$",
+      message: `Schema exceeds the maximum node count of ${limits.maxSchemaNodes}`,
+    });
+  }
   return { supported: diagnostics.length === 0, diagnostics };
 }
 
@@ -128,6 +163,8 @@ function auditSchema(
   depth: number,
   ancestors: Set<object>,
   diagnostics: SchemaDiagnostic[],
+  limits: SchemaValidationLimits,
+  budget: { nodes: number },
 ): void {
   if (!isJsonObject(schema)) {
     diagnostics.push({
@@ -137,14 +174,15 @@ function auditSchema(
     });
     return;
   }
-  if (depth > MAX_SCHEMA_DEPTH) {
+  if (depth > limits.maxSchemaDepth) {
     diagnostics.push({
       code: "SCHEMA_TOO_DEEP",
       path,
-      message: `Schema at ${path} exceeds the maximum depth of ${MAX_SCHEMA_DEPTH}`,
+      message: `Schema at ${path} exceeds the maximum depth of ${limits.maxSchemaDepth}`,
     });
     return;
   }
+  budget.nodes += 1;
   if (ancestors.has(schema)) {
     diagnostics.push({
       code: "SCHEMA_CYCLE",
@@ -225,6 +263,8 @@ function auditSchema(
             depth + 1,
             ancestors,
             diagnostics,
+            limits,
+            budget,
           );
         }
       }
@@ -255,8 +295,53 @@ function auditSchema(
           depth + 1,
           ancestors,
           diagnostics,
+          limits,
+          budget,
         );
       }
+    }
+
+    for (const keyword of ["anyOf", "oneOf", "allOf"] as const) {
+      if (!(keyword in schema)) continue;
+      const value = schema[keyword];
+      if (!Array.isArray(value) || value.length === 0) {
+        diagnostics.push({
+          code: "SCHEMA_INVALID_CONSTRAINT",
+          path,
+          message: `Schema '${keyword}' at ${path} must be a non-empty array of schemas`,
+        });
+        continue;
+      }
+      if (value.length > limits.maxUnionBranches) {
+        diagnostics.push({
+          code: "SCHEMA_INVALID_CONSTRAINT",
+          path,
+          message: `Schema '${keyword}' at ${path} exceeds the maximum of ${limits.maxUnionBranches} branches`,
+        });
+      }
+      for (const [index, entry] of value.entries()) {
+        auditSchema(
+          entry,
+          `${path}.${keyword}[${index}]`,
+          depth + 1,
+          ancestors,
+          diagnostics,
+          limits,
+          budget,
+        );
+      }
+    }
+
+    if ("not" in schema) {
+      auditSchema(
+        schema.not,
+        `${path}.not`,
+        depth + 1,
+        ancestors,
+        diagnostics,
+        limits,
+        budget,
+      );
     }
   } finally {
     ancestors.delete(schema);

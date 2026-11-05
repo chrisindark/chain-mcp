@@ -1176,15 +1176,12 @@ describe("unsupported schemas", () => {
       }),
       { strict: false },
     );
-    // The union-typed parameters are skipped with parameter-named warnings,
-    // but the unrelated unknown-keyword parameter keeps operation-dropping
-    // semantics, so the operation is still omitted and the compile fails.
+    // Unknown keyword still drops the operation.
     expect(result.ok).toBe(false);
     expect(result.tools).toHaveLength(0);
-    expect(codes(result)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
     expect(codes(result)).toContain("SCHEMA_UNSUPPORTED");
 
-    const degraded = compileDocument(
+    const supported = compileDocument(
       baseDocument({
         "/x": {
           get: operation({
@@ -1192,7 +1189,7 @@ describe("unsupported schemas", () => {
             parameters: [
               { name: "keep", in: "query", schema: { type: "string" } },
               {
-                name: "skip",
+                name: "union",
                 in: "query",
                 schema: { oneOf: [{ type: "string" }, { type: "integer" }] },
               },
@@ -1202,29 +1199,13 @@ describe("unsupported schemas", () => {
       }),
       { strict: false },
     );
-    expect(degraded.ok).toBe(true);
-    expect(degraded.tools).toHaveLength(1);
-    expect(codes(degraded)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
-    const names = degraded.diagnostics
-      .filter((d) => d.code === "SCHEMA_COMPOSITION_UNSUPPORTED")
-      .map((d) => d.message);
-    expect(
-      names.some(
-        (m) => m.includes("Skipping parameter 'skip'") && m.includes("get /x"),
-      ),
-    ).toBe(true);
-    expect(
-      degraded.diagnostics.some(
-        (d) =>
-          d.code === "SCHEMA_COMPOSITION_UNSUPPORTED" &&
-          d.severity === "warning",
-      ),
-    ).toBe(true);
-    const props = degraded.tools[0]?.inputSchema.properties ?? {};
+    expect(supported.ok).toBe(true);
+    expect(supported.tools).toHaveLength(1);
+    const props = supported.tools[0]?.inputSchema.properties ?? {};
     expect(props).toHaveProperty("keep");
-    expect(props).not.toHaveProperty("skip");
+    expect(props).toHaveProperty("union");
 
-    // Strict mode still rejects the whole operation.
+    // Strict mode also accepts now-supported union schemas.
     const strictResult = compileDocument(
       baseDocument({
         "/x": {
@@ -1240,9 +1221,8 @@ describe("unsupported schemas", () => {
         },
       }),
     );
-    expect(strictResult.ok).toBe(false);
-    expect(strictResult.tools).toHaveLength(0);
-    expect(codes(strictResult)).toContain("SCHEMA_COMPOSITION_UNSUPPORTED");
+    expect(strictResult.ok).toBe(true);
+    expect(strictResult.tools).toHaveLength(1);
   });
 
   it("rejects schema-valued additionalProperties and unknown keywords", () => {

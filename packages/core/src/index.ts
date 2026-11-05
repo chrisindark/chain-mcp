@@ -11,10 +11,11 @@ import {
   isAssertedFormat,
   isJsonObject,
   matchesFormat,
-  MAX_SCHEMA_DEPTH,
   patternMatches,
   stableValueKey,
+  DEFAULT_SCHEMA_VALIDATION_LIMITS,
   type JsonSchema,
+  type SchemaValidationLimits,
 } from "./schema.js";
 import { assertFieldSelection } from "./field-projection.js";
 import type { FieldSelection } from "./field-projection.js";
@@ -26,7 +27,12 @@ export type {
   SchemaDiagnostic,
   SchemaDiagnosticCode,
 } from "./schema.js";
-export { auditInputSchema, MAX_SCHEMA_DEPTH } from "./schema.js";
+export {
+  auditInputSchema,
+  MAX_SCHEMA_DEPTH,
+  DEFAULT_SCHEMA_VALIDATION_LIMITS,
+  type SchemaValidationLimits,
+} from "./schema.js";
 export { CACHE_KEY_VERSION, MAX_CACHE_KEY_INPUT_BYTES } from "./cache-key.js";
 export {
   stringifyBounded,
@@ -1660,13 +1666,27 @@ export function validateJsonSchema(
   schema: JsonSchema,
   value: unknown,
   maxIssues = MAX_VALIDATION_ISSUES,
+  limits = DEFAULT_SCHEMA_VALIDATION_LIMITS,
 ): SchemaValidationResult {
   const state: ValidationState = {
     issues: [],
     maxIssues,
     truncated: false,
   };
-  validateValue(schema, value, "$", state, 0);
+  // Enforce input size bound before structural validation.
+  let serializedSize = 0;
+  try {
+    serializedSize = new TextEncoder().encode(JSON.stringify(value)).length;
+  } catch {
+    serializedSize = limits.maxInputSizeBytes + 1;
+  }
+  if (serializedSize > limits.maxInputSizeBytes) {
+    state.issues.push(
+      `$ exceeds the maximum input size of ${limits.maxInputSizeBytes} bytes`,
+    );
+    return { valid: false, issues: state.issues };
+  }
+  validateValue(schema, value, "$", state, 0, limits);
   const issues = state.truncated
     ? [...state.issues, `further issues omitted after ${state.maxIssues}`]
     : state.issues;
@@ -1696,11 +1716,12 @@ function validateValue(
   path: string,
   state: ValidationState,
   depth: number,
+  limits: SchemaValidationLimits,
 ): void {
-  if (depth > MAX_SCHEMA_DEPTH) {
+  if (depth > limits.maxInputDepth) {
     addIssue(
       state,
-      `${path} exceeds the maximum validation depth of ${MAX_SCHEMA_DEPTH}`,
+      `${path} exceeds the maximum validation depth of ${limits.maxInputDepth}`,
     );
     return;
   }
@@ -1715,6 +1736,71 @@ function validateValue(
   ) {
     addIssue(state, `${path} must be one of the allowed values`);
   }
+
+  if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
+    const matches = schema.anyOf.filter(
+      (branch) =>
+        isJsonObject(branch) &&
+        validateJsonSchema(
+          branch as JsonSchema,
+          value,
+          MAX_VALIDATION_ISSUES,
+          limits,
+        ).valid,
+    ).length;
+    if (matches === 0) {
+      addIssue(state, `${path} must match at least one schema in anyOf`);
+    }
+  }
+  if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
+    const matches = schema.oneOf.filter(
+      (branch) =>
+        isJsonObject(branch) &&
+        validateJsonSchema(
+          branch as JsonSchema,
+          value,
+          MAX_VALIDATION_ISSUES,
+          limits,
+        ).valid,
+    ).length;
+    if (matches !== 1) {
+      addIssue(
+        state,
+        `${path} must match exactly one schema in oneOf (matched ${matches})`,
+      );
+    }
+  }
+  if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
+    for (const [index, branch] of schema.allOf.entries()) {
+      if (!isJsonObject(branch)) continue;
+      const result = validateJsonSchema(
+        branch as JsonSchema,
+        value,
+        MAX_VALIDATION_ISSUES,
+        limits,
+      );
+      if (!result.valid) {
+        for (const issue of result.issues) {
+          addIssue(state, issue);
+        }
+        if (result.issues.length === 0) {
+          addIssue(state, `${path} must match allOf branch ${index}`);
+        }
+      }
+    }
+  }
+  if (isJsonObject(schema.not)) {
+    if (
+      validateJsonSchema(
+        schema.not as JsonSchema,
+        value,
+        MAX_VALIDATION_ISSUES,
+        limits,
+      ).valid
+    ) {
+      addIssue(state, `${path} must not match the schema in 'not'`);
+    }
+  }
   if (typeof value === "string") {
     validateStringConstraints(schema, value, path, state);
   }
@@ -1722,6 +1808,13 @@ function validateValue(
     validateNumberConstraints(schema, value, path, state);
   }
   if (isJsonObject(value)) {
+    if (Object.keys(value).length > limits.maxObjectProperties) {
+      addIssue(
+        state,
+        `${path} must have at most ${limits.maxObjectProperties} properties`,
+      );
+      return;
+    }
     const properties = isJsonObject(schema.properties) ? schema.properties : {};
     const required = Array.isArray(schema.required) ? schema.required : [];
     const propertyCount = Object.keys(value).length;
@@ -1758,6 +1851,7 @@ function validateValue(
           `${path}.${key}`,
           state,
           depth + 1,
+          limits,
         );
       }
     }
@@ -1772,6 +1866,13 @@ function validateValue(
     }
   }
   if (Array.isArray(value)) {
+    if (value.length > limits.maxArrayLength) {
+      addIssue(
+        state,
+        `${path} must have at most ${limits.maxArrayLength} items`,
+      );
+      return;
+    }
     if (typeof schema.minItems === "number" && value.length < schema.minItems) {
       addIssue(state, `${path} must have at least ${schema.minItems} items`);
     }
@@ -1804,6 +1905,7 @@ function validateValue(
           `${path}[${index}]`,
           state,
           depth + 1,
+          limits,
         ),
       );
     }

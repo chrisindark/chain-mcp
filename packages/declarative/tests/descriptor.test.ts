@@ -204,7 +204,7 @@ describe("parseDeclarativeToolDescriptor", () => {
             inputSchema: {
               type: "object",
               additionalProperties: false,
-              oneOf: [{ properties: { userId: { type: "string" } } }],
+              patternProperties: { "^x-": { type: "string" } },
               properties: { userId: { type: "string" } },
             },
           }),
