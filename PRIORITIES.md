@@ -598,9 +598,7 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 
 ### P2-7 — Publishing metadata (needed only when publishing resumes)
 
-**Status: done (2026-11-05).** Publishing remains deferred; metadata preparation tracked with publish work. No change.
-
-Every package lacks `README.md`, `LICENSE`, `engines`, `homepage`, `bugs`, and `keywords`; `files: ["dist"]` ships no license text. Prepare this with the publish work, not before.
+**Status: done (2026-11-06).** Prepared all 15 workspace packages for npm publishing: added individual `README.md` and `LICENSE` files, populated `description`, `keywords`, `homepage`, `bugs`, `engines: { "node": ">=22.13" }`, and updated package `files` to `["dist", "README.md", "LICENSE"]`. Verified tarball contents with `pnpm pack --dry-run`. Additive (packaging).
 
 ### P2-8 — Lock down the supported-versions page
 

@@ -12,7 +12,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
@@ -30,5 +32,21 @@
   "dependencies": {
     "@chainmcp/core": "workspace:*",
     "yaml": "^2.9.1"
+  },
+  "description": "Deterministic OpenAPI 3.0 and 3.1 compiler to Model Context Protocol (MCP) tool contracts.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chainmcp",
+    "openapi",
+    "swagger",
+    "compiler"
+  ],
+  "homepage": "https://github.com/chrisindark/chain-mcp/tree/master/packages/compiler#readme",
+  "bugs": {
+    "url": "https://github.com/chrisindark/chain-mcp/issues"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

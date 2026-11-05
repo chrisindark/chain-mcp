@@ -12,7 +12,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
@@ -30,5 +32,21 @@
   "dependencies": {
     "@chainmcp/core": "workspace:*",
     "zod": "^4.1.12"
+  },
+  "description": "Code-first TypeScript tool definition authoring with Zod and JSON Schema lowering for ChainMcp.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chainmcp",
+    "authoring",
+    "zod",
+    "code-first"
+  ],
+  "homepage": "https://github.com/chrisindark/chain-mcp/tree/master/packages/authoring#readme",
+  "bugs": {
+    "url": "https://github.com/chrisindark/chain-mcp/issues"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

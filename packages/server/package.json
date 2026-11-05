@@ -20,7 +20,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -33,5 +35,22 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.3.1"
+  },
+  "description": "Model Context Protocol (MCP) server transport adapter supporting stdio and Streamable HTTP with inbound auth.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chainmcp",
+    "server",
+    "stdio",
+    "http",
+    "streamable-http"
+  ],
+  "homepage": "https://github.com/chrisindark/chain-mcp/tree/master/packages/server#readme",
+  "bugs": {
+    "url": "https://github.com/chrisindark/chain-mcp/issues"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

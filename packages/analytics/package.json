@@ -12,7 +12,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
@@ -30,5 +32,22 @@
   "dependencies": {
     "@chainmcp/core": "workspace:*",
     "@opentelemetry/api": "^1.9.0"
+  },
+  "description": "Structured logging, secret-redacting audit sinks, metrics, and OpenTelemetry tracing for ChainMcp.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chainmcp",
+    "analytics",
+    "logging",
+    "opentelemetry",
+    "metrics"
+  ],
+  "homepage": "https://github.com/chrisindark/chain-mcp/tree/master/packages/analytics#readme",
+  "bugs": {
+    "url": "https://github.com/chrisindark/chain-mcp/issues"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

@@ -1,3 +1,4 @@
+---
 "@chainmcp/json-navigation": minor
 "@chainmcp/config": minor
 "@chainmcp/cli": minor
