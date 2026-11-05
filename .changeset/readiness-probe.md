@@ -1,3 +1,4 @@
+---
 "@chainmcp/server": minor
 "@chainmcp/config": minor
 "@chainmcp/cli": minor

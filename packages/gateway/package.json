@@ -12,7 +12,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
@@ -37,5 +39,21 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.3.1"
+  },
+  "description": "Multi-tenant dynamic MCP gateway with atomic contract publishing, revisioning, and tenant isolation.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chainmcp",
+    "gateway",
+    "multi-tenant",
+    "contracts"
+  ],
+  "homepage": "https://github.com/chrisindark/chain-mcp/tree/master/packages/gateway#readme",
+  "bugs": {
+    "url": "https://github.com/chrisindark/chain-mcp/issues"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

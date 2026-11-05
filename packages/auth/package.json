@@ -12,7 +12,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
@@ -29,5 +31,22 @@
   },
   "dependencies": {
     "@chainmcp/core": "workspace:*"
+  },
+  "description": "Inbound MCP authentication verifiers, upstream credential providers, and encrypted secret storage.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chainmcp",
+    "auth",
+    "jwt",
+    "oauth2",
+    "credentials"
+  ],
+  "homepage": "https://github.com/chrisindark/chain-mcp/tree/master/packages/auth#readme",
+  "bugs": {
+    "url": "https://github.com/chrisindark/chain-mcp/issues"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

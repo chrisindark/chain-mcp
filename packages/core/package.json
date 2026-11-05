@@ -12,7 +12,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
@@ -29,5 +31,21 @@
   },
   "dependencies": {
     "re2js": "^2.9.0"
+  },
+  "description": "Core runtime interfaces, tool invocation pipeline, validation, caching, and token budgeting for ChainMcp.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chainmcp",
+    "runtime",
+    "ai-agents",
+    "tools"
+  ],
+  "homepage": "https://github.com/chrisindark/chain-mcp/tree/master/packages/core#readme",
+  "bugs": {
+    "url": "https://github.com/chrisindark/chain-mcp/issues"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

@@ -12,7 +12,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
@@ -34,5 +36,21 @@
     "@chainmcp/executor": "workspace:*",
     "@chainmcp/gateway": "workspace:*",
     "zod": "^4.1.12"
+  },
+  "description": "Self-hosted operator surface and management console for declarative MCP tool publishing and rollback.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chainmcp",
+    "admin",
+    "console",
+    "declarative"
+  ],
+  "homepage": "https://github.com/chrisindark/chain-mcp/tree/master/packages/admin#readme",
+  "bugs": {
+    "url": "https://github.com/chrisindark/chain-mcp/issues"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

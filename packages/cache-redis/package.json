@@ -12,7 +12,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
@@ -29,5 +31,21 @@
   },
   "dependencies": {
     "@chainmcp/core": "workspace:*"
+  },
+  "description": "Production Redis cache adapter for ChainMcp with connection pooling, TLS, and partition isolation.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chainmcp",
+    "cache",
+    "redis",
+    "caching"
+  ],
+  "homepage": "https://github.com/chrisindark/chain-mcp/tree/master/packages/cache-redis#readme",
+  "bugs": {
+    "url": "https://github.com/chrisindark/chain-mcp/issues"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

@@ -12,7 +12,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
@@ -36,5 +38,21 @@
     "@chainmcp/json-navigation": "workspace:*",
     "@chainmcp/rate-limit": "workspace:*",
     "zod": "^4.1.12"
+  },
+  "description": "Configuration schema, secret reference resolution, and runtime wiring for ChainMcp servers and gateways.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chainmcp",
+    "config",
+    "yaml",
+    "secrets"
+  ],
+  "homepage": "https://github.com/chrisindark/chain-mcp/tree/master/packages/config#readme",
+  "bugs": {
+    "url": "https://github.com/chrisindark/chain-mcp/issues"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

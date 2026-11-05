@@ -12,7 +12,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
@@ -29,5 +31,21 @@
   },
   "dependencies": {
     "@chainmcp/core": "workspace:*"
+  },
+  "description": "Resource-bounded JSON exploration, result handles, pagination, and path selection for LLMs in MCP.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chainmcp",
+    "json-navigation",
+    "result-handles",
+    "pagination"
+  ],
+  "homepage": "https://github.com/chrisindark/chain-mcp/tree/master/packages/json-navigation#readme",
+  "bugs": {
+    "url": "https://github.com/chrisindark/chain-mcp/issues"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

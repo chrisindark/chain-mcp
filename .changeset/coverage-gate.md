@@ -1,4 +1,5 @@
-"chainmcp": patch
+---
+"@chainmcp/cli": patch
 ---
 
 Add a CI coverage gate with per-package floors.

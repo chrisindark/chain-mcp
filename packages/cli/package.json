@@ -24,7 +24,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && chmod +x dist/bin.js || true",
@@ -47,5 +49,21 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.3.1"
+  },
+  "description": "Developer CLI and server generator for compiling, validating, testing, and serving ChainMcp projects.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chainmcp",
+    "cli",
+    "generator",
+    "scaffolding"
+  ],
+  "homepage": "https://github.com/chrisindark/chain-mcp/tree/master/packages/cli#readme",
+  "bugs": {
+    "url": "https://github.com/chrisindark/chain-mcp/issues"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

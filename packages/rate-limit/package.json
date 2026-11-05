@@ -12,7 +12,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
@@ -29,5 +31,22 @@
   },
   "dependencies": {
     "@chainmcp/core": "workspace:*"
+  },
+  "description": "In-memory and Redis-backed distributed quota and concurrency rate limiting for MCP tools.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chainmcp",
+    "rate-limit",
+    "redis",
+    "concurrency",
+    "quotas"
+  ],
+  "homepage": "https://github.com/chrisindark/chain-mcp/tree/master/packages/rate-limit#readme",
+  "bugs": {
+    "url": "https://github.com/chrisindark/chain-mcp/issues"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }
