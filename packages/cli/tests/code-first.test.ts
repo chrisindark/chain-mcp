@@ -190,8 +190,8 @@ describe("RM-08: Code-first projects support across CLI commands", () => {
     });
 
     expect(serverHandle.ok).toBe(true);
-    // 1 custom tool + 4 JSON navigation tools = 5 tools
-    expect(serverHandle.toolCount).toBe(5);
+    // 1 custom tool + 5 JSON navigation tools = 6 tools
+    expect(serverHandle.toolCount).toBe(6);
 
     await serverHandle.close();
     await serverHandle.closed;
@@ -217,7 +217,7 @@ describe("RM-08: Code-first projects support across CLI commands", () => {
 
       expect(serverHandle.ok).toBe(true);
       expect(serverHandle.url).toBeDefined();
-      expect(serverHandle.toolCount).toBe(5);
+      expect(serverHandle.toolCount).toBe(6);
 
       await serverHandle.close();
       await serverHandle.closed;
@@ -393,7 +393,7 @@ describe("RM-08: Code-first projects support across CLI commands", () => {
     const stdout = new PassThrough();
     const srv = await serveCommand({ cwd: projectDir, stdin, stdout });
     expect(srv.ok).toBe(true);
-    expect(srv.toolCount).toBe(5); // 1 operation + 4 JSON navigation
+    expect(srv.toolCount).toBe(6); // 1 operation + 5 JSON navigation
     await srv.close();
     await srv.closed;
   });

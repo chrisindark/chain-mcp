@@ -1,9 +1,14 @@
-import type { ToolDefinition } from "@chainmcp/core";
+import type { ToolContext, ToolDefinition } from "@chainmcp/core";
 import { type NavigationLimits, JsonNavigationError } from "./limits.js";
 import { inspectShape } from "./shape.js";
 import { selectPath } from "./path.js";
 import { paginate } from "./paginate.js";
 import { filterData, type FilterOp } from "./filter.js";
+import {
+  ResultHandleRegistry,
+  type HandleRegistryOptions,
+  type PrincipalScope,
+} from "./handles.js";
 
 function parseJsonInput(raw: unknown): unknown {
   if (typeof raw === "string") {
@@ -18,22 +23,66 @@ function parseJsonInput(raw: unknown): unknown {
   return raw;
 }
 
+function scopeOf(context: ToolContext): PrincipalScope {
+  if (!context.tenantId || !context.principal?.id) {
+    throw new JsonNavigationError(
+      "Result-handle navigation requires a tenant and principal in the tool context",
+    );
+  }
+  return { tenantId: context.tenantId, principalId: context.principal.id };
+}
+
+/**
+ * Resolve the active document for a navigation tool call: prefer an
+ * explicit result `handle` when the caller supplies one, otherwise parse
+ * the inline `json` argument. When both are absent the inline parse
+ * throws the same error as before.
+ */
+function resolveDocument(
+  input: { json?: unknown; handle?: string },
+  context: ToolContext,
+  registry: ResultHandleRegistry,
+): unknown {
+  if (input.handle !== undefined) {
+    return registry.resolve(input.handle, scopeOf(context));
+  }
+  return parseJsonInput(input.json);
+}
+
 export function createJsonNavigationTools(
   limits?: NavigationLimits,
+  handleRegistry?: ResultHandleRegistry | HandleRegistryOptions,
 ): ToolDefinition[] {
+  const handles =
+    handleRegistry instanceof ResultHandleRegistry
+      ? handleRegistry
+      : handleRegistry
+        ? new ResultHandleRegistry(handleRegistry)
+        : new ResultHandleRegistry();
   const inspectShapeTool: ToolDefinition<
-    { json: unknown; maxDepth?: number; maxKeys?: number },
+    {
+      json?: unknown;
+      handle?: string;
+      maxDepth?: number;
+      maxKeys?: number;
+    },
     unknown
   > = {
     name: "json_inspect_shape",
     description:
-      "Inspect the structure, depth, node counts, and key summary of a JSON document without emitting large payloads.",
+      "Inspect the structure, depth, node counts, and key summary of a JSON document without emitting large payloads. Pass either the inline `json` document or a `handle` returned by a previous navigation call.",
     inputSchema: {
       type: "object",
-      required: ["json"],
       properties: {
         json: {
-          description: "Raw JSON string or structured object/array to inspect",
+          description:
+            "Raw JSON string or structured object/array to inspect. Provide either this or `handle`.",
+        },
+        handle: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Opaque result handle from a previous navigation call. Prefer this over `json` for large documents: the model does not need to paste the full payload back.",
         },
         maxDepth: {
           type: "number",
@@ -50,8 +99,8 @@ export function createJsonNavigationTools(
       },
     },
     operation: {},
-    execute: async (input) => {
-      const data = parseJsonInput(input.json);
+    execute: async (input, context) => {
+      const data = resolveDocument(input, context, handles);
       return inspectShape(data, {
         ...limits,
         ...(input.maxDepth !== undefined ? { maxDepth: input.maxDepth } : {}),
@@ -61,18 +110,24 @@ export function createJsonNavigationTools(
   };
 
   const selectPathTool: ToolDefinition<
-    { json: unknown; path: string },
+    { json?: unknown; handle?: string; path: string },
     unknown
   > = {
     name: "json_select_path",
     description:
-      "Query and extract targeted fields from a JSON document using bounded JSON path expressions.",
+      "Query and extract targeted fields from a JSON document using bounded JSON path expressions. Pass either the inline `json` document or a `handle` returned by a previous navigation call.",
     inputSchema: {
       type: "object",
-      required: ["json", "path"],
+      required: ["path"],
       properties: {
         json: {
-          description: "Raw JSON string or structured object/array to query",
+          description:
+            "Raw JSON string or structured object/array to query. Provide either this or `handle`.",
+        },
+        handle: {
+          type: "string",
+          minLength: 1,
+          description: "Opaque result handle from a previous navigation call.",
         },
         path: {
           type: "string",
@@ -83,15 +138,16 @@ export function createJsonNavigationTools(
       },
     },
     operation: {},
-    execute: async (input) => {
-      const data = parseJsonInput(input.json);
+    execute: async (input, context) => {
+      const data = resolveDocument(input, context, handles);
       return selectPath(data, input.path, limits);
     },
   };
 
   const paginateTool: ToolDefinition<
     {
-      json: unknown;
+      json?: unknown;
+      handle?: string;
       offset?: number;
       limit?: number;
       page?: number;
@@ -101,13 +157,18 @@ export function createJsonNavigationTools(
   > = {
     name: "json_paginate",
     description:
-      "Paginate array items or object entries in a JSON document with bounded page sizes.",
+      "Paginate array items or object entries in a JSON document with bounded page sizes. Pass either the inline `json` document or a `handle` returned by a previous navigation call.",
     inputSchema: {
       type: "object",
-      required: ["json"],
       properties: {
         json: {
-          description: "Raw JSON string or array/object to paginate",
+          description:
+            "Raw JSON string or array/object to paginate. Provide either this or `handle`.",
+        },
+        handle: {
+          type: "string",
+          minLength: 1,
+          description: "Opaque result handle from a previous navigation call.",
         },
         offset: {
           type: "number",
@@ -134,8 +195,8 @@ export function createJsonNavigationTools(
       },
     },
     operation: {},
-    execute: async (input) => {
-      const data = parseJsonInput(input.json);
+    execute: async (input, context) => {
+      const data = resolveDocument(input, context, handles);
       return paginate(data, {
         ...limits,
         ...(input.offset !== undefined ? { offset: input.offset } : {}),
@@ -147,18 +208,30 @@ export function createJsonNavigationTools(
   };
 
   const filterTool: ToolDefinition<
-    { json: unknown; field: string; op: string; value?: unknown },
+    {
+      json?: unknown;
+      handle?: string;
+      field: string;
+      op: string;
+      value?: unknown;
+    },
     unknown
   > = {
     name: "json_filter",
     description:
-      "Filter array elements in a JSON document by field value predicates.",
+      "Filter array elements in a JSON document by field value predicates. Pass either the inline `json` document or a `handle` returned by a previous navigation call.",
     inputSchema: {
       type: "object",
-      required: ["json", "field", "op"],
+      required: ["field", "op"],
       properties: {
         json: {
-          description: "Raw JSON string or array to filter",
+          description:
+            "Raw JSON string or array to filter. Provide either this or `handle`.",
+        },
+        handle: {
+          type: "string",
+          minLength: 1,
+          description: "Opaque result handle from a previous navigation call.",
         },
         field: {
           type: "string",
@@ -186,8 +259,8 @@ export function createJsonNavigationTools(
       },
     },
     operation: {},
-    execute: async (input) => {
-      const data = parseJsonInput(input.json);
+    execute: async (input, context) => {
+      const data = resolveDocument(input, context, handles);
       return filterData(
         data,
         {
@@ -200,5 +273,35 @@ export function createJsonNavigationTools(
     },
   };
 
-  return [inspectShapeTool, selectPathTool, paginateTool, filterTool];
+  const createHandleTool: ToolDefinition<
+    { json: unknown },
+    { handle: string; bytes: number }
+  > = {
+    name: "json_create_handle",
+    description:
+      "Store a JSON document server-side and return an opaque result handle. Subsequent navigation calls can pass the handle instead of pasting the full document back inline.",
+    inputSchema: {
+      type: "object",
+      required: ["json"],
+      properties: {
+        json: {
+          description: "Raw JSON string or structured object/array to store",
+        },
+      },
+    },
+    operation: {},
+    execute: async (input, context) => {
+      const data = parseJsonInput(input.json);
+      const handle = handles.store(data, scopeOf(context));
+      return { handle, bytes: handles.measureBytes(data) };
+    },
+  };
+
+  return [
+    inspectShapeTool,
+    selectPathTool,
+    paginateTool,
+    filterTool,
+    createHandleTool,
+  ];
 }

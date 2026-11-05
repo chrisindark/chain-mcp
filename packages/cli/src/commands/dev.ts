@@ -7,7 +7,9 @@ import { compileOpenApi } from "@chainmcp/compiler";
 import {
   buildExecutorOptions,
   buildRuntimeOptions,
+  createHandleRegistryOptionsFromConfig,
   createNavigationLimitsFromConfig,
+  loadTokenizerFromConfig,
   logRateLimiterStartup,
   parseConfig,
   type ChainMcpConfig,
@@ -53,7 +55,13 @@ export async function devCommand(options: DevOptions): Promise<DevResult> {
     });
   }
 
-  const runtimeOptions = buildRuntimeOptions(config);
+  const tokenizer = await loadTokenizerFromConfig(config.tokenMetrics, {
+    baseDir: configPath ? dirname(configPath) : cwd,
+  });
+  const runtimeOptions = buildRuntimeOptions(
+    config,
+    tokenizer !== undefined ? { tokenizer } : {},
+  );
   const runtime = new InMemoryToolRuntime(runtimeOptions);
   await logRateLimiterStartup(config.rateLimit, {
     logger: runtimeOptions.logger,
@@ -162,7 +170,10 @@ export async function devCommand(options: DevOptions): Promise<DevResult> {
   // 5. Register JSON navigation tools if enabled
   if (config.jsonNavigation.enabled) {
     const limits = createNavigationLimitsFromConfig(config.jsonNavigation);
-    const navTools = createJsonNavigationTools(limits);
+    const handles = createHandleRegistryOptionsFromConfig(
+      config.jsonNavigation,
+    );
+    const navTools = createJsonNavigationTools(limits, handles);
     for (const navTool of navTools) {
       runtime.register(navTool);
     }
@@ -176,6 +187,7 @@ export async function devCommand(options: DevOptions): Promise<DevResult> {
     name: config.name,
     version: "0.1.0",
     maxResponseBytes: config.server.maxResponseBytes,
+    toolsPageSize: config.server.toolsPageSize,
     createContext: () => {
       const explicitTenant = options.tenantId ?? config.tenant;
       return {

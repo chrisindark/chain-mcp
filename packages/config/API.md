@@ -48,6 +48,30 @@ when a variable is unset with no default or a reference is malformed.
 `[REDACTED]` (map keys become `[REDACTED:<n>]`) and is safe to print or log.
 
 ```ts
+/**
+ * Dependency checks for `serveHttp`'s `/readyz` probe.
+ * `buildReadinessDeps(config, { rateLimiter, cacheStore })` emits one dep
+ * per Redis-backed dependency: the rate limiter probes `eval("return 1")`,
+ * the cache store probes a read of an absent key (proves liveness without
+ * writing). A `fail-open` limiter is reported `degradedReady`, mirroring
+ * the call path: an unreachable Redis keeps `/readyz` at 200 `degraded`,
+ * while a `fail-closed` limiter or a cache outage returns 503. Probes are
+ * bounded by a 500 ms timeout; error details are never mirrored.
+ */
+export interface ReadinessDep {
+  name: string;
+  check: () => boolean | Promise<boolean>;
+  degradedReady?: boolean | undefined;
+}
+
+export function buildReadinessDeps(
+  config: ChainMcpConfig,
+  options?: {
+    rateLimiter?: RateLimiter | undefined;
+    cacheStore?: CacheStore | undefined;
+  },
+): ReadinessDep[];
+
 export interface BuildExecutorOptionsOverrides extends Partial<UpstreamExecutorOptions> {
   baseUrl?: string;
 }
@@ -99,7 +123,77 @@ export function createLoggerFromConfig(
 export function createNavigationLimitsFromConfig(
   config: JsonNavigationConfig,
 ): NavigationLimits;
+
+/**
+ * Result-handle registry (P1-2). When `jsonNavigation.handles.enabled` is
+ * true the caller can `json_create_handle` a large document once and
+ * navigate it by handle from then on, without pasting the payload back
+ * inline. Handles are tenant- and principal-scoped, TTL'd, LRU-bounded,
+ * and byte-capped; expired/unknown/cross-scope handles fail with
+ * `RESULT_HANDLE_EXPIRED`.
+ */
+export function createHandleRegistryOptionsFromConfig(
+  config: JsonNavigationConfig,
+): HandleRegistryOptions | undefined;
+
+export interface TokenizerSelectionConfig {
+  readonly enabled: boolean;
+  readonly tokenizer: "approximate" | "exact" | "none";
+  readonly modelId: string;
+  readonly charactersPerToken: number;
+  readonly module?: string;
+}
+
+export type TokenizerFactory = (
+  config: TokenizerSelectionConfig,
+) => Tokenizer | Promise<Tokenizer>;
+
+export class TokenizerConfigError extends Error {
+  readonly code:
+    | "TOKENIZER_SOURCE_REQUIRED"
+    | "TOKENIZER_FACTORY_FAILED"
+    | "TOKENIZER_MODULE_INVALID"
+    | "TOKENIZER_INVALID";
+}
+
+export function registerTokenizerFactory(
+  modelId: string,
+  factory: TokenizerFactory,
+): void;
+export function unregisterTokenizerFactory(modelId: string): boolean;
+export function getTokenizerFactory(
+  modelId: string,
+): TokenizerFactory | undefined;
+
+export function createApproximateTokenizer(
+  config: TokenizerSelectionConfig,
+): Tokenizer;
+
+export function createTokenizerFromConfig(
+  config: TokenizerSelectionConfig,
+): Tokenizer | undefined;
+
+export function loadTokenizerFromConfig(
+  config: TokenizerSelectionConfig,
+  options?: {
+    baseDir?: string;
+    importModule?: (specifier: string) => Promise<unknown>;
+  },
+): Promise<Tokenizer | undefined>;
 ```
+
+`loadTokenizerFromConfig()` is the async startup path for exact measurement. It
+returns `undefined` when `tokenMetrics` is disabled or `none`, builds the
+character-ratio adapter for `approximate`, and for `exact` loads
+`tokenMetrics.module` (relative paths resolve from `options.baseDir`) or calls a
+factory registered for `tokenMetrics.modelId`. Exact configuration without a
+source throws `TokenizerConfigError` (`TOKENIZER_SOURCE_REQUIRED`) at startup.
+The loaded adapter must declare a non-empty `id` equal to `modelId`, a
+`measurement` of `"exact"`, and a `count(text)` function; mismatches throw
+`TOKENIZER_INVALID`. Estimates are never relabeled as exact.
+`buildRuntimeOptions()` is synchronous: when `tokenMetrics.tokenizer` is `exact`
+and no tokenizer is supplied through `RuntimeOptions.tokenizer`, it throws
+`TOKENIZER_SOURCE_REQUIRED` rather than silently falling back to a heuristic.
 
 ### Configuration Sections
 
@@ -115,7 +209,7 @@ export function createNavigationLimitsFromConfig(
 ### Wiring Helpers
 
 - `buildExecutorOptions(config, overrides)` maps `config.contract.baseUrl` (or fallback to `allowedUpstreamHosts[0]`) to `baseUrl`, `security.allowedUpstreamHosts` to `allowedHosts`, `security.allowInsecureHttp` to `allowInsecureHttp`, `server.requestTimeoutMs` to `timeoutMs`, `server.maxResponseBytes` to `maxResponseBytes`, `server.validateResponses` to `validateResponses`, `config.logging` to `logger`, and `auth.upstream` to `credentialProvider`. Fails closed if `allowedUpstreamHosts` is empty or no base URL can be resolved.
-- `buildRuntimeOptions(config, overrides, factoryOptions)` maps `security.requireInboundAuth` / `auth.inbound` to `authorizer`, `config.rateLimit` to `rateLimiter`, `config.logging` to `logger`, `config.analytics` to `metrics`, `config.analytics.openTelemetry.tracing` to `tracer` (`ToolTracer`), `server.requestTimeoutMs` to `defaultTimeoutMs`, `server.maxToolInputBytes` to `maxToolInputBytes`, and `server.maxResponseBytes` to `maxResponseBytes`. When the factory creates the shared Redis client (no caller-supplied client was passed), it also composes `onShutdown` so `runtime.close()` drains that client exactly once; caller-supplied clients remain the caller's responsibility.
+- `buildRuntimeOptions(config, overrides, factoryOptions)` maps `security.requireInboundAuth` / `auth.inbound` to `authorizer`, `config.rateLimit` to `rateLimiter`, `config.logging` to `logger`, `config.analytics` to `metrics`, `config.analytics.openTelemetry.tracing` to `tracer` (`ToolTracer`), `config.tokenMetrics` to `tokenizer` (approximate only; exact tokenizers must be loaded first), `server.requestTimeoutMs` to `defaultTimeoutMs`, `server.maxToolInputBytes` to `maxToolInputBytes`, and `server.maxResponseBytes` to `maxResponseBytes`. When the factory creates the shared Redis client (no caller-supplied client was passed), it also composes `onShutdown` so `runtime.close()` drains that client exactly once; caller-supplied clients remain the caller's responsibility.
 
 ## Error codes
 

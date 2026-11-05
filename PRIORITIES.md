@@ -284,6 +284,20 @@ Changes: `README.md`, `docs/getting-started.md`, `docs/deployment.md`, `docs/pro
 
 ### P1-1 — `tools/list` pagination
 
+**Status: done (2026-11-05).** `McpServerOptions.toolsPageSize` (default `100`,
+`0` = unlimited) applies to both the single-tenant snapshot path and the
+multi-tenant per-request path. Listings are ordered deterministically by tool
+name, and `nextCursor` is opaque and bound to a revision of the exact listing,
+so stale, malformed, and cross-tenant cursors fail with the stable
+`STALE_CURSOR` error. `server.toolsPageSize` is wired into `@chainmcp/config`,
+the CLI (`serve`, `dev`, `gateway serve`), and generated server templates.
+Tests cover 250 tools in three pages, the default page size, `0` disabling
+pagination, stale/tampered/cross-tenant cursors, and invalid page sizes in
+`packages/server/tests/index.test.ts`; the config default and bounds are in
+`packages/config/tests/index.test.ts`. Documented in `CONFIGURATION.md`,
+`API_REFERENCE.md`, `packages/server/API.md`, `docs/generated-servers.md`, and
+`CHANGELOG.md`; the "pagination is not implemented" limitation was removed.
+
 `packages/server/src/index.ts:239` answers once with no `nextCursor`; `toolsPageSize` does not exist. Gateway deployments and large contracts can exceed client page limits.
 
 - Add `server.toolsPageSize` (default 100, `0` = unlimited).
@@ -292,13 +306,53 @@ Changes: `README.md`, `docs/getting-started.md`, `docs/deployment.md`, `docs/pro
 
 ### P1-2 — Connect JSON navigation to result handles
 
-`@chainmcp/json-navigation` requires the full document inline, so the model must paste back the payload the feature exists to avoid. Either implement the result-handle registry or remove the claim.
-
-- Bounded, tenant-scoped, TTL'd handle registry; handle returned above a size threshold.
-- Navigation tools accept `handle` or inline `json`.
-- Stable `RESULT_HANDLE_EXPIRED`; cross-tenant handle rejected; LRU + byte cap.
+**Status: done (2026-11-05).** New `ResultHandleRegistry` in
+`packages/json-navigation/src/handles.ts`: opaque `rhv1.<counter>.<tag>`
+handles where the tag is an HMAC of `tenantId|principalId|counter` under a
+per-registry secret, so tenant/principal ids are never embedded and a
+tampered handle fails verification. Handles are tenant- and
+principal-scoped, TTL'd, and LRU-bounded per principal, per tenant, and in
+total, with per-document and total byte caps. Unknown, expired, evicted,
+tampered, cross-tenant, and cross-principal handles all fail with the
+stable `RESULT_HANDLE_EXPIRED` error; documents above the byte cap throw
+`ResultHandleTooLargeError` rather than being silently truncated. The four
+navigation tools accept `handle` or inline `json` (handle wins when both
+are present, since it avoids the paste); a new fifth tool,
+`json_create_handle`, stores a document once and returns `{ handle, bytes }`.
+`jsonNavigation.handles` schema and `createHandleRegistryOptionsFromConfig()`
+in `@chainmcp/config` wire the registry into `serve` (both code-first and
+compiled paths), `dev`, and generated server templates. Tests cover
+round-trip, opacity, cross-principal/cross-tenant rejection with no
+existence leak, tampering, TTL, LRU (per-principal and per-tenant), byte
+caps, and the tools layer in `packages/json-navigation/tests/handles.test.ts`;
+config defaults and disabled-handles wiring in
+`packages/config/tests/index.test.ts`. Documented in
+`packages/json-navigation/API.md`, `docs/json-navigation.md` (new
+"Result Handles" section), `CONFIGURATION.md`, and `CHANGELOG.md`; the
+README and product-guide "no result handles" statements are corrected.
+Additive; inline-`json` callers are unaffected. The config schema uses
+plain properties (no `anyOf`), because `core/schema.ts` rejects the
+`anyOf` keyword.
 
 ### P1-3 — Allow exact token measurement
+
+**Status: done (2026-11-05).** `tokenMetrics.tokenizer` now accepts `exact`.
+`@chainmcp/config` adds `loadTokenizerFromConfig()` with module loading relative
+to the configuration file and `registerTokenizerFactory()` for in-process
+adapters. Exact measurement without a module or factory fails startup with
+`TOKENIZER_SOURCE_REQUIRED`; module, factory, and adapter failures use
+`TOKENIZER_MODULE_INVALID`, `TOKENIZER_FACTORY_FAILED`, and `TOKENIZER_INVALID`.
+An exact configuration rejects adapters whose `id` differs from `modelId` or
+whose `measurement` is `estimate`, so estimates are never relabeled. The CLI
+(`serve`, `dev`, `gateway serve`) and generated server templates load the
+tokenizer once and pass the same instance to the runtime, which uses it for both
+`output.maxTokens` enforcement and `tokenUsage`; `buildRuntimeOptions()` stays
+synchronous and fails exact configurations unless the loaded tokenizer is
+injected. Tests cover module and factory loading, missing sources, id/mode
+mismatches, invalid modules, schema rejection, and CLI startup in
+`packages/config/tests/index.test.ts` and `packages/cli/tests/commands.test.ts`.
+Documented in `CONFIGURATION.md`, `docs/token-accounting.md`,
+`docs/limitations.md`, `packages/config/API.md`, and `packages/core/API.md`.
 
 `packages/config/src/index.ts:435` only accepts `approximate` / `none`, so `output.maxTokens` enforcement is approximate in every CLI deployment, while `docs/token-accounting.md` implies otherwise.
 
@@ -308,23 +362,79 @@ Changes: `README.md`, `docs/getting-started.md`, `docs/deployment.md`, `docs/pro
 
 ### P1-4 — Measure coverage and gate it in CI
 
-The stated pre-1.0 gate is "broader test coverage", but no coverage tooling or threshold exists (`grep coverage` finds nothing in CI or package scripts).
-
-- Add `vitest --coverage` with per-package thresholds (start where the tree is, ratchet upward).
-- Publish the coverage summary as a CI artifact/comment.
+**Status: done (2026-11-05).** Per-package floors live in
+`scripts/coverage-thresholds.mjs` (global: 80% lines/statements, 92%
+functions, 74% branches; each package starts just below its measured
+baseline, e.g. `cli` 73% lines / 63% branches, `core` 90% / 85%). The
+Vitest root run (`vite.config.ts`) imports the same module and enforces
+the floors; `node scripts/check-coverage.mjs --summary` (also
+`pnpm coverage:check`) re-applies them from the fresh
+`coverage/coverage-summary.json`, writes `coverage/coverage-gate.json`, and
+emits a Markdown summary. A package below its floor, with no covered
+files, or with a missing/unparseable report fails the gate. CI has a
+dedicated `coverage` job that runs the tests with coverage, gates, uploads
+`coverage/` as the `coverage-report` artifact, and posts (or updates) the
+summary as a PR comment. Positive, negative, missing-package, and
+missing-report tests are in `scripts/check-coverage.test.mjs`; documented
+in `DEVELOPMENT.md` and `CHANGELOG.md`. Additive/internal; `pnpm check` is
+unchanged. The "no coverage tooling" claim is now stale and was corrected:
+coverage tooling already existed locally, but was not gated.
 
 ### P1-5 — Add a readiness probe
 
-Only `/health` and `/livez` exist (`packages/server/src/http.ts:693`). Orchestrators cannot distinguish "process alive" from "Redis failing closed".
-
-- Add `/readyz` reflecting dependency reachability and the configured failure policy.
-- Keep `/health` and `/livez` liveness-only and document the difference.
+**Status: done (2026-11-05).** `serveHttp` accepts
+`readiness: { deps: [{ name, check, degradedReady? }] }` and serves
+`GET /readyz`: all checks pass → `200 {"status":"ready"}`; only
+`degradedReady` checks fail → `200 {"status":"degraded"}` (the
+`fail-open` case); any non-degraded check fails → `503
+{"status":"not_ready"}`. `GET /health` and `GET /livez` are unchanged and
+never touch dependencies. `@chainmcp/config` exports
+`buildReadinessDeps(config, { rateLimiter, cacheStore })`, which emits one
+dep per Redis-backed dependency on the same client instances as the
+runtime — the rate limiter probes `eval("return 1")`, the cache store
+probes a read of an absent key, both bounded by a 500 ms timeout and never
+writing — and marks a `fail-open` limiter as `degradedReady`. The CLI
+(`serve`), gateway serve, and generated server templates pass those deps to
+`serveHttp`. `GatewayConfigSchema` gained `jsonNavigation` so the gateway
+schema matches what `buildReadinessDeps` needs. Probes swallow error
+details, so a Redis URL or credential can never leak through the response.
+Tests cover default-ready, all-healthy, fail-closed-down → 503 with no
+credential in the body, fail-open-down → 200 degraded, and liveness-only
+`/health` staying green with a dead dependency (`packages/server/tests/http.test.ts`);
+the config-side probes (fail-closed, fail-open `degradedReady`, read-only
+cache probe, unreachable deps) are in `packages/config/tests/index.test.ts`.
+Documented in `docs/deployment.md` ("Liveness and Readiness Probes"),
+`packages/server/API.md`, and `packages/config/API.md`. Additive.
 
 ### P1-6 — Fix the local-clone quick start end to end
 
-- Remove `npx`-only steps or gate them behind "after publishing".
-- Document the exact clone → build → init → serve → MCP client sequence, including the Claude Desktop config.
-- Add a script/test that executes the documented sequence in a temp directory.
+**Status: done (2026-11-05).** `README.md` and `docs/getting-started.md`
+document the exact clone → build → init → serve → MCP client sequence
+(`node packages/cli/dist/bin.js init --local-deps "$PWD"` → `pnpm install`
+→ `pnpm build` → `pnpm start`), including the Claude Desktop
+`claude_desktop_config.json` (`command: "node"`, `args:
+["/Users/you/my-mcp-server/dist/server.js"]`); registry `npx @chainmcp/cli`
+and bare `chainmcp` steps stay gated behind "after publishing"
+(`docs/product-guide.md` §8 ungated `npx`/`chainmcp` steps replaced with the
+clone-path commands). `packages/cli/tests/quick-start.test.ts` executes that
+documented sequence in a temp directory: `initCommand` +
+offline `pnpm install` (`--offline`, `file:` deps, no registry) +
+`pnpm build`, then `tools/list` + `tools/call` via a real MCP client
+(`InMemoryTransport`) and `node dist/server.js` over stdio (initialize +
+`tools/list`), the exact Claude Desktop launch shape. Registered in
+`docs/capability-evidence.json` (`local-clone-quick-start`, pointing at
+`initCommand` and the quick-start test), so `pnpm docs:check` guards the
+documented claim.
+The test also surfaced a real startup bug: the generated server's
+main-module guard compared `process.argv[1]` with
+`fileURLToPath(import.meta.url)`, which differ whenever the entry path
+contains a symlink (macOS `/var` → `/private/var` temp directories,
+symlinked checkouts) — the server started, printed nothing, and exited.
+The guard now compares real paths (`realpathSync`) and is pinned by a
+template source test; the stdio round trip launches through a symlinked
+project path, and `examples/code-first/src/server.ts` had the same
+fragile guard and is fixed identically. Additive; no other runtime
+behavior changes.
 
 ---
 

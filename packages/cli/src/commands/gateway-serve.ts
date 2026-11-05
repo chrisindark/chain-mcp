@@ -10,12 +10,13 @@ import {
 } from "@chainmcp/analytics";
 import { OperationScopeAuthorizer } from "@chainmcp/auth";
 import {
+  buildReadinessDeps,
   createAuthorizerFromConfig,
   createCacheStoreFromConfig,
   createLoggerFromConfig,
   createRateLimiterFromConfig,
   createSimpleRedisClient,
-  createTokenizerFromConfig,
+  loadTokenizerFromConfig,
   logRateLimiterStartup,
   parseGatewayConfig,
   resolveConfigSecrets,
@@ -163,9 +164,9 @@ export async function gatewayServeCommand(
   }
 
   // 6. Tokenizer & Projector
-  const tokenizer = config.tokenMetrics.enabled
-    ? createTokenizerFromConfig(config.tokenMetrics)
-    : undefined;
+  const tokenizer = await loadTokenizerFromConfig(config.tokenMetrics, {
+    baseDir: configDir,
+  });
   const projector = config.projection.enabled
     ? createFieldProjector()
     : undefined;
@@ -320,6 +321,7 @@ export async function gatewayServeCommand(
         name: config.name,
         version: "0.1.0",
         maxResponseBytes: config.server.maxResponseBytes,
+        toolsPageSize: config.server.toolsPageSize,
         createContext,
       },
       {
@@ -345,6 +347,12 @@ export async function gatewayServeCommand(
           config.server.enableDnsRebindingProtection,
         requestTimeoutMs: config.server.requestTimeoutMs,
         shutdownTimeoutMs: config.server.shutdownTimeoutMs,
+        readiness: {
+          deps: buildReadinessDeps(config, {
+            rateLimiter,
+            cacheStore: cache?.store,
+          }),
+        },
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
       },
     );
@@ -366,6 +374,7 @@ export async function gatewayServeCommand(
       name: config.name,
       version: "0.1.0",
       maxResponseBytes: config.server.maxResponseBytes,
+      toolsPageSize: config.server.toolsPageSize,
       createContext,
     },
     {

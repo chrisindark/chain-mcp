@@ -24,8 +24,12 @@ runtime's tenancy mode (ADR 0008):
   listing whose identity cannot be established fails closed with a safe
   protocol error and does not reveal tool names. Result serialization, byte
   caps, and safe error mapping are implemented once and shared by both modes.
-  Protocol pagination is not implemented; each listing answers once with no
-  `nextCursor`, matching the snapshot path.
+  Protocol pagination is implemented for both modes through
+  `toolsPageSize` (default `100`; `0` disables pagination). Pages are ordered by
+  tool name, and `nextCursor` is opaque and bound to the revision of the exact
+  listing that produced it, so a cursor from a different tenant or from before
+  the tool set changed is rejected with `STALE_CURSOR` instead of silently
+  returning a shifted page. A malformed cursor returns the same stable error.
 
 MCP tools require a non-null object-root input schema (`type: "object"`).
 `createMcpServer` rejects a runtime tool with a schema outside the
@@ -33,6 +37,8 @@ core-supported subset or without that exact root type instead of exposing a
 schema the MCP protocol cannot represent.
 
 `McpServerOptions` requires `name`, `version`, and `createContext`. Its
+`toolsPageSize` option controls `tools/list` pagination as described above; a
+negative or non-integer value is rejected at construction. Its
 `createContext(request)` factory receives the SDK request ID, cancellation
 signal, and optional HTTP `authInfo`. It is trusted adapter code and must
 establish a tenant and principal; values are never accepted from MCP tool
@@ -88,6 +94,9 @@ Streamable HTTP and SSE transports for Model Context Protocol clients.
 - `requestTimeoutMs` (`number`, optional; default `15000`): Request timeout in milliseconds applied to the HTTP server and incoming body reads.
 - `shutdownTimeoutMs` (`number`, optional; default `10000`): Drain budget in milliseconds. `0` skips the drain and force-closes immediately.
 - `handleProcessSignals` (`boolean`, optional; default `true`): Installs SIGINT/SIGTERM handlers and sets standard process exit codes.
+- `readiness` (`{ deps?: Array<{ name: string; check: () => boolean | Promise<boolean>; degradedReady?: boolean }> }`, optional): Dependency checks served by `GET /readyz`. With no `deps`, `/readyz` returns ready with no dependency detail. Each check is run with its error details swallowed, so a failure never leaks internal state (e.g. Redis URLs) into the response. A failed check with `degradedReady: true` (the `fail-open` case) keeps the probe at `200 {"status":"degraded"}`; a failed check without it (the `fail-closed` case) returns `503 {"status":"not_ready"}`. Probes are bounded by a short timeout in the builder. When the CLI wires `buildReadinessDeps`, the rate limiter probes `eval("return 1")` and the cache store probes a read of an absent key — both prove liveness without writing.
+
+**Probes.** `GET /health` and `GET /livez` are liveness-only and never evaluate `readiness.deps`; point orchestrator liveness at one of them and readiness at `/readyz`.
 
 Shutdown is drain-then-cancel. `close()` is idempotent and concurrent callers await the same promise. It marks the server as shutting down, answers every request that arrives during the window with `503` and `Connection: close` (the listener stays bound so late requests receive a rejection rather than a connection reset), and waits up to `shutdownTimeoutMs` for work-bearing `POST`/`DELETE` requests to finish. `GET`/`HEAD` streams such as SSE and health probes never extend the drain budget. When the budget expires, the shutdown `AbortSignal` is aborted, which propagates through the MCP request signal to cooperative tool executions as `CANCELLED`. The listener is then closed, idle and remaining connections are force-closed, `mcpHandler.close()` and the MCP server are torn down, and `runtime.close?.()` runs once to flush analytics and drain runtime-owned clients. A tool that ignores its signal is abandoned rather than forcibly terminated; its socket is closed and its process handles determine whether the process can exit. SIGINT and SIGTERM are idempotent: the first delivery sets exit code `130` or `143` and starts the same shutdown, and repeated or mixed signals do not change the code or run teardown twice.
 

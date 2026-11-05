@@ -29,7 +29,10 @@ afterEach(async () => {
 async function connected(
   runtime: ToolRuntime,
   options: Partial<
-    Pick<McpServerOptions, "createContext" | "maxResponseBytes">
+    Pick<
+      McpServerOptions,
+      "createContext" | "maxResponseBytes" | "toolsPageSize"
+    >
   > = {},
 ) {
   const [clientTransport, serverTransport] =
@@ -741,6 +744,215 @@ describe("multi-tenant per-request listing (ADR 0008)", () => {
       arguments: { id: "y" },
     });
     expect(switched.content).toEqual([{ type: "text", text: '{"item":"y"}' }]);
+  });
+});
+
+describe("tools/list pagination (P1-1)", () => {
+  function registerNumbered(runtime: InMemoryToolRuntime, count: number) {
+    // Register in reverse so pagination cannot pass by insertion order.
+    for (let index = count - 1; index >= 0; index -= 1) {
+      runtime.register({
+        name: `tool_${String(index).padStart(3, "0")}`,
+        description: `Tool ${index}`,
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        operation: {},
+        execute: async () => ({ index }),
+      });
+    }
+  }
+
+  function requireCursor(cursor: string | undefined): string {
+    if (cursor === undefined) throw new Error("Expected a nextCursor");
+    return cursor;
+  }
+
+  const listPage = (
+    client: Client,
+    cursor?: string,
+  ): Promise<{
+    tools: Array<{ name: string }>;
+    nextCursor?: string | undefined;
+  }> =>
+    client.request({
+      method: "tools/list",
+      params: cursor === undefined ? {} : { cursor },
+    });
+
+  it("paginates 250 tools into three complete pages in name order", async () => {
+    const runtime = new InMemoryToolRuntime();
+    registerNumbered(runtime, 250);
+    const client = await connected(runtime, { toolsPageSize: 100 });
+
+    const first = await listPage(client);
+    expect(first.tools).toHaveLength(100);
+    expect(first.tools[0]?.name).toBe("tool_000");
+    expect(first.tools.at(-1)?.name).toBe("tool_099");
+
+    const second = await listPage(client, requireCursor(first.nextCursor));
+    expect(second.tools).toHaveLength(100);
+    expect(second.tools[0]?.name).toBe("tool_100");
+    expect(second.tools.at(-1)?.name).toBe("tool_199");
+
+    const third = await listPage(client, requireCursor(second.nextCursor));
+    expect(third.tools).toHaveLength(50);
+    expect(third.tools[0]?.name).toBe("tool_200");
+    expect(third.tools.at(-1)?.name).toBe("tool_249");
+    expect(third.nextCursor).toBeUndefined();
+
+    const names = [...first.tools, ...second.tools, ...third.tools].map(
+      (tool) => tool.name,
+    );
+    expect(new Set(names).size).toBe(250);
+    expect(names).toEqual([...names].sort());
+  });
+
+  it("defaults to 100 tools per page", async () => {
+    const runtime = new InMemoryToolRuntime();
+    registerNumbered(runtime, 150);
+    const client = await connected(runtime);
+
+    const first = await listPage(client);
+    expect(first.tools).toHaveLength(100);
+    expect(first.nextCursor).toBeTypeOf("string");
+
+    const second = await listPage(client, requireCursor(first.nextCursor));
+    expect(second.tools).toHaveLength(50);
+    expect(second.nextCursor).toBeUndefined();
+  });
+
+  it("disables pagination when the page size is 0", async () => {
+    const runtime = new InMemoryToolRuntime();
+    registerNumbered(runtime, 250);
+    const client = await connected(runtime, { toolsPageSize: 0 });
+
+    const page = await listPage(client);
+    expect(page.tools).toHaveLength(250);
+    expect(page.nextCursor).toBeUndefined();
+  });
+
+  it("rejects malformed and tampered cursors with a stable stale error", async () => {
+    const runtime = new InMemoryToolRuntime();
+    registerNumbered(runtime, 150);
+    const client = await connected(runtime, { toolsPageSize: 100 });
+
+    await expect(listPage(client, "not-a-cursor")).rejects.toThrow(
+      /STALE_CURSOR/,
+    );
+
+    const first = await listPage(client);
+    const cursor = requireCursor(first.nextCursor);
+    const decoded = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8"),
+    ) as Record<string, unknown>;
+    const tampered = Buffer.from(
+      JSON.stringify({ ...decoded, r: "0".repeat(32) }),
+      "utf8",
+    ).toString("base64url");
+    await expect(listPage(client, tampered)).rejects.toThrow(/STALE_CURSOR/);
+  });
+
+  it("rejects a cursor after the caller's tool list changes", async () => {
+    const runtime = new InMemoryToolRuntime({
+      tenantMode: "multi-tenant",
+      authorizer: { authorize: () => {} },
+    });
+    const tenant = "tenant-1";
+    const context = {
+      requestId: "request-pagination",
+      tenantId: tenant,
+      principal: { id: "user-1", scopes: [] },
+    };
+    const register = (name: string) =>
+      runtime.register({
+        name,
+        description: name,
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        operation: {},
+        ownerTenantId: tenant,
+        execute: async () => name,
+      });
+    register("beta_tool");
+    register("gamma_tool");
+
+    const client = await connected(runtime, {
+      toolsPageSize: 1,
+      createContext: () => context,
+    });
+    const first = await listPage(client);
+    expect(first.tools.map(({ name }) => name)).toEqual(["beta_tool"]);
+    const cursor = requireCursor(first.nextCursor);
+
+    register("alpha_tool");
+    await expect(listPage(client, cursor)).rejects.toThrow(/STALE_CURSOR/);
+  });
+
+  it("rejects a cursor issued for a different tenant", async () => {
+    const runtime = new InMemoryToolRuntime({
+      tenantMode: "multi-tenant",
+      authorizer: { authorize: () => {} },
+    });
+    const register = (name: string, ownerTenantId: string) =>
+      runtime.register({
+        name,
+        description: name,
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        operation: {},
+        ownerTenantId,
+        execute: async () => name,
+      });
+    register("tenant_one_a", "tenant-1");
+    register("tenant_one_b", "tenant-1");
+    register("tenant_two_a", "tenant-2");
+    register("tenant_two_b", "tenant-2");
+
+    let currentTenant = "tenant-1";
+    const client = await connected(runtime, {
+      toolsPageSize: 1,
+      createContext: () => ({
+        requestId: `request-${currentTenant}`,
+        tenantId: currentTenant,
+        principal: { id: `user-${currentTenant}`, scopes: [] },
+      }),
+    });
+
+    const first = await listPage(client);
+    expect(first.tools.map(({ name }) => name)).toEqual(["tenant_one_a"]);
+    const cursor = requireCursor(first.nextCursor);
+
+    currentTenant = "tenant-2";
+    await expect(listPage(client, cursor)).rejects.toThrow(/STALE_CURSOR/);
+  });
+
+  it("rejects invalid page sizes at construction", () => {
+    const runtime = new InMemoryToolRuntime();
+    expect(() =>
+      createMcpServer(runtime, {
+        name: "invalid-page-size",
+        version: "0.1.0",
+        createContext: () => context,
+        toolsPageSize: -1,
+      }),
+    ).toThrow("toolsPageSize");
+    expect(() =>
+      createMcpServer(runtime, {
+        name: "invalid-page-size",
+        version: "0.1.0",
+        createContext: () => context,
+        toolsPageSize: 1.5,
+      }),
+    ).toThrow("toolsPageSize");
   });
 });
 

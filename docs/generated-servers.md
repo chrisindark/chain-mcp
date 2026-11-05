@@ -23,6 +23,8 @@ ChainMcp projects operate in one of two modes:
 1. **Contract-Driven**: Configured with an OpenAPI 3.0 or 3.1 specification (via `--spec` or `contract.source` in `chainmcp.config.yaml`). Operations are compiled into tools and dispatched upstream via the bounded HTTP executor.
 2. **Code-First**: Configured without an OpenAPI specification. Tool implementations are authored directly in TypeScript using `@chainmcp/authoring` (e.g. `src/tools.ts`), passing through the exact same runtime pipeline (authorization, rate limiting, caching, projection, telemetry, JSON navigation).
 
+Both modes load `tokenMetrics` during startup. When `tokenMetrics.tokenizer: exact` is configured, `tokenMetrics.module` is resolved from the project root and must export `createTokenizer(config)`; a missing or invalid exact tokenizer stops startup before the server accepts requests. See [token accounting](token-accounting.md).
+
 ### Command Capability Matrix
 
 | Command             | Contract-Driven Projects                                                | Code-First Projects                                                       | Strict Contract Flag (`--require-contract`)                    |
@@ -105,6 +107,7 @@ chainmcp serve [--config <path>] [--spec <path|url>] [--transport <stdio|http>] 
 - Supports both contract-driven and code-first projects in-process with identical shared runtime, signal handling, rate limiting, and JSON navigation tools.
 - Supports both `stdio` and `http` transports for contract-driven and code-first projects.
 - `http` uses drain-then-cancel shutdown: late requests get `503`, in-flight `POST`/`DELETE` requests drain for up to `server.shutdownTimeoutMs` (default 10,000 ms), then cooperative cancellation aborts tool signals and remaining sockets are force-closed. See [`deployment.md`](deployment.md#process-signals-and-teardown).
+- `tools/list` is paginated according to `server.toolsPageSize` (default `100`; `0` returns every tool in one page). Pages are ordered by tool name, and a cursor from an older listing revision fails with `STALE_CURSOR`.
 - `--require-contract`: Require an OpenAPI contract and fail if absent.
 
 ### 5. `chainmcp export`

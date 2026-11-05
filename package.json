@@ -14,6 +14,7 @@
     "test": "pnpm -r test",
     "test:coverage": "vitest run --coverage",
     "coverage:show": "node scripts/print-coverage.mjs",
+    "coverage:check": "pnpm test:coverage && node scripts/check-coverage.mjs --summary",
     "lint": "eslint .",
     "test:rules": "node --test eslint-rules/no-blocking-io.test.mjs",
     "test:scripts": "node --test scripts/*.test.mjs",

@@ -111,6 +111,15 @@
       "testNeedle": "shutdown"
     },
     {
+      "id": "local-clone-quick-start",
+      "doc": "README.md",
+      "claim": "The full literal sequence above is executed end to end by",
+      "source": "packages/cli/src/commands/init.ts",
+      "export": "initCommand",
+      "test": "packages/cli/tests/quick-start.test.ts",
+      "testNeedle": "P1-6: documented local-clone quick start"
+    },
+    {
       "id": "sql-not-implemented",
       "doc": "README.md",
       "claim": "PostgreSQL is not implemented and no database metadata store ships today",

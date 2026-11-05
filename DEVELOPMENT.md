@@ -75,6 +75,24 @@ Test OpenAPI 3.0 and 3.1 documents, invalid schemas, missing operation IDs, auth
 
 `pnpm test:rules` runs the repository's custom ESLint rules with `node --test`. Add a RuleTester case for every new rule or detected API form.
 
+### Coverage gate
+
+`pnpm test:coverage` runs the full suite with v8 coverage and enforces
+Vitest thresholds. `node scripts/check-coverage.mjs --summary` (or
+`pnpm coverage:check`, which runs both) re-applies the same floors from the
+exported `coverage/coverage-summary.json`, writes
+`coverage/coverage-gate.json`, and prints a Markdown summary. Floors live in
+`scripts/coverage-thresholds.mjs` — the single source of truth — one entry
+per package plus a global floor. They are set just below the coverage
+measured on 2026-11-05, so the gate catches regressions immediately;
+ratchet an entry upward in the same change that raises the package's
+measured coverage. A package with no covered files, or a missing or
+unparseable report, fails the gate instead of passing silently. CI runs the
+gate in a `coverage` job, uploads the whole `coverage/` directory as the
+`coverage-report` artifact, and posts (or updates) the summary as a PR
+comment. The gate is not part of `pnpm check`; it has its own CI job
+because package-level `pnpm -r test` runs without coverage.
+
 ### Integration tests
 
 Test real MCP client interactions, upstream HTTP requests, cache adapters, and generated-server builds.

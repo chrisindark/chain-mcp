@@ -158,6 +158,7 @@ export function renderConfigYaml(options: ConfigYamlOptions): string {
       transport: "stdio",
       requestTimeoutMs: 15000,
       maxResponseBytes: 1000000,
+      toolsPageSize: 100,
     },
     security: {
       requireInboundAuth: false,
@@ -200,6 +201,7 @@ export interface ServerTsOptions {
 
 export function renderServerTs(options: ServerTsOptions): string {
   return `import { createHash, randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Readable, Writable } from "node:stream";
@@ -208,8 +210,11 @@ import { parse as parseYaml } from "yaml";
 
 import {
   buildExecutorOptions,
+  buildReadinessDeps,
   buildRuntimeOptions,
+  createHandleRegistryOptionsFromConfig,
   createNavigationLimitsFromConfig,
+  loadTokenizerFromConfig,
   logRateLimiterStartup,
   parseConfig,
   resolveConfigSecrets,
@@ -540,7 +545,13 @@ export async function runServer(options?: RunServerOptions) {
   const rawConfig = parseYaml(rawConfigText);
   const config = parseConfig(resolveConfigSecrets(rawConfig).config);
 
-  const runtimeOptions = buildRuntimeOptions(config);
+  const tokenizer = await loadTokenizerFromConfig(config.tokenMetrics, {
+    baseDir: projectRoot,
+  });
+  const runtimeOptions = buildRuntimeOptions(
+    config,
+    tokenizer !== undefined ? { tokenizer } : {},
+  );
   const runtime = new InMemoryToolRuntime(runtimeOptions);
   await logRateLimiterStartup(config.rateLimit, {
     logger: runtimeOptions.logger,
@@ -654,7 +665,10 @@ export async function runServer(options?: RunServerOptions) {
   // Register JSON navigation tools if enabled
   if (config.jsonNavigation.enabled) {
     const limits = createNavigationLimitsFromConfig(config.jsonNavigation);
-    const navTools = createJsonNavigationTools(limits);
+    const handles = createHandleRegistryOptionsFromConfig(
+      config.jsonNavigation,
+    );
+    const navTools = createJsonNavigationTools(limits, handles);
     for (const navTool of navTools) {
       runtime.register(navTool);
     }
@@ -664,6 +678,7 @@ export async function runServer(options?: RunServerOptions) {
     name: config.name,
     version: GENERATOR_VERSION,
     maxResponseBytes: config.server.maxResponseBytes,
+    toolsPageSize: config.server.toolsPageSize,
     createContext: (request: McpRequestContext) => {
       const auth = request.authInfo;
       const authTenant =
@@ -732,6 +747,12 @@ export async function runServer(options?: RunServerOptions) {
           config.server.enableDnsRebindingProtection,
         requestTimeoutMs: config.server.requestTimeoutMs,
         shutdownTimeoutMs: config.server.shutdownTimeoutMs,
+        readiness: {
+          deps: buildReadinessDeps(config, {
+            rateLimiter: runtimeOptions.rateLimiter,
+            cacheStore: runtimeOptions.cache?.store,
+          }),
+        },
         ...(options?.signal !== undefined ? { signal: options.signal } : {}),
       },
     );
@@ -750,11 +771,24 @@ export async function runServer(options?: RunServerOptions) {
   return serverHandle;
 }
 
-// Automatically start if executed as main
-if (
-  process.argv[1] &&
-  fileURLToPath(import.meta.url) === process.argv[1]
-) {
+// Automatically start if executed as main.
+// Node resolves symlinks when loading the entry module, so import.meta.url may
+// point at a different (real) path than process.argv[1] — for example under
+// macOS's /var -> /private/var temp directories or any symlinked checkout.
+// Compare against the real path so the server is never a silent no-op.
+function isMainModule(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined || entry.length === 0) return false;
+  const self = fileURLToPath(import.meta.url);
+  if (entry === self) return true;
+  try {
+    return realpathSync(entry) === self;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   runServer().catch((error) => {
     console.error("Fatal server error:", error);
     process.exit(1);

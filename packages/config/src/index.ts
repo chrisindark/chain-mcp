@@ -68,7 +68,37 @@ import {
   ToolTracer,
   type LogSink,
 } from "@chainmcp/analytics";
-import type { NavigationLimits } from "@chainmcp/json-navigation";
+import type {
+  HandleRegistryOptions,
+  NavigationLimits,
+} from "@chainmcp/json-navigation";
+import {
+  TokenizerConfigError,
+  createApproximateTokenizer,
+  createTokenizerFromConfig,
+  getTokenizerFactory,
+  loadTokenizerFromConfig,
+  registerTokenizerFactory,
+  unregisterTokenizerFactory,
+  type LoadTokenizerOptions,
+  type TokenizerConfigErrorCode,
+  type TokenizerFactory,
+  type TokenizerSelectionConfig,
+} from "./tokenizer.js";
+
+export {
+  TokenizerConfigError,
+  createApproximateTokenizer,
+  createTokenizerFromConfig,
+  getTokenizerFactory,
+  loadTokenizerFromConfig,
+  registerTokenizerFactory,
+  unregisterTokenizerFactory,
+  type LoadTokenizerOptions,
+  type TokenizerConfigErrorCode,
+  type TokenizerFactory,
+  type TokenizerSelectionConfig,
+};
 
 export {
   redactConfigSecrets,
@@ -391,6 +421,36 @@ export const JsonNavigationConfigSchema = z
     maxResultBytes: z.number().int().min(1).max(10_000_000).default(50_000),
     maxVisitedNodes: z.number().int().min(1).max(1_000_000).default(50_000),
     timeoutMs: z.number().int().min(1).max(60_000).default(5_000),
+    /**
+     * Result-handle registry (P1-2). When `handles.enabled` is true the
+     * caller can `json_create_handle` a large document once and navigate
+     * it by handle from then on, without pasting the payload back inline.
+     */
+    handles: z
+      .object({
+        enabled: z.boolean().default(true),
+        /** Per-principal LRU capacity. Defaults to 50. */
+        maxPerPrincipal: z.number().int().min(1).max(1_000).default(50),
+        /** Per-tenant capacity. Defaults to 250. */
+        maxPerTenant: z.number().int().min(1).max(10_000).default(250),
+        /** Absolute handle capacity. Defaults to 1,000. */
+        maxTotal: z.number().int().min(1).max(100_000).default(1_000),
+        /** Byte cap per stored document. Defaults to 1,000,000. */
+        maxBytes: z.number().int().min(1).max(100_000_000).default(1_000_000),
+        /** Total byte cap across all stored documents. Defaults to 8,000,000. */
+        maxTotalBytes: z
+          .number()
+          .int()
+          .min(1)
+          .max(1_000_000_000)
+          .default(8_000_000),
+        /** Handle TTL in ms. Defaults to 600,000 (10 minutes). */
+        ttlMs: z.number().int().min(1).max(86_400_000).default(600_000),
+        /** Minimum document bytes before a handle is returned by the auto path. Defaults to 0. */
+        minBytes: z.number().int().min(0).max(100_000_000).default(0),
+      })
+      .strict()
+      .prefault({}),
   })
   .strict()
   .prefault({});
@@ -448,12 +508,28 @@ export type CacheConfig = z.infer<typeof CacheConfigSchema>;
 export const TokenMetricsConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
-    tokenizer: z.enum(["approximate", "none"]).default("approximate"),
+    tokenizer: z.enum(["approximate", "exact", "none"]).default("approximate"),
     modelId: z.string().default("cl100k_base"),
     charactersPerToken: z.number().positive().default(4),
+    /**
+     * Module that exports `createTokenizer(config)` for exact measurement.
+     * Relative paths are resolved from the directory containing the
+     * configuration file. Programmatic deployments may register a factory
+     * instead of using a module.
+     */
+    module: z.string().min(1).optional(),
   })
   .strict()
-  .prefault({});
+  .prefault({})
+  .superRefine((config, ctx) => {
+    if (config.module !== undefined && config.tokenizer !== "exact") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["module"],
+        message: "tokenMetrics.module requires tokenMetrics.tokenizer: exact",
+      });
+    }
+  });
 
 export type TokenMetricsConfig = z.infer<typeof TokenMetricsConfigSchema>;
 
@@ -505,6 +581,10 @@ export const ServerConfigSchema = z
       .nonnegative()
       .max(300_000)
       .default(10_000),
+    /**
+     * Page size for `tools/list`. `0` disables pagination.
+     */
+    toolsPageSize: z.number().int().nonnegative().max(10_000).default(100),
     maxResponseBytes: z
       .number()
       .int()
@@ -674,7 +754,11 @@ export const GatewayConfigSchema = z
     projection: ProjectionConfigSchema,
     auth: AuthConfigSchema,
     logging: LoggingConfigSchema,
+    jsonNavigation: JsonNavigationConfigSchema,
     analytics: AnalyticsConfigSchema,
+    // P1-5: /readyz deps. Declared on the gateway schema so the gateway
+    // deployment can also serve dependency readiness; the CLI wires
+    // `buildReadinessDeps` into `serveHttp`.
     contracts: z.array(GatewayContractConfigSchema).default([]),
   })
   .strict();
@@ -822,23 +906,6 @@ export function createCacheStoreFromConfig(
     });
   }
   return undefined;
-}
-
-export function createTokenizerFromConfig(
-  config: TokenMetricsConfig,
-): Tokenizer | undefined {
-  if (!config.enabled || config.tokenizer === "none") {
-    return undefined;
-  }
-  const ratio = config.charactersPerToken || 4;
-  return {
-    id: config.modelId,
-    measurement: "estimate",
-    count(text: string): number {
-      if (!text) return 0;
-      return Math.ceil(text.length / ratio);
-    },
-  };
 }
 
 function normalizeStaticCredential(
@@ -1117,6 +1184,25 @@ export function createNavigationLimitsFromConfig(
   };
 }
 
+/**
+ * Build the result-handle registry options for a deployment from its JSON
+ * navigation config, or `undefined` when handles are disabled.
+ */
+export function createHandleRegistryOptionsFromConfig(
+  config: JsonNavigationConfig,
+): HandleRegistryOptions | undefined {
+  if (!config.handles.enabled) return undefined;
+  return {
+    maxPerPrincipal: config.handles.maxPerPrincipal,
+    maxPerTenant: config.handles.maxPerTenant,
+    maxTotal: config.handles.maxTotal,
+    maxBytes: config.handles.maxBytes,
+    maxTotalBytes: config.handles.maxTotalBytes,
+    ttlMs: config.handles.ttlMs,
+    minBytes: config.handles.minBytes,
+  };
+}
+
 export function buildRuntimeOptions(
   config: ChainMcpConfig,
   overrides?: Partial<RuntimeOptions>,
@@ -1335,6 +1421,98 @@ export interface RateLimiterStartupHealth {
     toolQuotaCount: number;
     toolConcurrencyCount: number;
   };
+}
+
+/**
+ * Dependency checks for `serveHttp`'s `/readyz` probe.
+ *
+ * Each check resolves `true` when the dependency is healthy. The checks
+ * never write: the rate limiter probes `eval("return 1")` and the cache
+ * store probes a read of an absent key (a read fails only when Redis is
+ * unreachable, so it proves liveness without writing). Both are bounded by
+ * a short timeout so a hung Redis cannot stall the probe. `fail-open`
+ * limiters are reported `degradedReady`, mirroring the call path: an
+ * unreachable Redis keeps `/readyz` at 200 `degraded`, while a
+ * `fail-closed` limiter or a cache outage returns 503. Error details are
+ * never mirrored into the probe response.
+ */
+export interface ReadinessDep {
+  name: string;
+  check: () => boolean | Promise<boolean>;
+  degradedReady?: boolean | undefined;
+}
+
+const READINESS_PROBE_TIMEOUT_MS = 500;
+
+async function probeWithTimeout(
+  action: () => Promise<unknown>,
+): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      Promise.resolve().then(action),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("readiness probe timed out")),
+          READINESS_PROBE_TIMEOUT_MS,
+        );
+        timer.unref();
+      }),
+    ]);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+export function buildReadinessDeps(
+  config: ChainMcpConfig | GatewayConfig,
+  options?: {
+    rateLimiter?: RateLimiter | undefined;
+    cacheStore?: CacheStore | undefined;
+  },
+): ReadinessDep[] {
+  const deps: ReadinessDep[] = [];
+
+  if (
+    config.rateLimit.enabled &&
+    config.rateLimit.provider === "redis" &&
+    options?.rateLimiter instanceof DistributedRateLimiter
+  ) {
+    const limiter = options.rateLimiter;
+    deps.push({
+      name: "rate-limiter",
+      ...(limiter.failurePolicy === "fail-open"
+        ? { degradedReady: true as const }
+        : {}),
+      check: () =>
+        probeWithTimeout(() =>
+          Promise.resolve(limiter.client.eval("return 1", [], [])),
+        ),
+    });
+  }
+
+  if (
+    config.cache.enabled &&
+    config.cache.provider === "redis" &&
+    options?.cacheStore instanceof RedisCacheStore
+  ) {
+    const store = options.cacheStore;
+    deps.push({
+      name: "cache",
+      // A read of a key that does not exist resolves `undefined` on a
+      // healthy Redis and rejects only when Redis is unreachable, so it
+      // proves liveness without writing anything.
+      check: () =>
+        probeWithTimeout(() =>
+          Promise.resolve(store.client.get("chainmcp:readiness:probe")),
+        ),
+    });
+  }
+
+  return deps;
 }
 
 export async function logRateLimiterStartup(

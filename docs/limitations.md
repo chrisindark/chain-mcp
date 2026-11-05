@@ -107,8 +107,9 @@ These are deliberate boundaries, not defects:
   responsibility.
 - **Token counts are estimates by default.** The built-in tokenizer divides
   characters by `charactersPerToken` (default 4) and always reports
-  `measurement: "estimate"`. Exact counts require an injected `Tokenizer`; no
-  model-specific tokenizer is bundled.
+  `measurement: "estimate"`. Exact counts require `tokenMetrics.tokenizer:
+exact` with a module or registered factory; no model-specific tokenizer is
+  bundled, and exact without a source fails at startup.
 - **No async or remote tokenizers, no per-content-block measurement, and no
   aggregated token exporter.** Aggregation is left to the deployment.
 - **Field projection supports include/exclude paths only.** No renames,
@@ -152,8 +153,6 @@ These are deliberate boundaries, not defects:
 
 ## Server and dynamic gateway
 
-- **MCP pagination is not implemented.** Every `tools/list` responds in one page
-  with no `nextCursor`.
 - **Gateway contract revisions are in memory.** A restart drops published
   revisions unless the deployment republishes them; there is no database-backed
   contract registry.

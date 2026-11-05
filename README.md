@@ -30,34 +30,43 @@ ChainMcp is not published to a package registry yet. Install it by cloning the
 repository and linking generated projects to that checkout.
 
 ```bash
+# 1. Clone and build the repository
 git clone https://github.com/chrisindark/chain-mcp.git
 cd chain-mcp
 pnpm install
 pnpm build
 
-# From the repository root, create a server project outside the workspace:
+# 2. Generate a standalone server project outside the workspace.
+#    --local-deps records the clone root explicitly, writes relative file:
+#    dependency specifiers, and adds a pnpm-workspace.yaml override block.
 node packages/cli/dist/bin.js init \
   --spec ./examples/petstore/openapi.yaml \
-  --output ~/my-mcp-server \
+  --output ../my-mcp-server \
   --local-deps "$PWD"
-```
 
-`--local-deps` writes `file:` dependency specifiers and a
-`pnpm-workspace.yaml` override block, so the generated project installs the
-unpublished `@chainmcp/*` packages from the clone instead of a registry.
-
-### Install, build, and run
-
-```bash
-cd ~/my-mcp-server
+# 3. Install, build, and run the generated server (stdio MCP server)
+cd ../my-mcp-server
 pnpm install
 pnpm build
 pnpm start        # stdio MCP server
 ```
 
+> [!NOTE]
+> `--local-deps` is required because linked workspace packages declare
+> their siblings as `workspace:*`, which pnpm cannot resolve outside the
+> monorepo. Local mode never infers a repository from the current working
+> directory: pass the clone root with `--local-deps`.
+> The `npx @chainmcp/cli ...` form shown in older guides requires published
+> packages. Until publishing happens, run the CLI from the clone:
+> `node packages/cli/dist/bin.js <command>`.
+> Projects generated **inside** the monorepo can use `--workspace-deps` to
+> keep `workspace:*` specifiers.
+
 ### Connect to Claude Desktop or Your AI IDE
 
-Add the server to your `claude_desktop_config.json`:
+Add the built server to your `claude_desktop_config.json` (absolute paths,
+and replace `/Users/you/my-mcp-server` with your generated project's
+directory):
 
 ```json
 {
@@ -70,14 +79,13 @@ Add the server to your `claude_desktop_config.json`:
 }
 ```
 
-Open Claude Desktop or your AI IDE. Your API tools appear automatically in the tool inventory.
+Open Claude Desktop or your AI IDE. Your API tools appear automatically in
+the tool inventory. No registry access is required at any step: the
+generated project installs `@chainmcp/*` from the clone.
 
-> [!NOTE]
-> The `npx @chainmcp/cli ...` form shown in older guides requires published
-> packages. Until publishing happens, run the CLI from the clone:
-> `node packages/cli/dist/bin.js <command>`.
-> Projects generated **inside** the monorepo can use `--workspace-deps` to keep
-> `workspace:*` specifiers.
+The full literal sequence above is executed end to end by
+`packages/cli/tests/quick-start.test.ts`; the registry form below stays
+gated behind "after publishing" until that happens.
 
 ## Quick Start (Registry, after publishing)
 
@@ -111,12 +119,12 @@ Install the CLI globally (`npm install -g @chainmcp/cli`), then use the same
 - **Contract compilation and execution:** OpenAPI 3.x to MCP tool definitions with bounded upstream HTTP.
 - **Generated servers:** Portable projects that run independently.
 - **Dynamic gateway:** Load and serve multiple versioned API contracts.
-- **Token accounting:** Resource-bounded execution with token budgets; counts are labeled estimates unless an explicit `Tokenizer` is injected.
+- **Token accounting:** Resource-bounded execution with token budgets; counts are labeled estimates unless an exact tokenizer module or factory is configured.
 - **Smart caching:** TTLs, authorization-aware cache keys, and response projection.
 - **Authentication:** Separate inbound MCP authorization from upstream API credentials.
 - **Rate limiting:** Tenant, principal, and tool-level quotas.
 - **Analytics:** Usage, latency, failures, cache performance, and token metrics.
-- **JSON navigation:** Bounded pagination, path selection, shape inspection, and filtering of a JSON document supplied inline by the caller (no result handles).
+- **JSON navigation:** Bounded pagination, path selection, shape inspection, and filtering of JSON documents, supplied inline or by an opaque tenant-/principal-scoped result handle minted once via `json_create_handle`, so large payloads are stored server-side instead of being pasted back.
 
 ## Product principles
 
@@ -189,22 +197,21 @@ Run `pnpm install` followed by `pnpm check` from the repository root to run form
 ## CLI commands
 
 ```bash
-chainmcp init --spec ./openapi.yaml  # Scaffolds project from API spec (or HTTPS URL)
-chainmcp init --spec ./openapi.yaml --local-deps /path/to/chain-mcp  # Link unpublished packages from a clone
-chainmcp validate                    # Audits schemas, regexes, and URLs
-chainmcp build                       # Compiles tools and manifests
-chainmcp diff --against baseline.yaml # Detects schema drift and breaking changes
-chainmcp serve                       # Starts the local MCP server (stdio by default)
-chainmcp serve --transport http --port 3333 # Serves Streamable HTTP / SSE endpoint
-chainmcp dev                         # Fast authoring loop; loads dist/tools.js or src/tools.ts
-chainmcp gateway serve               # Starts dynamic multi-contract gateway server
-chainmcp export --output ./dist-srv --local-deps /path/to/chain-mcp  # Exports a portable standalone server
-chainmcp config explain              # Prints resolved config with secrets redacted
+node packages/cli/dist/bin.js init --spec ./openapi.yaml  # Scaffolds project from API spec (or HTTPS URL)
+node packages/cli/dist/bin.js init --spec ./openapi.yaml --local-deps /path/to/chain-mcp  # Link unpublished packages from a clone
+node packages/cli/dist/bin.js validate                    # Audits schemas, regexes, and URLs
+node packages/cli/dist/bin.js build                       # Compiles tools and manifests
+node packages/cli/dist/bin.js diff --against baseline.yaml # Detects schema drift and breaking changes
+node packages/cli/dist/bin.js serve                       # Starts the local MCP server (stdio by default)
+node packages/cli/dist/bin.js serve --transport http --port 3333 # Serves Streamable HTTP / SSE endpoint
+node packages/cli/dist/bin.js dev                         # Fast authoring loop; loads dist/tools.js or src/tools.ts
+node packages/cli/dist/bin.js gateway serve               # Starts dynamic multi-contract gateway server
+node packages/cli/dist/bin.js export --output ./dist-srv --local-deps /path/to/chain-mcp  # Exports a portable standalone server
+node packages/cli/dist/bin.js config explain              # Prints resolved config with secrets redacted
 ```
 
-These examples assume `chainmcp` is installed (or linked) and on `PATH`. From a
-fresh clone without a global install, run the CLI as
-`node packages/cli/dist/bin.js <command>` instead.
+These commands assume a fresh clone (before publishing there is no global
+install), so every one is written as `node packages/cli/dist/bin.js <command>`.
 
 > [!NOTE]
 > Credential fields in `chainmcp.config.yaml` accept `${VAR}` and
