@@ -157,6 +157,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
       name: projectName,
       allowedHosts: [],
       blank: true,
+      transport: options.transport,
     });
     await writeFile(configPath, configYaml, "utf8");
     createdFiles.push("chainmcp.config.yaml");
@@ -422,6 +423,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     specRelativePath: "./spec/openapi.yaml",
     baseUrl,
     allowInsecureHttp,
+    transport: options.transport,
   });
   await writeFile(configPath, configYaml, "utf8");
   createdFiles.push("chainmcp.config.yaml");

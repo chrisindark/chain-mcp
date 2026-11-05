@@ -53,6 +53,7 @@ export interface InitOptions {
   name?: string | undefined;
   baseUrl?: string | undefined;
   allowHttp?: boolean | undefined;
+  transport?: "stdio" | "http" | undefined;
   blank?: boolean | undefined;
   force?: boolean | undefined;
   /** Override the generator version (tests and embedders only). */
@@ -96,6 +97,7 @@ export interface ValidateOptions {
   config?: string | undefined;
   spec?: string | undefined;
   allowHttp?: boolean | undefined;
+  transport?: "stdio" | "http" | undefined;
   strict?: boolean | undefined;
   requireContract?: boolean | undefined;
   tools?: readonly ToolDefinition[] | undefined;
@@ -127,6 +129,7 @@ export interface BuildOptions {
   config?: string | undefined;
   spec?: string | undefined;
   allowHttp?: boolean | undefined;
+  transport?: "stdio" | "http" | undefined;
   requireContract?: boolean | undefined;
   tools?: readonly ToolDefinition[] | undefined;
   outDir?: string | undefined;
@@ -152,6 +155,7 @@ export interface DiffOptions {
   spec?: string | undefined;
   against?: string | undefined;
   allowHttp?: boolean | undefined;
+  transport?: "stdio" | "http" | undefined;
   failOn?: DiffFailOn | undefined;
   failOnBreaking?: boolean | undefined;
   json?: boolean | undefined;
@@ -187,9 +191,9 @@ export interface ServeOptions {
   config?: string | undefined;
   spec?: string | undefined;
   allowHttp?: boolean | undefined;
+  transport?: "stdio" | "http" | undefined;
   requireContract?: boolean | undefined;
   tools?: readonly ToolDefinition[] | undefined;
-  transport?: "stdio" | "http" | undefined;
   port?: number | undefined;
   host?: string | undefined;
   path?: string | undefined;
@@ -239,6 +243,7 @@ export interface DevOptions {
   config?: string | undefined;
   spec?: string | undefined;
   allowHttp?: boolean | undefined;
+  transport?: "stdio" | "http" | undefined;
   baseUrl?: string | undefined;
   cwd?: string | undefined;
   tools?: readonly ToolDefinition[] | undefined;
@@ -262,6 +267,7 @@ export interface ExportOptions {
   config?: string | undefined;
   spec?: string | undefined;
   allowHttp?: boolean | undefined;
+  transport?: "stdio" | "http" | undefined;
   requireContract?: boolean | undefined;
   tools?: readonly ToolDefinition[] | undefined;
   output?: string | undefined;

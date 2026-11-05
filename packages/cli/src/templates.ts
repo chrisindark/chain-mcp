@@ -138,6 +138,7 @@ export interface ConfigYamlOptions {
   blank?: boolean | undefined;
   baseUrl?: string | undefined;
   allowInsecureHttp?: boolean | undefined;
+  transport?: "stdio" | "http" | undefined;
 }
 
 export function renderConfigYaml(options: ConfigYamlOptions): string {
@@ -155,7 +156,7 @@ export function renderConfigYaml(options: ConfigYamlOptions): string {
           },
         }),
     server: {
-      transport: "stdio",
+      transport: options.transport ?? "stdio",
       requestTimeoutMs: 15000,
       maxResponseBytes: 1000000,
       toolsPageSize: 100,
