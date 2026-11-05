@@ -1017,6 +1017,12 @@ docker run -i ${options.name}
 Configuration is stored in \`chainmcp.config.yaml\`. You can customize:
 - Allowed upstream hosts (\`security.allowedUpstreamHosts\`)
 - Request timeouts and response size limits (\`server.requestTimeoutMs\`, \`server.maxResponseBytes\`)
+
+### Large responses, caps, and pagination
+
+- \`server.maxResponseBytes\` (default 1 MiB) hard-caps upstream tool results; exceeding it aborts with \`UPSTREAM_FAILURE\` (not a page).
+- \`server.toolsPageSize\` (default 100) paginates the \`tools/list\` catalog via a revision-bound cursor.
+- Large upstream JSON is explored via \`@chainmcp/json-navigation\` result handles (\`json_create_handle\`, \`json_paginate\`, \`json_select_path\`), which do not bypass the cap.
 - Rate limiting (\`rateLimit\`)
 - Structured logging level (\`logging.level\`)
 - Upstream credentials (\`auth.upstream\`)

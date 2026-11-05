@@ -136,6 +136,18 @@ When loading remote OpenAPI specifications via `chainmcp init --spec <url>`, `va
 
 ---
 
+## 2b. Large responses, caps, and pagination
+
+ChainMcp has three distinct mechanisms for large data. They are not interchangeable:
+
+1. **Upstream tool results are hard-capped by `server.maxResponseBytes` (default 1 MiB).** When an upstream response exceeds the cap, the call aborts with `UPSTREAM_FAILURE`. This is a hard failure, not a truncated page and not automatic pagination. Raise the cap (up to 10 MiB for the executor, 100 MiB for the server) when payloads legitimately exceed it.
+2. **The `tools/list` catalog is paginated by `server.toolsPageSize` (default 100) with a revision-bound opaque cursor.** This controls how many tool definitions are returned per page; it does not affect tool results. Set `0` for unlimited.
+3. **Large upstream JSON payloads are explored through `@chainmcp/json-navigation`** using server-side result handles (`json_create_handle`) plus `json_paginate` / `json_select_path`. These operate on a stored document, not on the wire response.
+
+When you hit `UPSTREAM_FAILURE` because of size, you are hitting mechanism (1). Switching to handle-based navigation (3) requires the upstream response to fit within `maxResponseBytes` first; navigation does not bypass the cap.
+
+See also: `docs/json-navigation.md` (result handles and pagination semantics) and the generated-server README.
+
 ## 3. Safe Log Inspection
 
 ChainMcp includes built-in redaction in `@chainmcp/analytics`:
