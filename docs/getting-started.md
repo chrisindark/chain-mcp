@@ -15,10 +15,21 @@ network service and does not require credentials.
 - pnpm 11
 - No API keys or external services
 
+## Quick start (npm registry)
+
+Initialize a new MCP server directly with `npx @chainmcp/cli`:
+
+```bash
+npx @chainmcp/cli init --spec ./examples/petstore/openapi.yaml --output ../my-mcp-server
+cd ../my-mcp-server
+pnpm install
+pnpm build
+pnpm start
+```
+
 ## Local-clone quick start (clone → build → init → serve → MCP client)
 
-The `@chainmcp/*` packages are not published to a registry yet, so the
-supported distribution is the local clone. This is the exact sequence that
+ChainMcp can also be run directly from a repository clone. This is the exact sequence that
 the test `packages/cli/tests/quick-start.test.ts` executes in a temp
 directory. Every command below is literally what a user copies and pastes.
 

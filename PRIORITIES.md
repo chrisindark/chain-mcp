@@ -1,8 +1,8 @@
 # ChainMcp Priorities — Local-First Path to 1.0
 
-**Status:** pre-1.0 (`0.2.0`)
+**Status:** pre-1.0 (`0.3.0`)
 **Baseline:** `pnpm check` green (format, lint, build, typecheck, all workspace tests, SBOM, version sync).
-**Scope:** everything a user can run by cloning this repository. **Publishing to npm is intentionally out of scope** and is tracked in the "Deferred" section, not in the priority list.
+**Scope:** all workspace packages and capabilities. The 0.3.0 release is published to the public npm registry under the `@chainmcp` scope.
 
 This file replaces the open items that were previously spread across `ROADMAP.md`, the remediation plan, and the risk register. `ROADMAP.md` remains the historical delivery record; this file is the active work queue.
 
@@ -612,7 +612,7 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 
 Do not start these without a new decision and an ADR.
 
-- **npm publishing, provenance, and registry smoke tests.** Deferred by request; the local-clone path is the supported distribution for now.
+- **npm publishing, provenance, and registry smoke tests.** Complete (published at 0.3.0 with signed provenance across all 15 packages).
 - **Hosted SaaS control plane, usage metering, audit UI.** Out of scope per `AGENTS.md`.
 - **PostgreSQL metadata store.** No adapter exists and none is required for single-instance use.
 - **OAuth authorization-code and refresh-token flows, token introspection, OIDC discovery, cross-process revocation.** Client-credentials only.
