@@ -266,6 +266,31 @@ describe("runtime invocation caching", () => {
     expect(execute).toHaveBeenCalledTimes(2);
   });
 
+  it("bypasses caching for input that exceeds the maximum cache key depth limit", async () => {
+    const execute = vi.fn(async (input) => input);
+    const runtime = new InMemoryToolRuntime({
+      cache: cacheOptions(),
+    });
+    runtime.register(
+      cacheableTool(execute, {
+        inputSchema: { type: "object", properties: { id: { type: "string" } } },
+      }),
+    );
+    let deep: unknown = "leaf";
+    for (let depth = 0; depth < 70; depth += 1) {
+      deep = { next: deep };
+    }
+    const input = { id: "a", unvalidatedExtra: deep };
+
+    await expect(runtime.callTool("lookup_item", input, context)).resolves.toBe(
+      input,
+    );
+    await expect(runtime.callTool("lookup_item", input, context)).resolves.toBe(
+      input,
+    );
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
   it("degrades cache read and write failures to a miss without failing the call", async () => {
     const store: CacheStore = {
       get: async () => {

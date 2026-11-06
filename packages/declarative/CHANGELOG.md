@@ -1,5 +1,14 @@
 # @chainmcp/declarative
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies
+  - @chainmcp/core@0.3.1
+  - @chainmcp/compiler@0.3.1
+  - @chainmcp/executor@0.3.1
+
 ## 0.3.0
 
 ### Minor Changes

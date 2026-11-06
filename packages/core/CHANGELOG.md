@@ -1,5 +1,11 @@
 # @chainmcp/core
 
+## 0.3.1
+
+### Patch Changes
+
+- Add `MAX_CACHE_KEY_DEPTH` (64) recursion depth limit to `createCacheKey` arguments canonicalization to prevent unbounded recursion.
+
 ## 0.3.0
 
 ### Minor Changes

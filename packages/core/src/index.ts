@@ -5,6 +5,7 @@ import {
   cacheKeyHashDomain,
   cacheKeyPrefix,
   MAX_CACHE_KEY_INPUT_BYTES,
+  MAX_CACHE_KEY_DEPTH,
 } from "./cache-key.js";
 import {
   auditInputSchema,
@@ -34,7 +35,11 @@ export {
   isValidPattern,
   type SchemaValidationLimits,
 } from "./schema.js";
-export { CACHE_KEY_VERSION, MAX_CACHE_KEY_INPUT_BYTES } from "./cache-key.js";
+export {
+  CACHE_KEY_VERSION,
+  MAX_CACHE_KEY_INPUT_BYTES,
+  MAX_CACHE_KEY_DEPTH,
+} from "./cache-key.js";
 export {
   stringifyBounded,
   SerializationLimitError,
@@ -2331,7 +2336,16 @@ export function createCacheKey(parts: {
   return `${cacheKeyPrefix()}${digest}`;
 }
 
-function canonicalize(value: unknown, ancestors: Set<object>): unknown {
+function canonicalize(
+  value: unknown,
+  ancestors: Set<object>,
+  depth = 0,
+): unknown {
+  if (depth > MAX_CACHE_KEY_DEPTH) {
+    throw new TypeError(
+      `Cache key arguments exceed the maximum depth of ${MAX_CACHE_KEY_DEPTH}`,
+    );
+  }
   if (
     value === null ||
     typeof value === "string" ||
@@ -2360,7 +2374,7 @@ function canonicalize(value: unknown, ancestors: Set<object>): unknown {
               "Cache key arguments cannot contain undefined array items",
             );
           }
-          return canonicalize(item, ancestors);
+          return canonicalize(item, ancestors, depth + 1);
         });
       }
       if (
@@ -2375,7 +2389,7 @@ function canonicalize(value: unknown, ancestors: Set<object>): unknown {
       for (const key of Object.keys(value).sort()) {
         const property = value[key];
         if (property === undefined) continue;
-        canonical.push([key, canonicalize(property, ancestors)]);
+        canonical.push([key, canonicalize(property, ancestors, depth + 1)]);
       }
       return Object.fromEntries(canonical);
     } finally {

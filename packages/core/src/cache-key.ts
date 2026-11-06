@@ -1,5 +1,6 @@
 export const CACHE_KEY_VERSION = "v2";
 export const MAX_CACHE_KEY_INPUT_BYTES = 64 * 1024;
+export const MAX_CACHE_KEY_DEPTH = 64;
 
 const CACHE_KEY_PREFIX = `chainmcp:cache:${CACHE_KEY_VERSION}:`;
 const CACHE_KEY_HASH_DOMAIN = `chainmcp:cache-key:${CACHE_KEY_VERSION}\u0000`;

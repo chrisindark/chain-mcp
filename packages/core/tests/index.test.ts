@@ -7,6 +7,7 @@ import {
   InMemoryToolRuntime,
   InMemoryCacheStore,
   MAX_CACHE_KEY_INPUT_BYTES,
+  MAX_CACHE_KEY_DEPTH,
   MAX_SCHEMA_DEPTH,
   RuntimeError,
   type ToolContext,
@@ -1374,6 +1375,41 @@ describe("cache key serialization", () => {
         arguments: "x".repeat(MAX_CACHE_KEY_INPUT_BYTES + 1),
       }),
     ).toThrow(`maximum of ${MAX_CACHE_KEY_INPUT_BYTES} bytes`);
+  });
+
+  it("accepts arguments at the maximum depth limit and rejects arguments beyond it", () => {
+    let validNested: unknown = "leaf";
+    for (let depth = 0; depth < MAX_CACHE_KEY_DEPTH; depth += 1) {
+      validNested = { next: validNested };
+    }
+    expect(() =>
+      createCacheKey({
+        ...base,
+        arguments: validNested,
+      }),
+    ).not.toThrow();
+
+    let deepObject: unknown = "leaf";
+    for (let depth = 0; depth < MAX_CACHE_KEY_DEPTH + 1; depth += 1) {
+      deepObject = { next: deepObject };
+    }
+    expect(() =>
+      createCacheKey({
+        ...base,
+        arguments: deepObject,
+      }),
+    ).toThrow(`exceed the maximum depth of ${MAX_CACHE_KEY_DEPTH}`);
+
+    let deepArray: unknown = "leaf";
+    for (let depth = 0; depth < MAX_CACHE_KEY_DEPTH + 1; depth += 1) {
+      deepArray = [deepArray];
+    }
+    expect(() =>
+      createCacheKey({
+        ...base,
+        arguments: deepArray,
+      }),
+    ).toThrow(`exceed the maximum depth of ${MAX_CACHE_KEY_DEPTH}`);
   });
 });
 
