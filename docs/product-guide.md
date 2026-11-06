@@ -283,22 +283,17 @@ You do not need to write complex code to use ChainMcp. Here is the 3-step path t
 
 ### Step 1: Initialize the Project
 
-ChainMcp is not published to a registry yet, so run it from a local clone
-(the registry `npx @chainmcp/cli ...` form becomes available after publishing):
+Initialize a new server directly using `npx @chainmcp/cli`:
 
 ```bash
-git clone https://github.com/chrisindark/chain-mcp.git
-cd chain-mcp
-pnpm install
-pnpm build
-
-node packages/cli/dist/bin.js init \
+npx @chainmcp/cli init \
   --spec https://petstore.swagger.io/v2/swagger.json \
-  --output ../my-mcp-server \
-  --local-deps "$PWD"
-cd ../my-mcp-server
+  --output ./my-mcp-server
+cd ./my-mcp-server
 pnpm install
 ```
+
+_(If developing from a local clone of the repository, pass `--local-deps "$PWD"` to link local workspace packages)._
 
 This inspects your API, creates an audited tool definition, and creates a clean `chainmcp.config.yaml`.
 
@@ -306,7 +301,7 @@ This inspects your API, creates an audited tool definition, and creates a clean 
 
 ```bash
 pnpm build
-node ../chain-mcp/packages/cli/dist/bin.js validate
+npx @chainmcp/cli validate
 ```
 
 ChainMcp verifies that all URLs are safe, all regular expressions are immune to ReDoS attacks, and that all inputs are bounded.

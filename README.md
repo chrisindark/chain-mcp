@@ -24,10 +24,47 @@ flowchart LR
     end
 ```
 
+## Quick Start (npm Registry)
+
+ChainMcp is published to the public npm registry under the `@chainmcp` scope (`0.3.0`).
+
+### 1. Initialize a Project from an OpenAPI Spec
+
+```bash
+npx @chainmcp/cli init --spec ./openapi.yaml
+# Or directly from an HTTPS URL:
+npx @chainmcp/cli init --spec https://api.example.com/openapi.yaml
+```
+
+### 2. Validate and Build
+
+```bash
+cd ./my-mcp-server
+pnpm install
+npx @chainmcp/cli validate
+npx @chainmcp/cli build
+```
+
+### 3. Connect to Claude Desktop or Your AI IDE
+
+Add the built server to your `claude_desktop_config.json` (replacing with your project's absolute path):
+
+```json
+{
+  "mcpServers": {
+    "my-api": {
+      "command": "node",
+      "args": ["/absolute/path/to/my-mcp-server/dist/server.js"]
+    }
+  }
+}
+```
+
+Or install the CLI globally (`npm install -g @chainmcp/cli`), then use `"command": "chainmcp"` and `"args": ["serve"]`.
+
 ## Quick Start (Local Clone)
 
-ChainMcp is not published to a package registry yet. Install it by cloning the
-repository and linking generated projects to that checkout.
+You can also run ChainMcp from a local repository checkout:
 
 ```bash
 # 1. Clone and build the repository
@@ -52,70 +89,16 @@ pnpm start        # stdio MCP server
 ```
 
 > [!NOTE]
-> `--local-deps` is required because linked workspace packages declare
-> their siblings as `workspace:*`, which pnpm cannot resolve outside the
+> `--local-deps` is required when running from a clone because linked workspace
+> packages declare their siblings as `workspace:*`, which pnpm cannot resolve outside the
 > monorepo. Local mode never infers a repository from the current working
 > directory: pass the clone root with `--local-deps`.
-> The `npx @chainmcp/cli ...` form shown in older guides requires published
-> packages. Until publishing happens, run the CLI from the clone:
-> `node packages/cli/dist/bin.js <command>`.
 > Projects generated **inside** the monorepo can use `--workspace-deps` to
 > keep `workspace:*` specifiers.
 
-### Connect to Claude Desktop or Your AI IDE
-
-Add the built server to your `claude_desktop_config.json` (absolute paths,
-and replace `/Users/you/my-mcp-server` with your generated project's
-directory):
-
-```json
-{
-  "mcpServers": {
-    "my-api": {
-      "command": "node",
-      "args": ["/Users/you/my-mcp-server/dist/server.js"]
-    }
-  }
-}
-```
-
 Open Claude Desktop or your AI IDE. Your API tools appear automatically in
-the tool inventory. `@chainmcp/*` never needs a registry: the generated
-project links them from the clone. The third-party dependencies it declares
-(`zod`, `yaml`, `typescript`, `@types/node`) still come from npm the first
-time they are installed, so `pnpm install --offline` only works with a warm
-pnpm store.
-
-The full literal sequence above is executed end to end by
-`packages/cli/tests/quick-start.test.ts`; the registry form below stays
-gated behind "after publishing" until that happens.
-
-## Quick Start (Registry, after publishing)
-
-This section is a preview of the published-package workflow. The
-`@chainmcp/*` packages are not on a registry yet, so these commands do not work
-until publishing happens; use the local-clone quick start above instead.
-
-### 1. Initialize a Project from an API Spec
-
-```bash
-npx @chainmcp/cli init --spec ./openapi.yaml
-# Or directly from an HTTPS URL:
-npx @chainmcp/cli init --spec https://api.example.com/openapi.yaml
-```
-
-### 2. Validate and Build
-
-```bash
-npx @chainmcp/cli validate
-npx @chainmcp/cli build
-```
-
-### 3. Connect to Claude Desktop or Your AI IDE
-
-Install the CLI globally (`npm install -g @chainmcp/cli`), then use the same
-`claude_desktop_config.json` entry shown above with `"command": "chainmcp"` and
-`"args": ["serve"]`.
+the tool inventory. The full literal sequence above is executed end to end by
+`packages/cli/tests/quick-start.test.ts`.
 
 ## Core capabilities
 
@@ -175,7 +158,7 @@ These are initial architectural choices and may change through documented archit
 
 ## Project status
 
-ChainMcp is pre-1.0 (currently version `0.2.0`). The release gates recorded in `RELEASES.md` are not yet complete, including long-running and production-traffic validation. Do not treat this repository as a 1.0 release.
+ChainMcp is pre-1.0 (currently version `0.3.0`). The release gates recorded in `RELEASES.md` are not yet complete, including long-running and production-traffic validation. Do not treat this repository as a 1.0 release.
 
 The repository contains 15 workspace packages:
 
