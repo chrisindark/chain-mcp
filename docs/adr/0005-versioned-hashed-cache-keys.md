@@ -34,8 +34,9 @@ they must bypass shared caching.
 
 Object properties whose value is `undefined` are omitted, matching JSON
 serialization and normal TypeScript optional-field usage. `undefined` at the
-root or in arrays, sparse arrays, cycles, non-finite numbers, and non-JSON
-values remain rejected because they have no unambiguous JSON representation.
+root or in arrays, sparse arrays, cycles, non-finite numbers, non-JSON
+values, and nesting exceeding `MAX_CACHE_KEY_DEPTH` (64) levels remain rejected
+because they have no unambiguous or bounded JSON representation.
 
 Any change to canonicalization, hashed fields, or digest encoding must increment
 `CACHE_KEY_VERSION`. The prefix changes with the version so old entries become

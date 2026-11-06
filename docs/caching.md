@@ -79,6 +79,7 @@ The runtime calls `createCacheKey` with:
 - the validated arguments.
 
 The result is an opaque, versioned SHA-256 digest (`chainmcp:cache:v2:...`).
+Arguments are canonicalized with cycle detection, capped at `MAX_CACHE_KEY_DEPTH` (64) levels of nesting, and limited to `MAX_CACHE_KEY_INPUT_BYTES` (64 KiB).
 Raw identities, arguments, and the partition do not appear in the store. See
 `docs/adr/0005-versioned-hashed-cache-keys.md`.
 

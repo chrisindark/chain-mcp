@@ -293,11 +293,12 @@ export interface RateLimiter {
 
 ### Cache keys
 
-`createCacheKey` returns an opaque, fixed-length key of the form `chainmcp:cache:v2:<64 lowercase hex characters>`. It requires a stable, non-secret `authorizationPartition` and hashes the tenant, principal, authorization partition, contract revision, tool identity, and canonicalized arguments with SHA-256 under a versioned domain separator. The partition should represent effective grants or policy state; never pass a bearer token. Identity fields must be non-empty after trimming, so a blank partition is rejected instead of silently merging authorization contexts. Object properties whose value is `undefined` are omitted; `undefined` at the root or in arrays, sparse arrays, cycles, non-finite numbers, and non-JSON values are rejected. Canonical input is limited to `MAX_CACHE_KEY_INPUT_BYTES` (64 KiB); larger inputs throw `TypeError`. Changing canonicalization, hashed fields, or digest semantics requires incrementing `CACHE_KEY_VERSION`, which changes the key prefix and deliberately invalidates the existing key space. Hashing reduces accidental disclosure but is not encryption; protect the cache store and do not treat keys as secrets.
+`createCacheKey` returns an opaque, fixed-length key of the form `chainmcp:cache:v2:<64 lowercase hex characters>`. It requires a stable, non-secret `authorizationPartition` and hashes the tenant, principal, authorization partition, contract revision, tool identity, and canonicalized arguments with SHA-256 under a versioned domain separator. The partition should represent effective grants or policy state; never pass a bearer token. Identity fields must be non-empty after trimming, so a blank partition is rejected instead of silently merging authorization contexts. Object properties whose value is `undefined` are omitted; `undefined` at the root or in arrays, sparse arrays, cycles, non-finite numbers, and non-JSON values are rejected. Canonical input is limited to `MAX_CACHE_KEY_INPUT_BYTES` (64 KiB) and arguments are capped at `MAX_CACHE_KEY_DEPTH` (64) levels of nesting; larger or deeper inputs throw `TypeError`. Changing canonicalization, hashed fields, or digest semantics requires incrementing `CACHE_KEY_VERSION`, which changes the key prefix and deliberately invalidates the existing key space. Hashing reduces accidental disclosure but is not encryption; protect the cache store and do not treat keys as secrets.
 
 ```ts
 export const CACHE_KEY_VERSION = "v2";
 export const MAX_CACHE_KEY_INPUT_BYTES = 64 * 1024;
+export const MAX_CACHE_KEY_DEPTH = 64;
 
 export function createCacheKey(parts: {
   tenantId: string;
