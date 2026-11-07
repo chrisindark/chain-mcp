@@ -1,8 +1,8 @@
 # ChainMcp Priorities — Local-First Path to 1.0
 
-**Status:** pre-1.0 (`0.4.0`)
+**Status:** pre-1.0 (`0.4.1`)
 **Baseline:** `pnpm check` green (format, lint, build, typecheck, all workspace tests, SBOM, version sync).
-**Scope:** all workspace packages and capabilities. The 0.4.0 release is published to the public npm registry under the `@chainmcp` scope.
+**Scope:** all workspace packages and capabilities. The 0.4.1 release is published to the public npm registry under the `@chainmcp` scope.
 
 This file replaces the open items that were previously spread across `ROADMAP.md`, the remediation plan, and the risk register. `ROADMAP.md` remains the historical delivery record; this file is the active work queue.
 
@@ -608,7 +608,7 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 
 ### P2-9 — CI Cross-Repo Hardening & Contract Drift Gates
 
-**Status: open.** Cross-repo CI parity and contract safety items inspired by `echo-gate` and `e2e-hybrid-executor`.
+**Status: done (2026-11-07).** Added automated MCP tool declaration and schema snapshot gate in `scripts/check-schema-snapshots.mjs` and `snapshots/mcp-tool-declarations.snapshot.json` (7 unit tests in `scripts/check-schema-snapshots.test.mjs`, wired into `pnpm snapshot:check` and `pnpm check`). Added `deploy/Dockerfile` with multi-stage non-root container packaging and `.github/workflows/docker.yml` building and scanning container images with `aquasecurity/trivy-action` (SARIF upload to GitHub Security). Added weekly security audit schedule (`0 8 * * 1`) in `.github/workflows/ci.yml`. Added `.github/workflows/dependabot-automation.yml` with `dependabot/fetch-metadata@v2` for automated security labeling and PR approval (auto-merge disabled per policy). Additive (CI / tooling).
 
 **Do**
 

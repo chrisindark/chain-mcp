@@ -1,5 +1,12 @@
 # @chainmcp/auth
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies
+  - @chainmcp/core@0.4.1
+
 ## 0.4.0
 
 ### Patch Changes
