@@ -1,5 +1,21 @@
 # @chainmcp/cli
 
+## 0.4.0
+
+### Patch Changes
+
+- @chainmcp/admin@0.4.0
+  - @chainmcp/analytics@0.4.0
+  - @chainmcp/auth@0.4.0
+  - @chainmcp/compiler@0.4.0
+  - @chainmcp/config@0.4.0
+  - @chainmcp/core@0.4.0
+  - @chainmcp/executor@0.4.0
+  - @chainmcp/gateway@0.4.0
+  - @chainmcp/json-navigation@0.4.0
+  - @chainmcp/rate-limit@0.4.0
+  - @chainmcp/server@0.4.0
+
 ## 0.3.1
 
 ### Patch Changes

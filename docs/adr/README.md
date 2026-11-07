@@ -49,6 +49,7 @@ Create an ADR before making a substantial change to public APIs, tenant isolatio
 | [0028](0028-declarative-http-tool-descriptors.md)       | Versioned declarative HTTP tool descriptors | accepted |
 | [0029](0029-self-hosted-declarative-admin.md)           | Self-hosted declarative admin surface       | accepted |
 | [0030](0030-descriptor-persistence-and-rollback.md)     | Descriptor persistence and rollback         | accepted |
+| [0031](0031-storage-package-and-persistence.md)         | Unified persistence and storage drivers     | accepted |
 
 ADRs 0001–0003 were recorded retroactively from existing documentation and
 implementation. They describe decisions already reflected in the project, not

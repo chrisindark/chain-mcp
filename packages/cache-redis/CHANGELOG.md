@@ -1,5 +1,11 @@
 # @chainmcp/cache-redis
 
+## 0.4.0
+
+### Patch Changes
+
+- @chainmcp/core@0.4.0
+
 ## 0.3.1
 
 ### Patch Changes

@@ -26,6 +26,7 @@ const WORKSPACE_PACKAGES = [
   "packages/json-navigation/package.json",
   "packages/rate-limit/package.json",
   "packages/server/package.json",
+  "packages/storage/package.json",
 ];
 const ROOT_PACKAGE = "package.json";
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;

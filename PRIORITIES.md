@@ -1,8 +1,8 @@
 # ChainMcp Priorities — Local-First Path to 1.0
 
-**Status:** pre-1.0 (`0.3.1`)
+**Status:** pre-1.0 (`0.4.0`)
 **Baseline:** `pnpm check` green (format, lint, build, typecheck, all workspace tests, SBOM, version sync).
-**Scope:** all workspace packages and capabilities. The 0.3.1 release is published to the public npm registry under the `@chainmcp` scope.
+**Scope:** all workspace packages and capabilities. The 0.4.0 release is published to the public npm registry under the `@chainmcp` scope.
 
 This file replaces the open items that were previously spread across `ROADMAP.md`, the remediation plan, and the risk register. `ROADMAP.md` remains the historical delivery record; this file is the active work queue.
 
@@ -605,6 +605,47 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 **Status: done (2026-11-05).** `docs/supported-versions.md` already states pre-1.0 posture and intended support matrix; no published 1.0 guarantee implied. Additive (docs).
 
 `docs/supported-versions.md` is currently titled "for ChainMcp 1.0" and supported-versions language elsewhere still implies a published 1.0 artifact. Until `1.0.0` is shipped, the page documents the intended support matrix with the pre-1.0 posture explicit, and the public-facing docs should not imply the matrix is a published 1.0 guarantee.
+
+### P2-9 — CI Cross-Repo Hardening & Contract Drift Gates
+
+**Status: open.** Cross-repo CI parity and contract safety items inspired by `echo-gate` and `e2e-hybrid-executor`.
+
+**Do**
+
+- **MCP Tool Declaration & Schema Snapshot Gate (from `echo-gate`)**: Add an automated schema/snapshot regression test (analogous to `echo-gate`'s OpenAPI snapshot gate) that freezes exported MCP tool declarations, schemas, and gateway endpoints to prevent unintended breaking changes across package updates.
+- **Container Build & Trivy Image Scan (from `echo-gate`)**: Add a `.github/workflows/docker.yml` workflow building `deploy/Dockerfile` and scanning the image with `aquasecurity/trivy-action` (SARIF upload to GitHub Security).
+- **Scheduled Weekly Security Audits (from `e2e-hybrid-executor`)**: Add a scheduled weekly cron trigger (`0 8 * * 1`) to run dependency audits and security checks against `master` to detect newly published CVEs during idle periods.
+- **Dependabot Automation Pipeline (from `e2e-hybrid-executor`)**: Add `.github/workflows/dependabot-automation.yml` using `dependabot/fetch-metadata@v2` to auto-label security updates and auto-approve minor/patch PRs across the accumulating dependabot branches. Per safety policy, **auto-merge is explicitly kept disabled/commented out** so that dependency bumps require human verification.
+
+**Acceptance**
+
+- Schema snapshot test fails if an exported tool signature changes without an intentional snapshot update.
+- Docker workflow builds and runs Trivy scan on PRs/push.
+- Weekly scheduled scan is configured.
+- Dependabot PRs are triaged and labeled without auto-merging.
+
+---
+
+## Milestone 11 — Unified Persistence & Payload Store (`@chainmcp/storage`)
+
+### M11-1 — Scaffold `@chainmcp/storage` with `StorageDriver`, `MemoryStorageDriver`, and `SqliteStorageDriver`
+
+**Status: done (2026-11-07).** Added `@chainmcp/storage` (package 16) per ADR 0031. Implements `StorageDriver`, `KeyValueStore<T>`, `BlobPayloadStore`, and `TelemetryRingBuffer` interfaces in `packages/storage/src/types.ts`. Implements `MemoryStorageDriver` in `packages/storage/src/memory.ts` and zero-native-addon `SqliteStorageDriver` utilizing Node.js 22 built-in `node:sqlite` in WAL mode (`PRAGMA journal_mode = WAL;`) in `packages/storage/src/sqlite.ts`. Includes tenant isolation, TTL expiration, blob size caps (`StoragePayloadTooLargeError`), and telemetry ring buffer pruning. Unit tests in `packages/storage/tests/storage.test.ts` (9 tests) cover lifecycle, in-memory mode, and file-backed WAL mode persistence across restarts. Registered in `scripts/sync-version.mjs`, `scripts/generate-sbom.mjs`, and `scripts/coverage-thresholds.mjs`. Additive.
+
+**Do**
+
+- Create `packages/storage` with `package.json`, `tsconfig.json`, `tsconfig.build.json`, `README.md`, `LICENSE`, and `API.md`.
+- Define `StorageDriver`, `KeyValueStore<T>`, `BlobPayloadStore`, and `TelemetryRingBuffer` interfaces in `src/types.ts`.
+- Implement `MemoryStorageDriver` for ephemeral executions and unit testing.
+- Implement `SqliteStorageDriver` utilizing Node.js 22 built-in `node:sqlite` in WAL mode (`PRAGMA journal_mode = WAL;`) supporting tenant partitioning, TTL expiration, and byte caps.
+- Add unit tests covering memory and SQLite drivers for key-value CRUD, blob payload handling, TTL eviction, and tenant isolation.
+- Register `@chainmcp/storage` in `scripts/sync-version.mjs`, `scripts/generate-sbom.mjs`, and `scripts/coverage-thresholds.mjs`.
+
+**Acceptance**
+
+- `pnpm -r build`, `pnpm -r typecheck`, and `pnpm --filter @chainmcp/storage test` pass.
+- Key-value stores and blob stores enforce tenant scoping and TTL expiration.
+- SQLite driver successfully initializes in WAL mode without native addon requirements.
 
 ---
 

@@ -26,7 +26,7 @@ flowchart LR
 
 ## Quick Start (npm Registry)
 
-ChainMcp is published to the public npm registry under the `@chainmcp` scope (`0.3.1`).
+ChainMcp is published to the public npm registry under the `@chainmcp` scope (`0.4.0`).
 
 ### 1. Initialize a Project from an OpenAPI Spec
 
@@ -158,11 +158,12 @@ These are initial architectural choices and may change through documented archit
 
 ## Project status
 
-ChainMcp is pre-1.0 (currently version `0.3.1`). The release gates recorded in `RELEASES.md` are not yet complete, including long-running and production-traffic validation. Do not treat this repository as a 1.0 release.
+ChainMcp is pre-1.0 (currently version `0.4.0`). The release gates recorded in `RELEASES.md` are not yet complete, including long-running and production-traffic validation. Do not treat this repository as a 1.0 release.
 
-The repository contains 15 workspace packages:
+The repository contains 16 workspace packages:
 
 - `@chainmcp/core`: in-memory tool registry, linear-time Re2 regex validation, output projection, token budgets, and cached execution.
+- `@chainmcp/storage`: unified multi-driver persistence, key-value store, blob payload store, and telemetry buffer with zero-native-addon SQLite WAL and memory drivers.
 - `@chainmcp/config`: strict Zod configuration loader for `chainmcp.config.yaml` and `gateway.config.yaml`.
 - `@chainmcp/compiler`: OpenAPI 3.0/3.1 contract parser, deterministic manifests, and tool lowering.
 - `@chainmcp/authoring`: code-first tool authoring facade (`defineTool`) with Zod lowering.

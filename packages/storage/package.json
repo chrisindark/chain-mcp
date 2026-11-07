@@ -1,0 +1,51 @@
+{
+  "name": "@chainmcp/storage",
+  "version": "0.4.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chrisindark/chain-mcp.git",
+    "directory": "packages/storage"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@chainmcp/core": "workspace:*"
+  },
+  "description": "Unified multi-driver persistence and payload store for ChainMcp with zero-native-addon SQLite WAL and memory drivers.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chainmcp",
+    "storage",
+    "sqlite",
+    "persistence"
+  ],
+  "homepage": "https://github.com/chrisindark/chain-mcp/tree/master/packages/storage#readme",
+  "bugs": {
+    "url": "https://github.com/chrisindark/chain-mcp/issues"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

@@ -480,6 +480,66 @@ documents routes, persistence, recovery, and security posture.
 
 **Exit criteria:** a self-hosted operator can publish a declarative HTTP tool through an admin surface without editing code, and the tool is indistinguishable from a compiled tool at invocation time.
 
+## Platform Evolution: v0.3.1 to v1.0.0 (Execution, Observability & Studio)
+
+Following the stabilization of the core compiler, policy shield, and dynamic gateway in `v0.3.1`, this track matures ChainMcp into an end-to-end execution, observability, and visual curation platform.
+
+### Milestone 11: `v0.4.0` — `@chainmcp/storage` (Unified Persistence & Payload Store)
+
+Introduce a dedicated `@chainmcp/storage` workspace package graduating ChainMcp from ephemeral in-memory state and single-writer flat JSON snapshots to durable local and cloud persistence without compromising the zero-dependency developer experience.
+
+- [ ] Define portable `StorageDriver`, `KeyValueStore`, `BlobPayloadStore`, and `TelemetryRingBuffer` interfaces.
+- [ ] Implement `MemoryStorageDriver` for ephemeral testing, CI runs, and stateless CLI validation.
+- [ ] Implement `SqliteStorageDriver` using Node 22 built-in `node:sqlite` in WAL (`PRAGMA journal_mode = WAL;`) mode at `~/.chainmcp/studio.db` to allow concurrent readers and single-writer safety across stdio servers and studio UIs.
+- [ ] Implement `PostgresStorageDriver` interface for multi-replica cloud gateway deployments.
+- [ ] Persist versioned control-plane contracts, revisions, and encrypted credentials (`chainmcp_contracts`, `chainmcp_revisions`, `chainmcp_credentials`).
+- [ ] Back server-side JSON payload handles (`json_create_handle`) with storage TTL expiration and byte caps (`chainmcp_json_handles`).
+- [ ] Implement non-blocking, batched telemetry event persistence with automatic row-cap or TTL pruning (`chainmcp_telemetry_events`).
+
+**Exit criteria:** `@chainmcp/storage` supports memory and zero-native-addon SQLite WAL drivers, persists and verifies result handles across process restarts, and passes all unit and tenant-isolation tests.
+
+### Milestone 12: `v0.5.0` — Universal MCP Telemetry & Active Proxy Engine
+
+Expand `@chainmcp/analytics` and `@chainmcp/gateway` to capture comprehensive telemetry and enforce governance across native ChainMcp servers and external third-party MCP servers (e.g. Python FastMCP, Go).
+
+- [ ] Implement a lightweight OTLP/HTTP ingestion sink (`/v1/traces`, `/v1/metrics`) with GenAI/MCP span-to-metric derivation.
+- [ ] Implement Active MCP-to-MCP Proxy Mode in `@chainmcp/gateway` wrapping external `stdio` and Streamable HTTP MCP servers with ChainMcp's cache, rate limiters, and token budgets.
+- [ ] Maintain sub-5ms synchronous in-memory policy enforcement while offloading telemetry writes asynchronously to `@chainmcp/storage`.
+- [ ] Inject W3C `traceparent` context into `params._meta` on proxy requests to stitch outer gateway metrics and inner tool execution into unified traces.
+
+**Exit criteria:** an external FastMCP or stdio server can be proxied through ChainMcp with automated token budgeting, cache hit/miss accounting, rate limiting, and correlated OTLP traces.
+
+### Milestone 13: `v0.6.0` — ChainMcp Web Studio (`chainmcp studio`)
+
+Deliver a visual local-first web studio built atop `@chainmcp/admin` and `@chainmcp/storage` for tool curation, payload optimization, and observability.
+
+- [ ] Visual tool curation: browse discovered endpoints from OpenAPI specs or proxied servers, handpick active tools, and prune unused endpoints to prevent LLM context bloat.
+- [ ] Interactive Projection Playground: test-fire tools against upstream APIs, inspect raw vs projected payloads side by side, and configure `createFieldProjector()` include/exclude paths with live token-saving diffs.
+- [ ] Unified Live Shield & OTel Observability Dashboard reading from shared SQLite WAL or PostgreSQL.
+- [ ] Git-backed bidirectional config synchronization: persist all Studio UI changes directly back to `chainmcp.config.yaml` and descriptor files.
+- [ ] One-click client export snippets for Claude Desktop, Cursor, and Claude Code with secret redaction (`config explain`).
+
+**Exit criteria:** `chainmcp studio` launches a local zero-dependency UI displaying live invocation metrics from SQLite WAL, allowing interactive field projection testing with token savings visualization.
+
+### Milestone 14: `v0.7.0` — Hybrid Lifecycle, Marketplace Meta-MCP & Agent Self-Improvement
+
+Unify dynamic gateway iteration with standalone server exports while enabling agent-assisted tool optimization with human-in-the-loop review.
+
+- [ ] "Stage in Gateway, Eject to Standalone" workflow: hot-load and test contracts dynamically in `@chainmcp/gateway`, then export to standalone Docker/Node projects with `chainmcp export`.
+- [ ] Agent-callable Meta-MCP server: expose compiler, declarative, and admin lifecycle actions as tools for coding agents (Claude, Gemini, Cursor).
+- [ ] Telemetry-driven diagnostics: provide diagnostic tools allowing agents to analyze latency, timeouts, and oversized responses.
+- [ ] Human-in-the-Loop (HITL) approval gates: agents propose field projections or description refinements; modifications require explicit operator approval before atomic revision activation.
+
+**Exit criteria:** an external agent can analyze tool telemetry, propose a response projection, and have the operator approve the change as a reversible gateway revision.
+
+### Milestone 15: `v1.0.0` — Enterprise Release Gates & Production Hardening
+
+- [ ] High-availability cloud validation: load-test multi-replica `@chainmcp/gateway` backed by PostgreSQL (`@chainmcp/storage`) and Redis under sustained traffic.
+- [ ] Soak testing: verify zero memory leaks, bounded SQLite/Postgres growth under high-volume `json_create_handle` blob payloads, and clean drain-then-cancel shutdown.
+- [ ] Documentation and verification parity: 100% link-to-test coverage via `pnpm check` and `pnpm docs:check`.
+
+**Exit criteria:** all release gates in `RELEASES.md` are verified under sustained load testing and documented with production runbooks.
+
 ## Deferred and out of scope
 
 The following are recorded in `docs/risk-register.md` with status and
