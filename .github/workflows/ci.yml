@@ -4,6 +4,9 @@ on:
   push:
     branches: [master, staging]
   pull_request:
+  schedule:
+    # Run weekly security audits and regression checks on Mondays at 08:00 UTC (P2-9)
+    - cron: "0 8 * * 1"
 
 permissions:
   contents: read

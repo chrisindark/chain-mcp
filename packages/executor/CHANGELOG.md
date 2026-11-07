@@ -1,5 +1,14 @@
 # @chainmcp/executor
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies
+  - @chainmcp/core@0.4.1
+  - @chainmcp/auth@0.4.1
+  - @chainmcp/compiler@0.4.1
+
 ## 0.4.0
 
 ### Patch Changes

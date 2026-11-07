@@ -12,7 +12,7 @@ Before 1.0, breaking changes are permitted but must be documented prominently.
 
 ## Release status
 
-ChainMcp is **pre-1.0** (version `0.4.0` prepared for publishing). Milestones 0–9 are implemented and verified, and
+ChainMcp is **pre-1.0** (version `0.4.1` prepared for publishing). Milestones 0–9 are implemented and verified, and
 Milestone 10 tooling (supported-version matrix, SBOM, migration and rollback
 documentation, and the signed-release workflow) is in place, but no `1.0.0`
 artifact has been published. The project deliberately withholds 1.0 until the
@@ -44,7 +44,7 @@ Versioning is managed with [Changesets](https://github.com/changesets/changesets
 ## Release checklist
 
 - [ ] Relevant roadmap acceptance criteria are met across all milestones (Milestones 0–9 verified; Milestone 10 gates prepared but release withheld, see [Release status](#release-status); the supported-version matrix is documented, but as a pre-1.0 intended-support document—not a published 1.0 guarantee—until a `1.0.0` artifact ships).
-- [x] Every releasable change has a changeset, and pending changesets are applied (version 0.4.0 with signed provenance).
+- [x] Every releasable change has a changeset, and pending changesets are applied (version 0.4.1 with signed provenance).
 - [x] Root and package versions match (`pnpm version:check`).
 - [x] Changelog and release notes are updated (`CHANGELOG.md`).
 - [x] Documentation, supported version matrix, and migration/rollback notes are complete (`docs/supported-versions.md`, `docs/migration-and-rollback.md`).

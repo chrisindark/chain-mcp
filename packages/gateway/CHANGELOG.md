@@ -1,5 +1,17 @@
 # @chainmcp/gateway
 
+## 0.4.1
+
+### Patch Changes
+
+- Add MCP tool declaration snapshot regression gate (`pnpm snapshot:check`), container build & Trivy scanning workflow, weekly security cron audit, and Dependabot automation.
+- Updated dependencies
+  - @chainmcp/core@0.4.1
+  - @chainmcp/auth@0.4.1
+  - @chainmcp/compiler@0.4.1
+  - @chainmcp/executor@0.4.1
+  - @chainmcp/server@0.4.1
+
 ## 0.4.0
 
 ### Patch Changes

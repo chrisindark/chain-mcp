@@ -1,0 +1,278 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": 1,
+  "description": "Frozen snapshot of ChainMcp tool declarations, schemas, and contract signatures to detect contract drift.",
+  "tools": {
+    "code_first": [
+      {
+        "name": "analyze_text",
+        "description": "Analyzes textual content reporting length, word count, and character counts",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Text to analyze"
+            },
+            "includeWords": {
+              "default": true,
+              "description": "Whether to include word count breakdown",
+              "type": "boolean"
+            }
+          },
+          "required": ["text", "includeWords"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "calculate",
+        "description": "Performs basic mathematical calculations",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string",
+              "enum": ["add", "subtract", "multiply", "divide"],
+              "description": "Mathematical operation to perform"
+            },
+            "a": {
+              "type": "number",
+              "description": "First operand"
+            },
+            "b": {
+              "type": "number",
+              "description": "Second operand"
+            }
+          },
+          "required": ["operation", "a", "b"],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "compiled_petstore": [
+      {
+        "name": "createItem",
+        "description": "Create an item",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "body": {
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "quantity": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000
+                }
+              },
+              "required": ["name", "quantity"],
+              "type": "object",
+              "additionalProperties": false
+            }
+          },
+          "required": ["body"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "getItem",
+        "description": "Read one item",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32,
+              "description": "Item identifier."
+            }
+          },
+          "required": ["id"],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "declarative_http": [
+      {
+        "name": "get_user",
+        "description": "Fetches one user",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "limit": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "userId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": ["userId"],
+          "type": "object"
+        }
+      }
+    ],
+    "json_navigation": [
+      {
+        "name": "json_create_handle",
+        "description": "Store a JSON document server-side and return an opaque result handle. Subsequent navigation calls can pass the handle instead of pasting the full document back inline.",
+        "inputSchema": {
+          "type": "object",
+          "required": ["json"],
+          "properties": {
+            "json": {
+              "description": "Raw JSON string or structured object/array to store"
+            }
+          }
+        }
+      },
+      {
+        "name": "json_filter",
+        "description": "Filter array elements in a JSON document by field value predicates. Pass either the inline `json` document or a `handle` returned by a previous navigation call.",
+        "inputSchema": {
+          "type": "object",
+          "required": ["field", "op"],
+          "properties": {
+            "json": {
+              "description": "Raw JSON string or array to filter. Provide either this or `handle`."
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Opaque result handle from a previous navigation call."
+            },
+            "field": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Field path to test (e.g. 'status' or 'address.city')"
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "eq",
+                "neq",
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "contains",
+                "in",
+                "exists"
+              ],
+              "description": "Comparison operator"
+            },
+            "value": {
+              "description": "Comparison target value"
+            }
+          }
+        }
+      },
+      {
+        "name": "json_inspect_shape",
+        "description": "Inspect the structure, depth, node counts, and key summary of a JSON document without emitting large payloads. Pass either the inline `json` document or a `handle` returned by a previous navigation call.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "json": {
+              "description": "Raw JSON string or structured object/array to inspect. Provide either this or `handle`."
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Opaque result handle from a previous navigation call. Prefer this over `json` for large documents: the model does not need to paste the full payload back."
+            },
+            "maxDepth": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 64,
+              "description": "Maximum traversal depth for shape inspection"
+            },
+            "maxKeys": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 200,
+              "description": "Maximum number of object keys to enumerate"
+            }
+          }
+        }
+      },
+      {
+        "name": "json_paginate",
+        "description": "Paginate array items or object entries in a JSON document with bounded page sizes. Pass either the inline `json` document or a `handle` returned by a previous navigation call.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "json": {
+              "description": "Raw JSON string or array/object to paginate. Provide either this or `handle`."
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Opaque result handle from a previous navigation call."
+            },
+            "offset": {
+              "type": "number",
+              "minimum": 0,
+              "description": "0-based offset into items"
+            },
+            "limit": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 1000,
+              "description": "Number of items per page"
+            },
+            "page": {
+              "type": "number",
+              "minimum": 1,
+              "description": "1-based page number"
+            },
+            "pageSize": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 1000,
+              "description": "Page size when using page-based pagination"
+            }
+          }
+        }
+      },
+      {
+        "name": "json_select_path",
+        "description": "Query and extract targeted fields from a JSON document using bounded JSON path expressions. Pass either the inline `json` document or a `handle` returned by a previous navigation call.",
+        "inputSchema": {
+          "type": "object",
+          "required": ["path"],
+          "properties": {
+            "json": {
+              "description": "Raw JSON string or structured object/array to query. Provide either this or `handle`."
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Opaque result handle from a previous navigation call."
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "description": "JSON path expression (e.g. '$.items[0].name', 'users[*].id', 'books[?(@.price < 20)]')"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "admin_routes": [
+    "GET /health",
+    "GET /api/v1/contracts",
+    "POST /api/v1/tenants/:tenant/contracts/:contract/validate",
+    "POST /api/v1/tenants/:tenant/contracts/:contract/preview",
+    "POST /api/v1/tenants/:tenant/contracts/:contract/publish",
+    "POST /api/v1/tenants/:tenant/contracts/:contract/rollback"
+  ]
+}
