@@ -15,7 +15,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import test from "node:test";
+import { before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -25,6 +25,17 @@ const REPO_SNAPSHOT = join(
   ROOT,
   "snapshots/mcp-tool-declarations.snapshot.json",
 );
+
+before(() => {
+  const distEntry = join(ROOT, "packages/json-navigation/dist/index.js");
+  if (!existsSync(distEntry)) {
+    const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+    const res = spawnSync(pnpm, ["build"], { cwd: ROOT, encoding: "utf8" });
+    if (res.status !== 0) {
+      throw new Error(`Auto-build before snapshot test failed: ${res.stderr}`);
+    }
+  }
+});
 
 function run(args) {
   return spawnSync(process.execPath, [SCRIPT, ...args], {

@@ -24,7 +24,7 @@
     "format:check": "prettier --check .",
     "sbom": "node scripts/generate-sbom.mjs",
     "sbom:check": "node scripts/generate-sbom.mjs --check",
-    "check": "pnpm format:check && pnpm lint && pnpm test:rules && pnpm test:scripts && pnpm docs:check && pnpm build && pnpm typecheck && pnpm test && pnpm snapshot:check && pnpm version:check && pnpm sbom:check",
+    "check": "pnpm format:check && pnpm lint && pnpm test:rules && pnpm build && pnpm test:scripts && pnpm docs:check && pnpm typecheck && pnpm test && pnpm snapshot:check && pnpm version:check && pnpm sbom:check",
     "version:check": "node scripts/sync-version.mjs --check",
     "snapshot:check": "node scripts/check-schema-snapshots.mjs --check",
     "snapshot:update": "node scripts/check-schema-snapshots.mjs --update",
