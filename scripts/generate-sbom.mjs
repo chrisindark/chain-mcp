@@ -31,6 +31,7 @@ const WORKSPACE_PACKAGES = [
   "packages/json-navigation/package.json",
   "packages/rate-limit/package.json",
   "packages/server/package.json",
+  "packages/storage/package.json",
 ];
 
 const checkOnly = process.argv.includes("--check");

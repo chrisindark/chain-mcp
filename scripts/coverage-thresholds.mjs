@@ -42,5 +42,6 @@ export const COVERAGE_THRESHOLDS = {
     },
     "rate-limit": { lines: 74, statements: 74, functions: 94, branches: 70 },
     server: { lines: 84, statements: 84, functions: 91, branches: 79 },
+    storage: { lines: 78, statements: 78, functions: 90, branches: 70 },
   },
 };

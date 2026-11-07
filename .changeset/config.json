@@ -22,7 +22,8 @@
       "@chainmcp/gateway",
       "@chainmcp/json-navigation",
       "@chainmcp/rate-limit",
-      "@chainmcp/server"
+      "@chainmcp/server",
+      "@chainmcp/storage"
     ]
   ],
   "linked": [],

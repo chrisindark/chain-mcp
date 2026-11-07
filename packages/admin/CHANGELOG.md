@@ -1,5 +1,15 @@
 # @chainmcp/admin
 
+## 0.4.0
+
+### Patch Changes
+
+- @chainmcp/auth@0.4.0
+  - @chainmcp/core@0.4.0
+  - @chainmcp/declarative@0.4.0
+  - @chainmcp/executor@0.4.0
+  - @chainmcp/gateway@0.4.0
+
 ## 0.3.1
 
 ### Patch Changes
