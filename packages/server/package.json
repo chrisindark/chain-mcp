@@ -34,7 +34,7 @@
     "@modelcontextprotocol/server": "2.3.1"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.3.1"
+    "@modelcontextprotocol/client": "2.4.0"
   },
   "description": "Model Context Protocol (MCP) server transport adapter supporting stdio and Streamable HTTP with inbound auth.",
   "keywords": [
