@@ -107,8 +107,8 @@ export interface DeclarativeAdminOptions {
   readonly maxRequestBytes?: number;
   /**
    * Descriptor revision storage. Defaults to an in-memory store, which loses
-   * history on restart. Use `FileDescriptorRevisionStore` or a database
-   * adapter for durable revisions.
+   * history on restart. Use `FileDescriptorRevisionStore`, `StorageDescriptorRevisionStore`,
+   * or a database adapter for durable revisions.
    */
   readonly repository?: DescriptorRevisionStore;
   /**

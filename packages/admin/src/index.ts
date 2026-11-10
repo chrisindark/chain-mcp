@@ -20,6 +20,10 @@ export {
   type FileDescriptorRevisionStoreOptions,
 } from "./file-store.js";
 export {
+  StorageDescriptorRevisionStore,
+  type StorageDescriptorRevisionStoreOptions,
+} from "./storage-store.js";
+export {
   InMemoryDescriptorRevisionStore,
   createDescriptorRevisionId,
   descriptorToolsetHash,

@@ -1,6 +1,6 @@
 {
   "name": "@chainmcp/json-navigation",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -30,7 +30,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@chainmcp/core": "workspace:*"
+    "@chainmcp/core": "workspace:*",
+    "@chainmcp/storage": "workspace:*"
   },
   "description": "Resource-bounded JSON exploration, result handles, pagination, and path selection for LLMs in MCP.",
   "keywords": [

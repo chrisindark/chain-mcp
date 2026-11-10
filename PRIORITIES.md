@@ -1,8 +1,8 @@
 # ChainMcp Priorities — Local-First Path to 1.0
 
-**Status:** pre-1.0 (`0.4.1`)
+**Status:** pre-1.0 (`0.5.0`)
 **Baseline:** `pnpm check` green (format, lint, build, typecheck, all workspace tests, SBOM, version sync).
-**Scope:** all workspace packages and capabilities. The 0.4.1 release is published to the public npm registry under the `@chainmcp` scope.
+**Scope:** all workspace packages and capabilities. The 0.5.0 release is published to the public npm registry under the `@chainmcp` scope.
 
 This file replaces the open items that were previously spread across `ROADMAP.md`, the remediation plan, and the risk register. `ROADMAP.md` remains the historical delivery record; this file is the active work queue.
 
@@ -646,6 +646,31 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 - `pnpm -r build`, `pnpm -r typecheck`, and `pnpm --filter @chainmcp/storage test` pass.
 - Key-value stores and blob stores enforce tenant scoping and TTL expiration.
 - SQLite driver successfully initializes in WAL mode without native addon requirements.
+
+---
+
+### M11-2 — Wire `@chainmcp/storage` into runtime packages (`@chainmcp/json-navigation`, `@chainmcp/admin`, `@chainmcp/config`, `@chainmcp/cli`)
+
+**Status: done (2026-11-07).** Connected `@chainmcp/storage` into runtime execution:
+
+- `@chainmcp/json-navigation`: `ResultHandleRegistry` accepts optional `storageDriver` or `blobStore` (`BlobPayloadStore`). Added async persistence methods `storeAsync`, `storeIfLargeAsync`, and `resolveAsync`. Tools (`json_create_handle`, `json_inspect_shape`, `json_select_path`, `json_paginate`, `json_filter`) asynchronously resolve handles from storage and persist server-side handles across restarts. Added test suite in `packages/json-navigation/tests/handles-storage.test.ts`. Zero breaking changes to synchronous in-memory usage.
+- `@chainmcp/admin`: Implemented `StorageDescriptorRevisionStore` extending `InMemoryDescriptorRevisionStore`. Uses `KeyValueStore` (`namespace: "chainmcp_revisions"`) to persist revision history partitioned per contract (`contract:${tenantId}:${contractName}`) with atomic index tracking (`contracts_index`). Added test suite in `packages/admin/tests/storage-store.test.ts` covering restart survival with SQLite WAL mode and DeclarativeAdmin integration.
+- `@chainmcp/config`: Added `StorageConfigSchema` (`driver: "memory" | "sqlite"`, `path?: string`, `busyTimeoutMs?: number`) and `createStorageDriverFromConfig()`. Added `storage` block to `ChainMcpConfigSchema` and `GatewayConfigSchema`. Updated `createHandleRegistryOptionsFromConfig` to forward `storageDriver`.
+- `@chainmcp/cli`: Wired `createStorageDriverFromConfig` and storage driver initialization in `serve`, `dev`, and generated server templates (`templates.ts`). Added `@chainmcp/storage` to `CHAINMCP_PACKAGE_DEPENDENCIES` for `--local-deps` generated projects.
+
+**Do**
+
+- Wire `@chainmcp/storage` into `@chainmcp/json-navigation` result handle registry and navigation tools.
+- Implement `StorageDescriptorRevisionStore` in `@chainmcp/admin` backed by `KeyValueStore`.
+- Add `StorageConfigSchema` and driver instantiation helpers to `@chainmcp/config`.
+- Wire storage initialization in CLI `serve`, `dev`, and generated server templates.
+- Add comprehensive test coverage verifying restart survival in SQLite WAL mode, isolation, and backward compatibility.
+
+**Acceptance**
+
+- `pnpm check` passes with all quality gates green.
+- `pnpm snapshot:check` verifies zero MCP tool declaration or schema drift.
+- Revisions and result handles survive restarts when backed by SQLite WAL storage.
 
 ---
 

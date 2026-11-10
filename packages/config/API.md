@@ -124,6 +124,13 @@ export function createNavigationLimitsFromConfig(
   config: JsonNavigationConfig,
 ): NavigationLimits;
 
+export const StorageConfigSchema: z.ZodObject<...>;
+export type StorageConfig = z.infer<typeof StorageConfigSchema>;
+
+export function createStorageDriverFromConfig(
+  config: StorageConfig,
+): StorageDriver | undefined;
+
 /**
  * Result-handle registry (P1-2). When `jsonNavigation.handles.enabled` is
  * true the caller can `json_create_handle` a large document once and
@@ -134,6 +141,7 @@ export function createNavigationLimitsFromConfig(
  */
 export function createHandleRegistryOptionsFromConfig(
   config: JsonNavigationConfig,
+  storageDriver?: StorageDriver,
 ): HandleRegistryOptions | undefined;
 
 export interface TokenizerSelectionConfig {

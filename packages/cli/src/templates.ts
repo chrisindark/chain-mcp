@@ -13,6 +13,7 @@ export const CHAINMCP_PACKAGE_DEPENDENCIES = [
   "@chainmcp/json-navigation",
   "@chainmcp/rate-limit",
   "@chainmcp/server",
+  "@chainmcp/storage",
 ] as const;
 
 export interface PackageJsonOptions {
@@ -215,6 +216,7 @@ import {
   buildRuntimeOptions,
   createHandleRegistryOptionsFromConfig,
   createNavigationLimitsFromConfig,
+  createStorageDriverFromConfig,
   loadTokenizerFromConfig,
   logRateLimiterStartup,
   parseConfig,
@@ -666,8 +668,13 @@ export async function runServer(options?: RunServerOptions) {
   // Register JSON navigation tools if enabled
   if (config.jsonNavigation.enabled) {
     const limits = createNavigationLimitsFromConfig(config.jsonNavigation);
+    const storageDriver = createStorageDriverFromConfig(config.storage);
+    if (storageDriver) {
+      await storageDriver.init();
+    }
     const handles = createHandleRegistryOptionsFromConfig(
       config.jsonNavigation,
+      storageDriver,
     );
     const navTools = createJsonNavigationTools(limits, handles);
     for (const navTool of navTools) {

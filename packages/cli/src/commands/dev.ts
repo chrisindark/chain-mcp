@@ -9,6 +9,7 @@ import {
   buildRuntimeOptions,
   createHandleRegistryOptionsFromConfig,
   createNavigationLimitsFromConfig,
+  createStorageDriverFromConfig,
   loadTokenizerFromConfig,
   logRateLimiterStartup,
   parseConfig,
@@ -170,8 +171,13 @@ export async function devCommand(options: DevOptions): Promise<DevResult> {
   // 5. Register JSON navigation tools if enabled
   if (config.jsonNavigation.enabled) {
     const limits = createNavigationLimitsFromConfig(config.jsonNavigation);
+    const storageDriver = createStorageDriverFromConfig(config.storage);
+    if (storageDriver) {
+      await storageDriver.init();
+    }
     const handles = createHandleRegistryOptionsFromConfig(
       config.jsonNavigation,
+      storageDriver,
     );
     const navTools = createJsonNavigationTools(limits, handles);
     for (const navTool of navTools) {

@@ -73,6 +73,11 @@ import type {
   NavigationLimits,
 } from "@chainmcp/json-navigation";
 import {
+  MemoryStorageDriver,
+  SqliteStorageDriver,
+  type StorageDriver,
+} from "@chainmcp/storage";
+import {
   TokenizerConfigError,
   createApproximateTokenizer,
   createTokenizerFromConfig,
@@ -506,6 +511,31 @@ export const CacheConfigSchema = z
 
 export type CacheConfig = z.infer<typeof CacheConfigSchema>;
 
+export const StorageConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    driver: z.enum(["memory", "sqlite"]).default("memory"),
+    path: z.string().optional(),
+    busyTimeoutMs: z.number().int().positive().default(5_000),
+  })
+  .strict()
+  .prefault({});
+
+export type StorageConfig = z.infer<typeof StorageConfigSchema>;
+
+export function createStorageDriverFromConfig(
+  config: StorageConfig,
+): StorageDriver | undefined {
+  if (!config.enabled) return undefined;
+  if (config.driver === "sqlite") {
+    return new SqliteStorageDriver({
+      ...(config.path ? { path: config.path } : {}),
+      busyTimeoutMs: config.busyTimeoutMs,
+    });
+  }
+  return new MemoryStorageDriver();
+}
+
 export const TokenMetricsConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
@@ -646,6 +676,7 @@ export const ChainMcpConfigSchema = z
     security: SecurityConfigSchema,
     rateLimit: RateLimitConfigSchema,
     cache: CacheConfigSchema,
+    storage: StorageConfigSchema,
     tokenMetrics: TokenMetricsConfigSchema,
     projection: ProjectionConfigSchema,
     auth: AuthConfigSchema,
@@ -751,6 +782,7 @@ export const GatewayConfigSchema = z
     security: SecurityConfigSchema,
     rateLimit: RateLimitConfigSchema,
     cache: CacheConfigSchema,
+    storage: StorageConfigSchema,
     tokenMetrics: TokenMetricsConfigSchema,
     projection: ProjectionConfigSchema,
     auth: AuthConfigSchema,
@@ -1190,9 +1222,11 @@ export function createNavigationLimitsFromConfig(
  */
 export function createHandleRegistryOptionsFromConfig(
   config: JsonNavigationConfig,
+  storageDriver?: StorageDriver,
 ): HandleRegistryOptions | undefined {
   if (!config.handles.enabled) return undefined;
   return {
+    ...(storageDriver !== undefined ? { storageDriver } : {}),
     maxPerPrincipal: config.handles.maxPerPrincipal,
     maxPerTenant: config.handles.maxPerTenant,
     maxTotal: config.handles.maxTotal,
