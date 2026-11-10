@@ -1,4 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
+import type { BlobPayloadStore, StorageDriver } from "@chainmcp/storage";
 import { JsonNavigationError } from "./limits.js";
 
 /**
@@ -56,6 +57,12 @@ export class ResultHandleTooLargeError extends JsonNavigationError {
 }
 
 export interface HandleRegistryOptions {
+  /** Optional persistent blob payload store from @chainmcp/storage. */
+  blobStore?: BlobPayloadStore | undefined;
+  /** Optional storage driver from @chainmcp/storage. When provided, getBlobPayloadStore("chainmcp_json_handles") is used. */
+  storageDriver?: StorageDriver | undefined;
+  /** Optional initial handle counter seed. */
+  initialCounter?: number | undefined;
   /** Per-principal LRU capacity (handles). Defaults to 50. */
   maxPerPrincipal?: number | undefined;
   /** Per-tenant entry capacity (handles). Defaults to 250. */
@@ -106,6 +113,7 @@ export class ResultHandleRegistry {
   readonly minBytes: number;
   private readonly secret: string;
   private readonly nowFn: () => number;
+  private readonly blobStore: BlobPayloadStore | undefined;
   // Map iteration order is insertion order; LRU is maintained by
   // delete+set on each access.
   private readonly entries = new Map<string, StoredEntry & PrincipalScope>();
@@ -133,6 +141,13 @@ export class ResultHandleRegistry {
     this.minBytes = Math.max(0, options?.minBytes ?? 0);
     this.secret = options?.secret ?? randomBytes(32).toString("base64url");
     this.nowFn = options?.now ?? (() => Date.now());
+    this.counter =
+      options?.initialCounter ?? Math.floor(Date.now() / 1000) * 1000;
+    this.blobStore =
+      options?.blobStore ??
+      (options?.storageDriver
+        ? options.storageDriver.getBlobPayloadStore("chainmcp_json_handles")
+        : undefined);
   }
 
   /** Total stored handles. */
@@ -166,7 +181,18 @@ export class ResultHandleRegistry {
     if (bytes > this.maxBytes) {
       throw new ResultHandleTooLargeError(bytes, this.maxBytes);
     }
-    return this.put(document, bytes, key);
+    return this.putSync(document, bytes, key);
+  }
+
+  /**
+   * Asynchronously store a document and ensure it is persisted to storage.
+   */
+  async storeAsync(document: unknown, key: PrincipalScope): Promise<string> {
+    const bytes = this.measureBytes(document);
+    if (bytes > this.maxBytes) {
+      throw new ResultHandleTooLargeError(bytes, this.maxBytes);
+    }
+    return this.putAsync(document, bytes, key);
   }
 
   /**
@@ -179,36 +205,147 @@ export class ResultHandleRegistry {
     if (bytes > this.maxBytes) {
       throw new ResultHandleTooLargeError(bytes, this.maxBytes);
     }
-    return this.put(document, bytes, key);
+    return this.putSync(document, bytes, key);
+  }
+
+  /**
+   * Asynchronously store a document only when it is at least `minBytes`.
+   */
+  async storeIfLargeAsync(
+    document: unknown,
+    key: PrincipalScope,
+  ): Promise<string | null> {
+    const bytes = this.measureBytes(document);
+    if (bytes < this.minBytes) return null;
+    if (bytes > this.maxBytes) {
+      throw new ResultHandleTooLargeError(bytes, this.maxBytes);
+    }
+    return this.putAsync(document, bytes, key);
   }
 
   /**
    * Resolve a handle to its document and refresh LRU recency.
    * Throws `ResultHandleExpiredError` for unknown, expired, tampered,
    * cross-tenant, or cross-principal handles.
+   *
+   * Resolves from memory LRU cache when present; falls back to persistent
+   * BlobPayloadStore asynchronously on cache miss.
    */
-  resolve(handle: string, key: PrincipalScope): unknown {
+  resolve(handle: string, key: PrincipalScope): unknown | Promise<unknown> {
     const entry = this.entries.get(handle);
+    if (entry) {
+      if (
+        entry.tenantId !== key.tenantId ||
+        entry.principalId !== key.principalId ||
+        !this.verifyTag(handle, entry)
+      ) {
+        throw new ResultHandleExpiredError();
+      }
+      const now = this.nowFn();
+      if (now > entry.expiresAt) {
+        this.delete(handle);
+        throw new ResultHandleExpiredError();
+      }
+      // LRU refresh: move to the most-recently-used end.
+      this.entries.delete(handle);
+      this.entries.set(handle, { ...entry, lastUsedAt: now });
+      return entry.document;
+    }
+
+    if (!this.blobStore) {
+      throw new ResultHandleExpiredError();
+    }
+
+    return this.resolveFromStore(handle, key);
+  }
+
+  /**
+   * Explicit asynchronous handle resolution against in-memory cache and persistent store.
+   */
+  async resolveAsync(handle: string, key: PrincipalScope): Promise<unknown> {
+    const entry = this.entries.get(handle);
+    if (entry) {
+      if (
+        entry.tenantId !== key.tenantId ||
+        entry.principalId !== key.principalId ||
+        !this.verifyTag(handle, entry)
+      ) {
+        throw new ResultHandleExpiredError();
+      }
+      const now = this.nowFn();
+      if (now > entry.expiresAt) {
+        this.delete(handle);
+        throw new ResultHandleExpiredError();
+      }
+      this.entries.delete(handle);
+      this.entries.set(handle, { ...entry, lastUsedAt: now });
+      return entry.document;
+    }
+
+    if (!this.blobStore) {
+      throw new ResultHandleExpiredError();
+    }
+
+    return this.resolveFromStore(handle, key);
+  }
+
+  private async resolveFromStore(
+    handle: string,
+    key: PrincipalScope,
+  ): Promise<unknown> {
     if (
-      !entry ||
-      entry.tenantId !== key.tenantId ||
-      entry.principalId !== key.principalId ||
-      !this.verifyTag(handle, entry)
+      !this.verifyTag(handle, {
+        tenantId: key.tenantId,
+        principalId: key.principalId,
+      })
     ) {
       throw new ResultHandleExpiredError();
     }
-    const now = this.nowFn();
-    if (now > entry.expiresAt) {
-      this.delete(handle);
+
+    const payload = await this.blobStore!.get(handle, {
+      tenantId: key.tenantId,
+      principalId: key.principalId,
+    });
+    if (!payload) {
       throw new ResultHandleExpiredError();
     }
-    // LRU refresh: move to the most-recently-used end.
-    this.entries.delete(handle);
-    this.entries.set(handle, { ...entry, lastUsedAt: now });
-    return entry.document;
+
+    const now = this.nowFn();
+    if (payload.expiresAt !== undefined && now > payload.expiresAt) {
+      await this.blobStore!.delete(handle, {
+        tenantId: key.tenantId,
+        principalId: key.principalId,
+      });
+      throw new ResultHandleExpiredError();
+    }
+
+    let document: unknown;
+    try {
+      document = JSON.parse(payload.data);
+    } catch {
+      throw new ResultHandleExpiredError();
+    }
+
+    // Cache in memory LRU
+    this.entries.set(handle, {
+      document,
+      bytes: payload.byteSize,
+      createdAt: payload.createdAt,
+      expiresAt: payload.expiresAt ?? now + this.ttlMs,
+      lastUsedAt: now,
+      tenantId: key.tenantId,
+      principalId: key.principalId,
+    });
+    this.totalBytes += payload.byteSize;
+
+    return document;
   }
 
-  private put(document: unknown, bytes: number, key: PrincipalScope): string {
+  private putSync(
+    document: unknown,
+    bytes: number,
+    key: PrincipalScope,
+  ): string {
     const handle = this.mintHandle(key);
     const now = this.nowFn();
     this.entries.set(handle, {
@@ -228,6 +365,59 @@ export class ResultHandleRegistry {
       (this.tenantCounts.get(key.tenantId) ?? 0) + 1,
     );
     this.evict(key, now);
+
+    if (this.blobStore) {
+      const serialized = JSON.stringify(document);
+      void this.blobStore
+        .put(handle, serialized, {
+          tenantId: key.tenantId,
+          principalId: key.principalId,
+          ttlMs: this.ttlMs,
+          maxByteSize: this.maxBytes,
+        })
+        .catch(() => {
+          // Non-blocking write in synchronous mode
+        });
+    }
+
+    return handle;
+  }
+
+  private async putAsync(
+    document: unknown,
+    bytes: number,
+    key: PrincipalScope,
+  ): Promise<string> {
+    const handle = this.mintHandle(key);
+    const now = this.nowFn();
+    this.entries.set(handle, {
+      document,
+      bytes,
+      createdAt: now,
+      expiresAt: now + this.ttlMs,
+      lastUsedAt: now,
+      tenantId: key.tenantId,
+      principalId: key.principalId,
+    });
+    this.totalBytes += bytes;
+    const pKey = this.scopedPrincipal(key);
+    this.principalCounts.set(pKey, (this.principalCounts.get(pKey) ?? 0) + 1);
+    this.tenantCounts.set(
+      key.tenantId,
+      (this.tenantCounts.get(key.tenantId) ?? 0) + 1,
+    );
+    this.evict(key, now);
+
+    if (this.blobStore) {
+      const serialized = JSON.stringify(document);
+      await this.blobStore.put(handle, serialized, {
+        tenantId: key.tenantId,
+        principalId: key.principalId,
+        ttlMs: this.ttlMs,
+        maxByteSize: this.maxBytes,
+      });
+    }
+
     return handle;
   }
 

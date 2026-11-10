@@ -13,6 +13,7 @@ import {
   createLoggerFromConfig,
   createNavigationLimitsFromConfig,
   createRateLimiterFromConfig,
+  createStorageDriverFromConfig,
   createTokenizerFromConfig,
   createUpstreamCredentialProviderFromConfig,
   loadTokenizerFromConfig,
@@ -23,6 +24,7 @@ import {
   resolveLogLevel,
   safeParseConfig,
   safeParseGatewayConfig,
+  StorageConfigSchema,
   TokenizerConfigError,
   unregisterTokenizerFactory,
 } from "../src/index.js";
@@ -38,6 +40,7 @@ import {
   type ToolDefinition,
 } from "@chainmcp/core";
 import { RedisCacheStore, type RedisCacheClient } from "@chainmcp/cache-redis";
+import { MemoryStorageDriver, SqliteStorageDriver } from "@chainmcp/storage";
 import {
   MemorySink,
   OpenTelemetryMetricsSink,
@@ -2060,6 +2063,60 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
       expect(contract?.destination.allowedHosts).toEqual([
         "internal.service.local",
       ]);
+    });
+
+    it("parses storage config and creates storage drivers", async () => {
+      expect(StorageConfigSchema.parse({})).toEqual({
+        enabled: false,
+        driver: "memory",
+        busyTimeoutMs: 5_000,
+      });
+
+      const defaultCfg = parseConfig({
+        version: 1,
+        name: "default-storage",
+      });
+      expect(defaultCfg.storage).toEqual({
+        enabled: false,
+        driver: "memory",
+        busyTimeoutMs: 5_000,
+      });
+      expect(createStorageDriverFromConfig(defaultCfg.storage)).toBeUndefined();
+
+      const memoryCfg = parseConfig({
+        version: 1,
+        name: "memory-storage",
+        storage: { enabled: true, driver: "memory" },
+      });
+      const memDriver = createStorageDriverFromConfig(memoryCfg.storage);
+      expect(memDriver).toBeInstanceOf(MemoryStorageDriver);
+
+      const sqliteCfg = parseConfig({
+        version: 1,
+        name: "sqlite-storage",
+        storage: {
+          enabled: true,
+          driver: "sqlite",
+          path: ":memory:",
+          busyTimeoutMs: 2_500,
+        },
+      });
+      const sqliteDriver = createStorageDriverFromConfig(sqliteCfg.storage);
+      expect(sqliteDriver).toBeInstanceOf(SqliteStorageDriver);
+    });
+
+    it("wires storageDriver into createHandleRegistryOptionsFromConfig", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "storage-handles",
+        jsonNavigation: { handles: { enabled: true } },
+      });
+      const driver = new MemoryStorageDriver();
+      const options = createHandleRegistryOptionsFromConfig(
+        config.jsonNavigation,
+        driver,
+      );
+      expect(options?.storageDriver).toBe(driver);
     });
   });
 });

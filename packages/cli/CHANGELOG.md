@@ -1,5 +1,31 @@
 # @chainmcp/cli
 
+## 0.5.0
+
+### Minor Changes
+
+- Wire `@chainmcp/storage` persistence into runtime and administration packages:
+
+  - `@chainmcp/json-navigation`: `ResultHandleRegistry` accepts optional `storageDriver` or `blobStore` (`BlobPayloadStore`). Added async persistence methods `storeAsync`, `storeIfLargeAsync`, and `resolveAsync`. Tools (`json_create_handle`, `json_inspect_shape`, `json_select_path`, `json_paginate`, `json_filter`) asynchronously resolve handles from storage and persist server-side handles across restarts. Zero breaking changes to synchronous in-memory usage.
+  - `@chainmcp/admin`: Implemented `StorageDescriptorRevisionStore` extending `InMemoryDescriptorRevisionStore`. Uses `KeyValueStore` (`namespace: "chainmcp_revisions"`) to persist revision history partitioned per contract (`contract:${tenantId}:${contractName}`) with atomic index tracking (`contracts_index`).
+  - `@chainmcp/config`: Added `StorageConfigSchema` (`driver: "memory" | "sqlite"`, `path?: string`, `busyTimeoutMs?: number`) and `createStorageDriverFromConfig()`. Added `storage` block to `ChainMcpConfigSchema` and `GatewayConfigSchema`. Updated `createHandleRegistryOptionsFromConfig` to forward `storageDriver`.
+  - `@chainmcp/cli`: Wired `createStorageDriverFromConfig` and storage driver initialization in `serve`, `dev`, and generated server templates (`templates.ts`). Added `@chainmcp/storage` to `CHAINMCP_PACKAGE_DEPENDENCIES` for `--local-deps` generated projects.
+
+### Patch Changes
+
+- Updated dependencies
+  - @chainmcp/json-navigation@0.5.0
+  - @chainmcp/admin@0.5.0
+  - @chainmcp/config@0.5.0
+  - @chainmcp/analytics@0.5.0
+  - @chainmcp/auth@0.5.0
+  - @chainmcp/compiler@0.5.0
+  - @chainmcp/core@0.5.0
+  - @chainmcp/executor@0.5.0
+  - @chainmcp/gateway@0.5.0
+  - @chainmcp/rate-limit@0.5.0
+  - @chainmcp/server@0.5.0
+
 ## 0.4.1
 
 ### Patch Changes

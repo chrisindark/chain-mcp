@@ -51,6 +51,9 @@ export class ResultHandleTooLargeError extends JsonNavigationError {
 }
 
 export interface HandleRegistryOptions {
+  blobStore?: BlobPayloadStore;
+  storageDriver?: StorageDriver;
+  initialCounter?: number;
   maxPerPrincipal?: number; // default 50
   maxPerTenant?: number; // default 250
   maxTotal?: number; // default 1,000
@@ -71,14 +74,26 @@ export class ResultHandleRegistry {
     document: unknown,
     key: { tenantId: string; principalId: string },
   ): string;
+  storeAsync(
+    document: unknown,
+    key: { tenantId: string; principalId: string },
+  ): Promise<string>;
   storeIfLarge(
     document: unknown,
     key: { tenantId: string; principalId: string },
   ): string | null;
+  storeIfLargeAsync(
+    document: unknown,
+    key: { tenantId: string; principalId: string },
+  ): Promise<string | null>;
   resolve(
     handle: string,
     key: { tenantId: string; principalId: string },
-  ): unknown;
+  ): unknown | Promise<unknown>;
+  resolveAsync(
+    handle: string,
+    key: { tenantId: string; principalId: string },
+  ): Promise<unknown>;
 }
 ```
 

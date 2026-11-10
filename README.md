@@ -26,7 +26,7 @@ flowchart LR
 
 ## Quick Start (npm Registry)
 
-ChainMcp is published to the public npm registry under the `@chainmcp` scope (`0.4.1`).
+ChainMcp is published to the public npm registry under the `@chainmcp` scope (`0.5.0`).
 
 ### 1. Initialize a Project from an OpenAPI Spec
 
@@ -158,7 +158,7 @@ These are initial architectural choices and may change through documented archit
 
 ## Project status
 
-ChainMcp is pre-1.0 (currently version `0.4.1`). The release gates recorded in `RELEASES.md` are not yet complete, including long-running and production-traffic validation. Do not treat this repository as a 1.0 release.
+ChainMcp is pre-1.0 (currently version `0.5.0`). The release gates recorded in `RELEASES.md` are not yet complete, including long-running and production-traffic validation. Do not treat this repository as a 1.0 release.
 
 The repository contains 16 workspace packages:
 

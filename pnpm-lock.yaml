@@ -129,6 +129,9 @@ importers:
       "@chainmcp/gateway":
         specifier: workspace:*
         version: link:../gateway
+      "@chainmcp/storage":
+        specifier: workspace:*
+        version: link:../storage
       zod:
         specifier: ^4.1.12
         version: 4.6.7
@@ -238,6 +241,9 @@ importers:
       "@chainmcp/rate-limit":
         specifier: workspace:*
         version: link:../rate-limit
+      "@chainmcp/storage":
+        specifier: workspace:*
+        version: link:../storage
       zod:
         specifier: ^4.1.12
         version: 4.6.7
@@ -305,6 +311,9 @@ importers:
       "@chainmcp/core":
         specifier: workspace:*
         version: link:../core
+      "@chainmcp/storage":
+        specifier: workspace:*
+        version: link:../storage
 
   packages/rate-limit:
     dependencies:

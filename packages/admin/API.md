@@ -195,6 +195,25 @@ export class FileDescriptorRevisionStore implements DescriptorRevisionStore {
   readonly path: string;
 }
 
+export class StorageDescriptorRevisionStore implements DescriptorRevisionStore {
+  static open(
+    driverOrStoreOrOptions:
+      | StorageDriver
+      | KeyValueStore<readonly StoredDescriptorRevision[]>
+      | StorageDescriptorRevisionStoreOptions,
+    options?: DescriptorStoreOptions,
+  ): Promise<StorageDescriptorRevisionStore>;
+  readonly driver?: StorageDriver;
+  readonly kvStore: KeyValueStore<readonly StoredDescriptorRevision[]>;
+  close(): Promise<void>;
+}
+
+export interface StorageDescriptorRevisionStoreOptions extends DescriptorStoreOptions {
+  readonly driver?: StorageDriver;
+  readonly kvStore?: KeyValueStore<readonly StoredDescriptorRevision[]>;
+  readonly namespace?: string; // default "chainmcp_revisions"
+}
+
 export function createDescriptorRevisionId(
   tenantId: string,
   contractName: string,

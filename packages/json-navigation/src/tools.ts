@@ -38,13 +38,13 @@ function scopeOf(context: ToolContext): PrincipalScope {
  * the inline `json` argument. When both are absent the inline parse
  * throws the same error as before.
  */
-function resolveDocument(
+async function resolveDocument(
   input: { json?: unknown; handle?: string },
   context: ToolContext,
   registry: ResultHandleRegistry,
-): unknown {
+): Promise<unknown> {
   if (input.handle !== undefined) {
-    return registry.resolve(input.handle, scopeOf(context));
+    return await registry.resolveAsync(input.handle, scopeOf(context));
   }
   return parseJsonInput(input.json);
 }
@@ -100,7 +100,7 @@ export function createJsonNavigationTools(
     },
     operation: {},
     execute: async (input, context) => {
-      const data = resolveDocument(input, context, handles);
+      const data = await resolveDocument(input, context, handles);
       return inspectShape(data, {
         ...limits,
         ...(input.maxDepth !== undefined ? { maxDepth: input.maxDepth } : {}),
@@ -139,7 +139,7 @@ export function createJsonNavigationTools(
     },
     operation: {},
     execute: async (input, context) => {
-      const data = resolveDocument(input, context, handles);
+      const data = await resolveDocument(input, context, handles);
       return selectPath(data, input.path, limits);
     },
   };
@@ -196,7 +196,7 @@ export function createJsonNavigationTools(
     },
     operation: {},
     execute: async (input, context) => {
-      const data = resolveDocument(input, context, handles);
+      const data = await resolveDocument(input, context, handles);
       return paginate(data, {
         ...limits,
         ...(input.offset !== undefined ? { offset: input.offset } : {}),
@@ -260,7 +260,7 @@ export function createJsonNavigationTools(
     },
     operation: {},
     execute: async (input, context) => {
-      const data = resolveDocument(input, context, handles);
+      const data = await resolveDocument(input, context, handles);
       return filterData(
         data,
         {
@@ -292,7 +292,7 @@ export function createJsonNavigationTools(
     operation: {},
     execute: async (input, context) => {
       const data = parseJsonInput(input.json);
-      const handle = handles.store(data, scopeOf(context));
+      const handle = await handles.storeAsync(data, scopeOf(context));
       return { handle, bytes: handles.measureBytes(data) };
     },
   };
