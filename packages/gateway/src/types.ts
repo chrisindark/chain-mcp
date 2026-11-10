@@ -63,11 +63,52 @@ export interface PublishContractOptions {
   readonly autoActivate?: boolean | undefined;
 }
 
+export type ProxyTransportType = "http" | "stdio" | "custom";
+
+export interface ProxyDestinationConfig {
+  /** Transport mode: streamable HTTP, subprocess stdio, or custom transport. */
+  readonly transport: ProxyTransportType;
+  /** For HTTP: target MCP URL (e.g. http://localhost:8000/mcp). */
+  readonly url?: string | undefined;
+  /** For Stdio: command executable (e.g. "python", "uvx", "node"). */
+  readonly command?: string | undefined;
+  /** For Stdio: arguments passed to command. */
+  readonly args?: readonly string[] | undefined;
+  /** For Stdio: environment variables for child process. */
+  readonly env?: Readonly<Record<string, string>> | undefined;
+  /** For Stdio: working directory. */
+  readonly cwd?: string | undefined;
+  /** For HTTP: additional request headers (e.g. Authorization, X-API-Key). */
+  readonly headers?: Readonly<Record<string, string>> | undefined;
+  /** Optional custom client transport (e.g. InMemoryTransport for testing). */
+  readonly customTransport?: unknown | undefined;
+  /** Optional prefix added to tool names (e.g. "github_" -> "github_list_repos"). */
+  readonly toolPrefix?: string | undefined;
+  /**
+   * Tool caching eligibility. Set to `true` to make all tools cache-eligible,
+   * or provide an array of specific tool names that should be cached.
+   * Default is false (mutations and default proxy calls are not cached).
+   */
+  readonly cacheEligible?: boolean | readonly string[] | undefined;
+}
+
+export interface PublishProxyContractOptions {
+  readonly tenantId: string;
+  readonly contractName: string;
+  readonly proxy: ProxyDestinationConfig;
+  readonly destinationPolicy?: Partial<ContractDestinationPolicy> | undefined;
+  readonly authConfig?: ContractAuthConfig | undefined;
+  readonly limits?: ContractLimits | undefined;
+  readonly metadata?: Readonly<Record<string, unknown>> | undefined;
+  readonly autoActivate?: boolean | undefined;
+}
+
 export type GatewayAuditEventType =
   | "contract_published"
   | "contract_activated"
   | "contract_disabled"
   | "contract_rolled_back"
+  | "proxy_connected"
   | "tenant_resolution_failed";
 
 export interface GatewayAuditEvent {

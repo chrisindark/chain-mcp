@@ -498,18 +498,18 @@ Introduce a dedicated `@chainmcp/storage` workspace package graduating ChainMcp 
 
 **Exit criteria:** `@chainmcp/storage` supports memory and zero-native-addon SQLite WAL drivers, persists and verifies result handles across process restarts, and passes all unit and tenant-isolation tests.
 
-### Milestone 12: `v0.5.0` — Universal MCP Telemetry & Active Proxy Engine
+### Milestone 12: `v0.6.0` — Universal MCP Telemetry & Active Proxy Engine
 
 Expand `@chainmcp/analytics` and `@chainmcp/gateway` to capture comprehensive telemetry and enforce governance across native ChainMcp servers and external third-party MCP servers (e.g. Python FastMCP, Go).
 
-- [ ] Implement a lightweight OTLP/HTTP ingestion sink (`/v1/traces`, `/v1/metrics`) with GenAI/MCP span-to-metric derivation.
-- [ ] Implement Active MCP-to-MCP Proxy Mode in `@chainmcp/gateway` wrapping external `stdio` and Streamable HTTP MCP servers with ChainMcp's cache, rate limiters, and token budgets.
-- [ ] Maintain sub-5ms synchronous in-memory policy enforcement while offloading telemetry writes asynchronously to `@chainmcp/storage`.
-- [ ] Inject W3C `traceparent` context into `params._meta` on proxy requests to stitch outer gateway metrics and inner tool execution into unified traces.
+- [x] Implement a lightweight OTLP/HTTP ingestion sink (`/v1/traces`, `/v1/metrics`) with GenAI/MCP span-to-metric derivation.
+- [x] Implement Active MCP-to-MCP Proxy Mode in `@chainmcp/gateway` wrapping external `stdio` and Streamable HTTP MCP servers with ChainMcp's cache, rate limiters, and token budgets.
+- [x] Maintain sub-5ms synchronous in-memory policy enforcement while offloading telemetry writes asynchronously to `@chainmcp/storage`.
+- [x] Inject W3C `traceparent` context into `params._meta` on proxy requests to stitch outer gateway metrics and inner tool execution into unified traces.
 
 **Exit criteria:** an external FastMCP or stdio server can be proxied through ChainMcp with automated token budgeting, cache hit/miss accounting, rate limiting, and correlated OTLP traces.
 
-### Milestone 13: `v0.6.0` — ChainMcp Web Studio (`chainmcp studio`)
+### Milestone 13: `v0.7.0` — ChainMcp Web Studio (`chainmcp studio`)
 
 Deliver a visual local-first web studio built atop `@chainmcp/admin` and `@chainmcp/storage` for tool curation, payload optimization, and observability.
 
@@ -521,7 +521,7 @@ Deliver a visual local-first web studio built atop `@chainmcp/admin` and `@chain
 
 **Exit criteria:** `chainmcp studio` launches a local zero-dependency UI displaying live invocation metrics from SQLite WAL, allowing interactive field projection testing with token savings visualization.
 
-### Milestone 14: `v0.7.0` — Hybrid Lifecycle, Marketplace Meta-MCP & Agent Self-Improvement
+### Milestone 14: `v0.8.0` — Hybrid Lifecycle, Marketplace Meta-MCP & Agent Self-Improvement
 
 Unify dynamic gateway iteration with standalone server exports while enabling agent-assisted tool optimization with human-in-the-loop review.
 

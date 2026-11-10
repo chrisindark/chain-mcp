@@ -285,7 +285,8 @@ describe("SecretStore and EncryptedSecretStore", () => {
     const raw = (await rawStore.get("token"))!;
     const parts = raw.split(":");
     // Tamper with ciphertext hex (parts[4])
-    const tamperedCipher = "00" + parts[4]!.slice(2);
+    const tamperedPrefix = parts[4]!.startsWith("00") ? "ff" : "00";
+    const tamperedCipher = tamperedPrefix + parts[4]!.slice(2);
     parts[4] = tamperedCipher;
     await rawStore.set("token", parts.join(":"));
 

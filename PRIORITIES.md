@@ -1,8 +1,8 @@
 # ChainMcp Priorities — Local-First Path to 1.0
 
-**Status:** pre-1.0 (`0.5.0`)
+**Status:** pre-1.0 (`0.6.0`)
 **Baseline:** `pnpm check` green (format, lint, build, typecheck, all workspace tests, SBOM, version sync).
-**Scope:** all workspace packages and capabilities. The 0.5.0 release is published to the public npm registry under the `@chainmcp` scope.
+**Scope:** all workspace packages and capabilities. The 0.6.0 release is published to the public npm registry under the `@chainmcp` scope.
 
 This file replaces the open items that were previously spread across `ROADMAP.md`, the remediation plan, and the risk register. `ROADMAP.md` remains the historical delivery record; this file is the active work queue.
 
@@ -671,6 +671,153 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 - `pnpm check` passes with all quality gates green.
 - `pnpm snapshot:check` verifies zero MCP tool declaration or schema drift.
 - Revisions and result handles survive restarts when backed by SQLite WAL storage.
+
+---
+
+## Milestone 12 — Universal MCP Telemetry & Active Proxy Engine
+
+### M12-1 — Lightweight OTLP/HTTP ingestion sink with GenAI/MCP span-to-metric derivation
+
+**Status: done (2026-11-10).** Implemented universal OpenTelemetry protocol over HTTP (OTLP/HTTP) ingestion sink in `@chainmcp/analytics` per ADR 0032. Supports standard OTLP/JSON payloads on `POST /v1/traces` and `POST /v1/metrics`. Implements GenAI semantic convention mapping (`gen_ai.usage.*`, `gen_ai.request.model`) and MCP conventions (`tool.name`, `mcp.tool_name`, `outcome`, `tenant.id`) into ChainMcp runtime events (`chainmcp.tool.invocations`, `chainmcp.tool.duration`, `chainmcp.tool.tokens`). Offloads `TelemetryEvent`s asynchronously to `@chainmcp/storage` (`TelemetryRingBuffer`) in WAL mode or memory while delivering synchronous metrics in <5ms. Mountable onto `@chainmcp/server` via `HttpServeOptions.otlpHandler` and configurable via `AnalyticsConfigSchema.openTelemetry.ingestion` with `createOtlpIngestionSinkFromConfig()`. Added unit and HTTP integration tests in `packages/analytics/tests/otlp.test.ts` and `packages/server/tests/otlp-server.test.ts`. Additive.
+
+**Do**
+
+- Implement OTLP JSON parser and types in `packages/analytics/src/otlp-types.ts` with prototype pollution protection.
+- Implement GenAI and MCP span-to-metric derivation in `packages/analytics/src/span-derivation.ts`.
+- Implement `OtlpIngestionSink` and `createOtlpHttpHandler` in `packages/analytics/src/otlp-sink.ts` with byte caps and error classification.
+- Support asynchronous non-blocking persistence to `TelemetryRingBuffer` (`@chainmcp/storage`).
+- Add `otlpHandler` option to `HttpServeOptions` in `@chainmcp/server`.
+- Add `openTelemetry.ingestion` schema and `createOtlpIngestionSinkFromConfig` to `@chainmcp/config`.
+- Add positive, negative (method, media type, size limit, malformed JSON, auth), and storage persistence tests.
+
+**Acceptance**
+
+- `POST /v1/traces` and `POST /v1/metrics` accept standard OTLP/JSON payloads and return 200 OK.
+- Spans with GenAI token attributes derive token counts and durations.
+- Telemetry events persist into SQLite WAL and Memory storage drivers without blocking HTTP latency.
+- Non-POST requests return 405 Method Not Allowed; non-JSON returns 415; oversized payloads return 413; malformed JSON returns 400.
+
+---
+
+### M12-2 — Active MCP-to-MCP Proxy Mode with governance and W3C traceparent propagation
+
+**Status: done (2026-11-11).** Implemented Active MCP-to-MCP Proxy Mode in `@chainmcp/gateway` per ADR 0033. Connects to external `stdio`, Streamable HTTP, and in-memory MCP servers via `McpProxyAdapter` and `DynamicGateway.publishProxyContract()`. Discovers external tools dynamically via `tools/list` and exposes them with optional `toolPrefix`, tenant ownership stamps, and revision tracking. Wraps each tool in ChainMcp's multi-tenant runtime governance (inbound scope authorization via `@chainmcp/auth`, token-bucket rate limiting via `@chainmcp/rate-limit`, partitioned hashed caching for `cacheEligible` tools with strict no-cached-mutations invariant, and token budgeting/projection). Injects W3C `traceparent` (`00-{traceId}-{spanId}-{flags}`) and correlation attributes (`tenant.id`, `principal.id`, `request.id`) into `params._meta` on upstream tool invocations, allowing outer gateway spans and inner external tool traces to stitch seamlessly into the `/v1/traces` sink (ADR 0032). Enforces SSRF destination policy allowlists on proxy URLs. Added `gateway.close()` to cleanly shut down proxy client transports. Authored 15 tests in `packages/gateway/tests/proxy.test.ts`. Additive.
+
+**Do**
+
+- Implement `generateTraceparent`, `unwrapCallToolResult`, and `McpProxyAdapter` in `packages/gateway/src/proxy.ts`.
+- Support `stdio` (via `@modelcontextprotocol/client/stdio`), Streamable HTTP (`StreamableHTTPClientTransport`), and custom transports.
+- Implement `publishProxyContract()` in `DynamicGateway` with SSRF destination policy validation and tool collision auditing.
+- Wrap external tools with ChainMcp runtime caching, rate limiting, and scope authorization.
+- Inject W3C `traceparent` and correlation metadata into `params._meta`.
+- Add `gateway.close()` for graceful shutdown of external proxy client connections.
+- Add comprehensive test suite in `packages/gateway/tests/proxy.test.ts`.
+
+**Acceptance**
+
+- External MCP tools are discovered and published as an active contract revision.
+- Calling external tools passes inputs, unwraps results, and injects valid W3C `traceparent` and metadata in `params._meta`.
+- Inbound scope authorization rejects unauthorized callers with `AUTH_FORBIDDEN` before reaching upstream.
+- Rate limiter rejects exceeded quotas before reaching upstream.
+- Hashed cache serves cache-eligible queries without calling upstream, while uncached tools/mutations execute upstream every time.
+- Upstream HTTP URLs violating `destinationPolicy.allowedHosts` are rejected with `DESTINATION_INVALID`.
+- `gateway.close()` terminates all managed proxy clients cleanly.
+
+---
+
+## Milestone 13 — ChainMcp Web Studio (`chainmcp studio`)
+
+### M13-1 — Web Studio foundation, zero-dependency static server & embedded admin app (`chainmcp studio`)
+
+**Status: ready to start.** Build a lightweight, local-first visual Web Studio server command `chainmcp studio` atop `@chainmcp/admin` and `@chainmcp/storage`. Serves an embedded, zero-external-CDN frontend UI asset bundle over HTTP with secure loopback defaults, token authentication, and integration with the active configuration (`chainmcp.config.yaml` / `gateway.config.yaml`).
+
+**Do**
+
+- Add `studio` command in `@chainmcp/cli` with options `--port`, `--host`, `--config`, and `--tenant`.
+- Implement embedded static/SPA server in `@chainmcp/admin` (or subpath) with secure headers, CSP, and origin validation.
+- Connect Studio backend to `@chainmcp/storage` (SQLite WAL / memory) to read persistent revisions and telemetry events.
+- Provide health and status endpoints for Studio UI initialization.
+- Auth tests for loopback binding, origin protection, and security headers.
+
+**Acceptance**
+
+- `chainmcp studio` launches a local zero-dependency UI server on loopback with clear startup diagnostic banners.
+- HTTP security headers, CSP, and strict origin validation prevent CSRF / DNS-rebinding attacks.
+- Studio API connects cleanly to local `@chainmcp/storage` instances without throwing.
+
+---
+
+### M13-2 — Visual tool curation, endpoint filtering & bidirectional configuration sync
+
+**Status: ready to start.** Allow operators to browse discovered endpoints from OpenAPI specs, declarative descriptors, or proxied MCP servers (`tools/list`), handpick active tools, and prune unused endpoints to prevent LLM context bloat. Changes synchronize bidirectionally with local config files and descriptor stores.
+
+**Do**
+
+- Expose tool curation endpoints in `@chainmcp/admin` allowing enable/disable toggles on individual tools and operations.
+- Implement bidirectional synchronization with `chainmcp.config.yaml` and descriptor revision stores (`StorageDescriptorRevisionStore`).
+- Ensure disabled tools are excluded from `tools/list` and fail closed with `TOOL_NOT_FOUND` if directly called.
+- Add negative tests for invalid configs, conflicting prefixes, and unauthorized updates.
+
+**Acceptance**
+
+- Studio UI lists all available tools across active contracts with metadata, input schemas, and active status.
+- Toggling a tool writes updates back to config/descriptors atomically without corrupted state.
+- Discarded or pruned tools do not appear in client `tools/list` responses.
+
+---
+
+### M13-3 — Interactive Projection Playground with live upstream test-firing & token-saving diffs
+
+**Status: ready to start.** Deliver an interactive playground in Studio to test-fire tools against upstream APIs, inspect raw vs projected payloads side by side, and interactively configure `createFieldProjector()` include/exclude paths with live token-saving calculation.
+
+**Do**
+
+- Provide a test-execution endpoint in `@chainmcp/admin` executing tools in a sandboxed, non-cached mode with caller-provided parameters.
+- Calculate and return before/after token metrics using `@chainmcp/core` tokenizer (`Tokenizer`).
+- Allow interactive schema path selection (JSONPath / property pickers) generating valid `projection.fields` rules.
+- Negative tests asserting execution bounds, timeout limits, and SSRF destination policy enforcement.
+
+**Acceptance**
+
+- Test-firing tool calls returns execution time, status, raw JSON, and projected JSON.
+- Studio displays visual side-by-side diffs and percentage reduction in LLM context tokens.
+- Invalid test calls (e.g. hitting unapproved hosts) fail closed per destination policies.
+
+---
+
+### M13-4 — Live Shield & OTel Observability Dashboard from SQLite WAL storage
+
+**Status: ready to start.** Deliver a real-time observability and governance dashboard in Studio reading directly from `@chainmcp/storage` (`TelemetryRingBuffer` / SQLite WAL `chainmcp_telemetry_events`).
+
+**Do**
+
+- Query telemetry events by tenant, tool, status, and time window with pagination.
+- Expose aggregated metrics for request rate, cache hit ratio, error rates, p50/p95/p99 duration, and token usage.
+- Correlate OTLP spans and W3C trace IDs with tool invocations.
+- Support live auto-refresh or SSE event streaming for real-time traffic monitoring.
+
+**Acceptance**
+
+- Studio dashboard charts invocation volume, token consumption, and cache hit efficiency.
+- Traces and errors can be inspected with full event metadata and redacted secrets.
+- Telemetry queries do not lock or degrade active gateway SQLite WAL writers.
+
+---
+
+### M13-5 — One-click client export snippets with secret redaction
+
+**Status: ready to start.** Provide copy-paste client configuration snippets for Claude Desktop, Cursor, and Claude Code directly within Studio, pre-populated with correct server paths, environment references, and automatic secret redaction.
+
+**Do**
+
+- Generate JSON and shell snippets for Claude Desktop (`claude_desktop_config.json`), Cursor (`.cursor/mcp.json`), and Claude Code CLI.
+- Redact all credentials using `@chainmcp/config`'s `redactConfigSecrets`.
+- Provide clear instructions for setting required environment variables securely on host machines.
+
+**Acceptance**
+
+- Studio generates valid, copy-ready client configuration snippets with zero credential leakage.
+- Snippets match official client schemas and work out of the box when pasted.
 
 ---
 

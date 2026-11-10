@@ -1,5 +1,27 @@
 # @chainmcp/gateway
 
+## 0.6.0
+
+### Minor Changes
+
+- Implement Milestone 12.2 (M12-2): Active MCP-to-MCP Proxy Mode with governance and W3C traceparent propagation.
+
+  - Added `McpProxyAdapter` and `DynamicGateway.publishProxyContract()` in `@chainmcp/gateway` (ADR 0033).
+  - Connects to external `stdio`, Streamable HTTP, and in-memory MCP servers, automatically discovering tools via `tools/list`.
+  - Wraps proxied tools in ChainMcp's multi-tenant runtime governance (scope-based authorization, rate limiting, hashed caching for `cacheEligible` tools, and token budgeting/projection).
+  - Injects standard W3C `traceparent` (`00-{traceId}-{spanId}-{flags}`) and correlation attributes (`tenant.id`, `principal.id`, `request.id`) into `params._meta` on upstream tool calls, enabling end-to-end distributed trace stitching with the `/v1/traces` OTLP sink.
+  - Enforces SSRF destination policy allowlists on proxy URLs.
+  - Added `gateway.close()` to cleanly shut down managed proxy client transports and subprocesses.
+
+### Patch Changes
+
+- Updated dependencies
+  - @chainmcp/server@0.6.0
+  - @chainmcp/auth@0.6.0
+  - @chainmcp/compiler@0.6.0
+  - @chainmcp/core@0.6.0
+  - @chainmcp/executor@0.6.0
+
 ## 0.5.0
 
 ### Patch Changes

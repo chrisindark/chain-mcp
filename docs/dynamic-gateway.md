@@ -129,6 +129,41 @@ const server = createGatewayServer(gateway, {
 });
 ```
 
+## Active MCP-to-MCP proxy mode
+
+ChainMcp allows external MCP servers—including `stdio` child processes and Streamable HTTP endpoints (such as Python FastMCP, Go, or Node MCP utilities)—to be governed seamlessly through the dynamic gateway:
+
+```ts
+// Proxy an external stdio or Streamable HTTP MCP server
+await gateway.publishProxyContract({
+  tenantId: "tenant-acme",
+  contractName: "python-fastmcp-tools",
+  proxy: {
+    transport: "http",
+    url: "https://mcp-internal.acme.corp/sse",
+    headers: {
+      Authorization: `Bearer ${process.env.INTERNAL_MCP_TOKEN}`,
+    },
+    toolPrefix: "fastmcp_",
+    cacheEligible: ["fastmcp_fetch_customer", "fastmcp_query_inventory"],
+  },
+  authConfig: {
+    requiredScopes: ["tools:execute"],
+  },
+});
+```
+
+### Governance and trace context injection
+
+1. **Automatic Tool Discovery:** On publication, `gateway.publishProxyContract()` connects to the upstream server, queries `tools/list`, and registers strongly-typed tool definitions stamped with the contract revision and owning tenant ID.
+2. **Unified Policy Pipeline:** Proxied tool calls pass through all standard ChainMcp governance layers:
+   - Inbound scope and role-based authorization (`@chainmcp/auth`).
+   - Tenant-level and principal-level token-bucket rate limits (`@chainmcp/rate-limit`).
+   - Partitioned hashed caching for `cacheEligible` tools (mutations default to never cached).
+   - Context window protection through token budgeting and result projection (`@chainmcp/core`, `@chainmcp/json-navigation`).
+3. **W3C `traceparent` Propagation:** When invoking tools on downstream MCP servers, ChainMcp injects a standard W3C `traceparent` (`00-{traceId}-{spanId}-{flags}`) into `params._meta.traceparent`, alongside correlation attributes (`tenant.id`, `principal.id`, `request.id`). If downstream servers export telemetry to ChainMcp's `/v1/traces` OTLP sink (ADR 0032), distributed traces stitch together automatically.
+4. **Clean Shutdown:** Calling `await gateway.close()` gracefully disconnects and drains all managed proxy client transports and subprocesses.
+
 ## Scope boundary
 
 The dynamic gateway is a deployment mode for the open-source runtime, not a requirement for using generated servers. Both modes share the identical core runtime execution pipeline (ADR 0002).

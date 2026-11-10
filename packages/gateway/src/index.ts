@@ -23,5 +23,14 @@ export {
   type GatewayAuditSink,
   type GatewayErrorCode,
   type PublishContractOptions,
+  type PublishProxyContractOptions,
+  type ProxyDestinationConfig,
+  type ProxyTransportType,
   type ToolSummary,
 } from "./types.js";
+export {
+  McpProxyAdapter,
+  generateTraceparent,
+  unwrapCallToolResult,
+  type McpProxyAdapterOptions,
+} from "./proxy.js";

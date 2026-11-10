@@ -1,5 +1,13 @@
 # @chainmcp/declarative
 
+## 0.6.0
+
+### Patch Changes
+
+- @chainmcp/compiler@0.6.0
+  - @chainmcp/core@0.6.0
+  - @chainmcp/executor@0.6.0
+
 ## 0.5.0
 
 ### Patch Changes

@@ -124,6 +124,16 @@ export interface HttpServeOptions {
     | undefined;
   authorizationServers?: string[] | undefined;
   scopesSupported?: string[] | undefined;
+  /**
+   * Optional OTLP HTTP ingestion handler for `/v1/traces` and `/v1/metrics`.
+   * Returns true if the request was an OTLP route and handled.
+   */
+  otlpHandler?:
+    | ((
+        req: http.IncomingMessage,
+        res: http.ServerResponse,
+      ) => boolean | Promise<boolean>)
+    | undefined;
 }
 
 export interface ConnectedHttpServer extends ConnectedMcpServer {
@@ -897,6 +907,25 @@ export async function serveHttp(
         res.setHeader("Content-Type", "application/json");
         res.end(JSON.stringify(payload));
         return;
+      }
+
+      // OTLP Ingestion Sink (/v1/traces, /v1/metrics)
+      if (
+        httpOptions.otlpHandler &&
+        (requestUrl.pathname === "/v1/traces" ||
+          requestUrl.pathname === "/v1/metrics")
+      ) {
+        try {
+          const handled = await httpOptions.otlpHandler(req, res);
+          if (handled) {
+            return;
+          }
+        } catch {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ error: "Internal Server Error" }));
+          return;
+        }
       }
 
       // Match target MCP endpoint

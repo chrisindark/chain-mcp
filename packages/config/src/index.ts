@@ -64,6 +64,7 @@ import {
   ConsoleSink,
   MemorySink,
   OpenTelemetryMetricsSink,
+  OtlpIngestionSink,
   RollingAnalyticsAggregator,
   ToolTracer,
   type LogSink,
@@ -478,6 +479,18 @@ export const AnalyticsConfigSchema = z
           .object({
             enabled: z.boolean().default(false),
             sampleRatio: z.number().min(0).max(1).default(0.1),
+          })
+          .strict()
+          .prefault({}),
+        ingestion: z
+          .object({
+            enabled: z.boolean().default(false),
+            maxRequestBytes: z
+              .number()
+              .int()
+              .positive()
+              .max(100 * 1024 * 1024)
+              .default(5 * 1024 * 1024),
           })
           .strict()
           .prefault({}),
@@ -1235,6 +1248,42 @@ export function createHandleRegistryOptionsFromConfig(
     ttlMs: config.handles.ttlMs,
     minBytes: config.handles.minBytes,
   };
+}
+
+/**
+ * Build an OTLP ingestion sink from analytics configuration, or `undefined`
+ * if OTLP ingestion is disabled.
+ */
+export function createOtlpIngestionSinkFromConfig(
+  config: AnalyticsConfig,
+  dependencies?: {
+    metricsSink?: MetricsSink | undefined;
+    storageDriver?: StorageDriver | undefined;
+    logger?: Logger | undefined;
+  },
+): OtlpIngestionSink | undefined {
+  if (
+    !config.enabled ||
+    !config.openTelemetry.enabled ||
+    !config.openTelemetry.ingestion.enabled
+  ) {
+    return undefined;
+  }
+
+  const ringBuffer = dependencies?.storageDriver
+    ? dependencies.storageDriver.getTelemetryRingBuffer()
+    : undefined;
+
+  return new OtlpIngestionSink({
+    ...(dependencies?.metricsSink !== undefined
+      ? { metricsSink: dependencies.metricsSink }
+      : {}),
+    ...(ringBuffer !== undefined ? { telemetryRingBuffer: ringBuffer } : {}),
+    ...(dependencies?.logger !== undefined
+      ? { logger: dependencies.logger }
+      : {}),
+    maxRequestBytes: config.openTelemetry.ingestion.maxRequestBytes,
+  });
 }
 
 export function buildRuntimeOptions(

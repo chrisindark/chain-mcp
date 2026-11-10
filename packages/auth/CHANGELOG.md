@@ -1,5 +1,11 @@
 # @chainmcp/auth
 
+## 0.6.0
+
+### Patch Changes
+
+- @chainmcp/core@0.6.0
+
 ## 0.5.0
 
 ### Patch Changes

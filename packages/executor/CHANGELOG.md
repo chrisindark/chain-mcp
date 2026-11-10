@@ -1,5 +1,13 @@
 # @chainmcp/executor
 
+## 0.6.0
+
+### Patch Changes
+
+- @chainmcp/auth@0.6.0
+  - @chainmcp/compiler@0.6.0
+  - @chainmcp/core@0.6.0
+
 ## 0.5.0
 
 ### Patch Changes
