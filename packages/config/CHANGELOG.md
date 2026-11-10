@@ -1,5 +1,30 @@
 # @chainmcp/config
 
+## 0.6.0
+
+### Minor Changes
+
+- Implement Milestone 12.1 (M12-1): Universal MCP Telemetry & lightweight OTLP/HTTP Ingestion Sink.
+
+  - Added `OtlpIngestionSink`, `createOtlpHttpHandler`, and `deriveMetricsFromSpans` in `@chainmcp/analytics`.
+  - Support standard OTLP/JSON payloads on `POST /v1/traces` and `POST /v1/metrics`.
+  - Maps GenAI semantic conventions (`gen_ai.usage.*`, `gen_ai.request.model`) and MCP conventions (`tool.name`, `mcp.tool_name`, `outcome`, `tenant.id`) into ChainMcp runtime events.
+  - Asynchronously persists `TelemetryEvent`s to `@chainmcp/storage` (`TelemetryRingBuffer`) in WAL mode or memory while delivering synchronous metrics in <5ms.
+  - Mounted into `@chainmcp/server` via `HttpServeOptions.otlpHandler`.
+  - Added `openTelemetry.ingestion` configuration and `createOtlpIngestionSinkFromConfig` to `@chainmcp/config`.
+
+### Patch Changes
+
+- Updated dependencies
+  - @chainmcp/analytics@0.6.0
+  - @chainmcp/auth@0.6.0
+  - @chainmcp/cache-redis@0.6.0
+  - @chainmcp/core@0.6.0
+  - @chainmcp/executor@0.6.0
+  - @chainmcp/json-navigation@0.6.0
+  - @chainmcp/rate-limit@0.6.0
+  - @chainmcp/storage@0.6.0
+
 ## 0.5.0
 
 ### Minor Changes

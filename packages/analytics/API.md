@@ -54,6 +54,39 @@ export class RollingAnalyticsAggregator implements MetricsSink {
   clear(): void;
 }
 
+export class OtlpIngestionSink {
+  constructor(options?: OtlpIngestionSinkOptions);
+  ingestTraces(
+    payload: ExportTraceServiceRequest | string,
+    overrideTenantId?: string,
+  ): Promise<ExportTraceServiceResponse>;
+  ingestMetrics(
+    payload: ExportMetricsServiceRequest | string,
+    overrideTenantId?: string,
+  ): Promise<ExportMetricsServiceResponse>;
+  createHttpHandler(): (
+    req: IncomingMessage,
+    res: ServerResponse,
+  ) => Promise<boolean>;
+}
+
+export function createOtlpHttpHandler(
+  options?: OtlpIngestionSinkOptions,
+): (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
+
+export function deriveMetricsFromSpans(
+  request: ExportTraceServiceRequest,
+  options?: SpanDerivationOptions,
+): DerivedSpanTelemetry;
+
+export function extractOtlpValue(value?: OtlpAnyValue | unknown): unknown;
+export function otlpAttributesToRecord(
+  attributes?: OtlpKeyValue[] | undefined,
+): Record<string, unknown>;
+export function otlpNanoToMs(
+  nano?: string | number | bigint | undefined,
+): number;
+
 export function redactValue(value: unknown, options?: RedactionOptions): unknown;
 export function redactString(input: string): string;
 

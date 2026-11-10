@@ -54,11 +54,38 @@ export interface PublishContractOptions {
   readonly autoActivate?: boolean | undefined;
 }
 
+export type ProxyTransportType = "stdio" | "http" | "custom";
+
+export interface ProxyDestinationConfig {
+  readonly transport: ProxyTransportType;
+  readonly url?: string | undefined;
+  readonly headers?: Readonly<Record<string, string>> | undefined;
+  readonly command?: string | undefined;
+  readonly args?: readonly string[] | undefined;
+  readonly env?: Readonly<Record<string, string>> | undefined;
+  readonly cwd?: string | undefined;
+  readonly customTransport?: unknown | undefined;
+  readonly toolPrefix?: string | undefined;
+  readonly cacheEligible?: boolean | readonly string[] | undefined;
+}
+
+export interface PublishProxyContractOptions {
+  readonly tenantId: string;
+  readonly contractName: string;
+  readonly proxy: ProxyDestinationConfig;
+  readonly destinationPolicy?: Partial<ContractDestinationPolicy> | undefined;
+  readonly authConfig?: ContractAuthConfig | undefined;
+  readonly limits?: ContractLimits | undefined;
+  readonly metadata?: Readonly<Record<string, unknown>> | undefined;
+  readonly autoActivate?: boolean | undefined;
+}
+
 export type GatewayAuditEventType =
   | "contract_published"
   | "contract_activated"
   | "contract_disabled"
   | "contract_rolled_back"
+  | "proxy_connected"
   | "tenant_resolution_failed";
 
 export interface GatewayAuditEvent {
@@ -130,6 +157,9 @@ export class DynamicGateway implements ToolRuntime {
   constructor(options?: DynamicGatewayOptions);
   getRegistry(): ContractRegistry;
   publishContract(options: PublishContractOptions): Promise<ContractRevision>;
+  publishProxyContract(
+    options: PublishProxyContractOptions,
+  ): Promise<ContractRevision>;
   activateRevision(
     tenantId: string,
     contractName: string,
@@ -157,7 +187,22 @@ export class DynamicGateway implements ToolRuntime {
   ): Promise<void>;
   register(tool: ToolDefinition): void;
   registerSource(source: ToolSource): Promise<void>;
+  close(): Promise<void>;
 }
+
+export class McpProxyAdapter implements ToolSource {
+  readonly tenantId: string;
+  readonly contractName: string;
+  readonly proxyConfig: ProxyDestinationConfig;
+  constructor(options: McpProxyAdapterOptions);
+  connect(): Promise<void>;
+  getTools(): readonly ToolDefinition[];
+  close(): Promise<void>;
+}
+
+export function generateTraceparent(context?: ToolContext): string;
+
+export function unwrapCallToolResult(result: CallToolResult): unknown;
 
 export function createGatewayServer(
   gateway: DynamicGateway,

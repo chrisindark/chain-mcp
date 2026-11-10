@@ -12,6 +12,7 @@ import {
   createHandleRegistryOptionsFromConfig,
   createLoggerFromConfig,
   createNavigationLimitsFromConfig,
+  createOtlpIngestionSinkFromConfig,
   createRateLimiterFromConfig,
   createStorageDriverFromConfig,
   createTokenizerFromConfig,
@@ -1213,6 +1214,10 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
             enabled: false,
             sampleRatio: 0.1,
           },
+          ingestion: {
+            enabled: false,
+            maxRequestBytes: 5242880,
+          },
         },
       });
     });
@@ -1288,6 +1293,41 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
 
       const runtimeOpts = buildRuntimeOptions(config);
       expect(runtimeOpts.tracer).toBeInstanceOf(ToolTracer);
+    });
+
+    it("creates OtlpIngestionSink when openTelemetry and ingestion are both enabled", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "test",
+        analytics: {
+          enabled: true,
+          openTelemetry: {
+            enabled: true,
+            ingestion: {
+              enabled: true,
+              maxRequestBytes: 2 * 1024 * 1024,
+            },
+          },
+        },
+      });
+
+      const sink = createOtlpIngestionSinkFromConfig(config.analytics);
+      expect(sink).toBeDefined();
+
+      const disabledConfig = parseConfig({
+        version: 1,
+        name: "test",
+        analytics: {
+          enabled: true,
+          openTelemetry: {
+            enabled: true,
+            ingestion: { enabled: false },
+          },
+        },
+      });
+      expect(
+        createOtlpIngestionSinkFromConfig(disabledConfig.analytics),
+      ).toBeUndefined();
     });
   });
 

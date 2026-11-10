@@ -10,16 +10,22 @@ import {
 } from "@chainmcp/core";
 import { OperationScopeAuthorizer } from "@chainmcp/auth";
 import { compileOpenApi } from "@chainmcp/compiler";
-import { createUpstreamExecutor } from "@chainmcp/executor";
+import {
+  createUpstreamExecutor,
+  normalizeAllowedHost,
+} from "@chainmcp/executor";
 import { ContractRegistry } from "./registry.js";
 import {
+  type ContractDestinationPolicy,
   type ContractRevision,
   type DynamicGatewayOptions,
   GatewayError,
   type GatewayAuditEvent,
   type PublishContractOptions,
+  type PublishProxyContractOptions,
   type ToolSummary,
 } from "./types.js";
+import { McpProxyAdapter } from "./proxy.js";
 
 /** Simple asynchronous mutex ensuring atomic sequential revision updates. */
 class AsyncMutex {
@@ -41,6 +47,7 @@ export class DynamicGateway implements ToolRuntime {
   private readonly options: DynamicGatewayOptions;
   private readonly mutex = new AsyncMutex();
   private readonly toolChangeListeners = new Set<() => void | Promise<void>>();
+  private readonly managedProxyAdapters = new Map<string, McpProxyAdapter>();
   private activeRuntime: InMemoryToolRuntime;
 
   constructor(options: DynamicGatewayOptions = {}) {
@@ -209,6 +216,200 @@ export class DynamicGateway implements ToolRuntime {
           ? { metadata: options.metadata }
           : {}),
         ...(this.options.now !== undefined ? { now: this.options.now } : {}),
+      });
+
+      await this.emitAudit({
+        type: "contract_published",
+        timestamp: this.now(),
+        tenantId: options.tenantId,
+        contractName: options.contractName,
+        revisionId: candidate.revisionId,
+        toolCount: candidate.tools.length,
+        details: {
+          sourceHash: candidate.sourceHash,
+          baseUrl: candidate.destinationPolicy.baseUrl,
+          allowedHosts: [...candidate.destinationPolicy.allowedHosts],
+        },
+      });
+
+      if (options.autoActivate !== false) {
+        const { activatedRevision, previousRevision } =
+          this.registry.activateRevision(
+            options.tenantId,
+            options.contractName,
+            candidate.revisionId,
+          );
+
+        this.rebuildActiveRuntime();
+
+        await this.emitAudit({
+          type: "contract_activated",
+          timestamp: this.now(),
+          tenantId: options.tenantId,
+          contractName: options.contractName,
+          revisionId: activatedRevision.revisionId,
+          ...(previousRevision?.revisionId !== undefined
+            ? { previousRevisionId: previousRevision.revisionId }
+            : {}),
+          toolCount: activatedRevision.tools.length,
+        });
+
+        await this.notifyToolsChanged();
+
+        return activatedRevision;
+      }
+
+      return candidate;
+    });
+  }
+
+  /**
+   * Publishes an external MCP server as a proxy contract revision.
+   * Connects to the external server via stdio, HTTP, or custom transport,
+   * discovers its tools via tools/list, wraps each tool with ChainMcp policies,
+   * registers the candidate revision in the registry, and optionally activates it.
+   */
+  async publishProxyContract(
+    options: PublishProxyContractOptions,
+  ): Promise<ContractRevision> {
+    return this.mutex.runExclusive(async () => {
+      // 1. Determine destination policy defaults based on transport
+      let defaultBaseUrl: string;
+      let defaultAllowedHosts: string[];
+      let allowInsecureHttp = options.destinationPolicy?.allowInsecureHttp;
+
+      if (options.proxy.transport === "http") {
+        if (!options.proxy.url) {
+          throw new GatewayError(
+            "DESTINATION_INVALID",
+            "Proxy transport 'http' requires 'url'",
+          );
+        }
+        let url: URL;
+        try {
+          url = new URL(options.proxy.url);
+        } catch (err) {
+          throw new GatewayError(
+            "DESTINATION_INVALID",
+            `Invalid proxy HTTP URL '${options.proxy.url}'`,
+            { cause: err },
+          );
+        }
+        defaultBaseUrl = url.origin;
+        defaultAllowedHosts = [url.hostname];
+        if (allowInsecureHttp === undefined && url.protocol === "http:") {
+          allowInsecureHttp = true;
+        }
+      } else if (options.proxy.transport === "stdio") {
+        defaultBaseUrl = "stdio://local";
+        defaultAllowedHosts = ["local"];
+        if (allowInsecureHttp === undefined) {
+          allowInsecureHttp = true;
+        }
+      } else if (options.proxy.transport === "custom") {
+        defaultBaseUrl = "custom://local";
+        defaultAllowedHosts = ["local"];
+        if (allowInsecureHttp === undefined) {
+          allowInsecureHttp = true;
+        }
+      } else {
+        throw new GatewayError(
+          "DESTINATION_INVALID",
+          `Unsupported proxy transport '${String(options.proxy.transport)}'`,
+        );
+      }
+
+      const destinationPolicy: ContractDestinationPolicy = {
+        baseUrl: options.destinationPolicy?.baseUrl ?? defaultBaseUrl,
+        allowedHosts:
+          options.destinationPolicy?.allowedHosts ?? defaultAllowedHosts,
+        ...(allowInsecureHttp !== undefined ? { allowInsecureHttp } : {}),
+      };
+
+      // 2. Validate SSRF: if transport is HTTP, verify destination URL host is permitted by destinationPolicy
+      if (options.proxy.transport === "http" && options.proxy.url) {
+        const proxyUrl = new URL(options.proxy.url);
+        const proxyHost = proxyUrl.hostname.toLowerCase();
+        const allowed = destinationPolicy.allowedHosts.map((h) =>
+          normalizeAllowedHost(h),
+        );
+        if (!allowed.includes(proxyHost)) {
+          throw new GatewayError(
+            "DESTINATION_INVALID",
+            `Proxy URL hostname '${proxyHost}' is not in allowedHosts [${allowed.join(", ")}]`,
+          );
+        }
+      }
+
+      // 3. Instantiate and connect McpProxyAdapter
+      const adapter = new McpProxyAdapter({
+        tenantId: options.tenantId,
+        contractName: options.contractName,
+        proxy: options.proxy,
+        ...(options.authConfig?.requiredScopes
+          ? { requiredScopes: options.authConfig.requiredScopes }
+          : {}),
+        ...(this.options.defaultTimeoutMs !== undefined
+          ? { defaultTimeoutMs: this.options.defaultTimeoutMs }
+          : {}),
+      });
+
+      await adapter.connect();
+
+      const tools = adapter.getTools();
+      if (tools.length === 0) {
+        await adapter.close();
+        throw new GatewayError(
+          "POLICY_VIOLATION",
+          "External MCP server did not expose any tools",
+        );
+      }
+
+      // Deterministic sourceHash for proxy contract based on discovered tools and transport
+      const proxySourceDesc = `${options.proxy.transport}:${options.proxy.url ?? options.proxy.command ?? "custom"}`;
+      const sourceHash = createHash("sha256")
+        .update(
+          `${proxySourceDesc};${tools.map((t) => `${t.name}:${t.description ?? ""}:${JSON.stringify(t.inputSchema)}`).join(";")}`,
+        )
+        .digest("hex");
+
+      let candidate: ContractRevision;
+      try {
+        candidate = this.registry.createRevision({
+          tenantId: options.tenantId,
+          contractName: options.contractName,
+          sourceHash,
+          tools,
+          destinationPolicy,
+          ...(options.authConfig !== undefined
+            ? { authConfig: options.authConfig }
+            : {}),
+          ...(options.limits !== undefined ? { limits: options.limits } : {}),
+          ...(options.metadata !== undefined
+            ? { metadata: options.metadata }
+            : {}),
+          ...(this.options.now !== undefined ? { now: this.options.now } : {}),
+        });
+      } catch (err) {
+        await adapter.close();
+        throw err;
+      }
+
+      this.managedProxyAdapters.set(candidate.revisionId, adapter);
+
+      await this.emitAudit({
+        type: "proxy_connected",
+        timestamp: this.now(),
+        tenantId: options.tenantId,
+        contractName: options.contractName,
+        revisionId: candidate.revisionId,
+        toolCount: candidate.tools.length,
+        details: {
+          transport: options.proxy.transport,
+          sourceHash: candidate.sourceHash,
+          baseUrl: candidate.destinationPolicy.baseUrl,
+          allowedHosts: [...candidate.destinationPolicy.allowedHosts],
+        },
       });
 
       await this.emitAudit({
@@ -483,6 +684,20 @@ export class DynamicGateway implements ToolRuntime {
       ...(this.options.monotonicNow !== undefined
         ? { monotonicNow: this.options.monotonicNow }
         : {}),
+    });
+  }
+
+  /**
+   * Gracefully shuts down the dynamic gateway, clearing active tool runtime
+   * and closing all managed external MCP proxy client transports.
+   */
+  async close(): Promise<void> {
+    return this.mutex.runExclusive(async () => {
+      const adapters = Array.from(this.managedProxyAdapters.values());
+      this.managedProxyAdapters.clear();
+      await Promise.all(adapters.map((a) => a.close()));
+      this.toolChangeListeners.clear();
+      this.activeRuntime = this.buildEmptyRuntime();
     });
   }
 

@@ -168,3 +168,12 @@ analytics:
 ### Environment Variables
 
 - `CHAINMCP_LOG_LEVEL`: Overrides `logging.level` (e.g. `CHAINMCP_LOG_LEVEL=debug`).
+
+## 7. Universal OTLP Ingestion Sink & Span-to-Metric Derivation
+
+ChainMcp provides an in-process, lightweight OpenTelemetry protocol over HTTP (OTLP/HTTP) ingestion sink (`OtlpIngestionSink`) in `@chainmcp/analytics`. It enables external MCP servers (such as Python FastMCP, Go, and Rust) and coding agents to export telemetry directly to ChainMcp:
+
+- **Endpoints:** Accepts standard OTLP/JSON payloads at `POST /v1/traces` and `POST /v1/metrics`.
+- **Span-to-Metric Derivation:** Automatically inspects incoming spans and maps GenAI semantic conventions (`gen_ai.usage.*`, `gen_ai.request.model`) and MCP conventions (`tool.name`, `mcp.tool_name`, `outcome`, `tenant.id`) into ChainMcp runtime metrics (`chainmcp.tool.invocations`, `chainmcp.tool.duration`, `chainmcp.tool.tokens`).
+- **Non-Blocking Persistence:** Asynchronously persists derived `TelemetryEvent`s to `@chainmcp/storage` (`TelemetryRingBuffer`) in WAL mode or memory while delivering synchronous metrics in <5ms.
+- **Server Integration:** Can be mounted onto `@chainmcp/server` via `HttpServeOptions.otlpHandler` or created from configuration using `createOtlpIngestionSinkFromConfig()`.

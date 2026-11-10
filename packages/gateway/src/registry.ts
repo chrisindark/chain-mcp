@@ -445,7 +445,9 @@ export class ContractRegistry {
 
     if (
       parsedUrl.protocol !== "https:" &&
-      !(policy.allowInsecureHttp && parsedUrl.protocol === "http:")
+      !(policy.allowInsecureHttp && parsedUrl.protocol === "http:") &&
+      parsedUrl.protocol !== "stdio:" &&
+      parsedUrl.protocol !== "custom:"
     ) {
       throw new GatewayError(
         "DESTINATION_INVALID",

@@ -34,3 +34,38 @@ export {
   type AnalyticsSummary,
   type AggregatorOptions,
 } from "./aggregator.js";
+
+export {
+  OtlpSpanKind,
+  OtlpStatusCode,
+  type OtlpAnyValue,
+  type OtlpKeyValue,
+  type OtlpSpan,
+  type OtlpScopeSpans,
+  type OtlpResourceSpans,
+  type ExportTraceServiceRequest,
+  type ExportTraceServiceResponse,
+  type ExportTracePartialSuccess,
+  type OtlpMetric,
+  type OtlpScopeMetrics,
+  type OtlpResourceMetrics,
+  type ExportMetricsServiceRequest,
+  type ExportMetricsServiceResponse,
+  extractOtlpValue,
+  otlpAttributesToRecord,
+  otlpNanoToMs,
+} from "./otlp-types.js";
+
+export {
+  deriveMetricsFromSpans,
+  type SpanDerivationOptions,
+  type DerivedSpanTelemetry,
+} from "./span-derivation.js";
+
+export {
+  OtlpIngestionSink,
+  createOtlpHttpHandler,
+  type OtlpIngestionSinkOptions,
+  type OtlpAuthContext,
+  DEFAULT_MAX_OTLP_REQUEST_BYTES,
+} from "./otlp-sink.js";
