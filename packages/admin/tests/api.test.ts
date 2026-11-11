@@ -1170,4 +1170,114 @@ describe("tool curation and endpoint filtering", () => {
       await storageDriver.close();
     });
   });
+
+  describe("Client Export Snippets API (M13-5)", () => {
+    it("returns 200 with client snippets for Claude Desktop, Cursor, and Claude Code CLI", async () => {
+      const { admin } = makeAdmin({
+        configPath: "/workspace/chainmcp.config.yaml",
+      });
+
+      const res = await admin.handle(
+        adminRequest("/api/v1/export/snippets", "GET"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.ok).toBe(true);
+      expect(data.serverName).toBe("chainmcp");
+      expect(data.snippets.claudeDesktop).toBeDefined();
+      expect(data.snippets.cursor).toBeDefined();
+      expect(data.snippets.claudeCode).toBeDefined();
+      expect(data.snippets.claudeDesktop.json.mcpServers.chainmcp.command).toBe(
+        "npx",
+      );
+      expect(data.snippets.cursor.json.mcpServers.chainmcp.command).toBe("npx");
+      expect(data.snippets.claudeCode.snippet).toContain(
+        "claude mcp add chainmcp",
+      );
+    });
+
+    it("returns contract-scoped snippets with contract name", async () => {
+      const { admin } = makeAdmin({
+        configPath: "/workspace/gateway.config.yaml",
+      });
+
+      const res = await admin.handle(
+        adminRequest(
+          "/api/v1/tenants/tenant-a/contracts/users/snippets?transport=sse&sseUrl=http://127.0.0.1:3341/sse",
+          "GET",
+        ),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.ok).toBe(true);
+      expect(data.serverName).toBe("users");
+      expect(data.transport).toBe("sse");
+      expect(data.snippets.claudeDesktop.json.mcpServers.users.args).toContain(
+        "mcp-remote",
+      );
+      expect(data.snippets.cursor.json.mcpServers.users.url).toBe(
+        "http://127.0.0.1:3341/sse",
+      );
+      expect(data.snippets.claudeCode.snippet).toBe(
+        'claude mcp add users "http://127.0.0.1:3341/sse"',
+      );
+    });
+
+    it("redacts credentials from configObject and leaks zero secrets", async () => {
+      const { admin } = makeAdmin({
+        configObject: {
+          authentication: {
+            apiKey: "raw-production-api-key-12345",
+          },
+        },
+      });
+
+      const res = await admin.handle(
+        adminRequest("/api/v1/export/snippets", "GET"),
+      );
+      expect(res.status).toBe(200);
+      const body = await res.text();
+      expect(body).not.toContain("raw-production-api-key-12345");
+      expect(body).toContain("[REDACTED]");
+    });
+
+    it("enforces authentication on snippet endpoints", async () => {
+      const { admin } = makeAdmin({});
+
+      // No auth token
+      const res = await admin.handle(
+        new Request("http://127.0.0.1:3341/api/v1/export/snippets", {
+          method: "GET",
+        }),
+      );
+      expect(res.status).toBe(401);
+      expect(await res.json()).toMatchObject({
+        error: { code: "ADMIN_AUTH_REQUIRED" },
+      });
+    });
+
+    it("enforces tenant boundary on contract-scoped snippets", async () => {
+      const { admin } = makeAdmin({
+        tokens: [
+          {
+            id: "scoped-operator",
+            token: "valid-admin-token-12345678",
+            tenants: ["tenant-a"],
+          },
+        ],
+      });
+
+      const res = await admin.handle(
+        adminRequest(
+          "/api/v1/tenants/tenant-b/contracts/users/snippets",
+          "GET",
+          { token: "valid-admin-token-12345678" },
+        ),
+      );
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({
+        error: { code: "ADMIN_TENANT_FORBIDDEN" },
+      });
+    });
+  });
 });

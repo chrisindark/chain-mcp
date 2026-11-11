@@ -806,7 +806,7 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 
 ### M13-5 — One-click client export snippets with secret redaction
 
-**Status: ready to start.** Provide copy-paste client configuration snippets for Claude Desktop, Cursor, and Claude Code directly within Studio, pre-populated with correct server paths, environment references, and automatic secret redaction.
+**Status: done (2026-11-11).** Delivered one-click copy-ready client export snippets for Claude Desktop (`claude_desktop_config.json`), Cursor (`.cursor/mcp.json`), and Claude Code CLI directly within Web Studio and via API (`GET /api/v1/export/snippets` and `GET /api/v1/tenants/{tenant}/contracts/{contract}/snippets`). Implemented automatic credential redaction using `@chainmcp/config`'s `redactConfigSecrets` and deep sanitization, guaranteeing zero credential leakage across snippets and instructions. Extracted referenced environment variables into host setup instructions for bash and PowerShell. Unit and integration tests in `@chainmcp/admin/tests/snippets.test.ts`, `@chainmcp/admin/tests/api.test.ts`, and `@chainmcp/cli/tests/studio.test.ts`.
 
 **Do**
 

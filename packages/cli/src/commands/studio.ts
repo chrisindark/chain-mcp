@@ -95,12 +95,14 @@ export async function studioCommand(
   }
 
   let storageConfig: StorageConfig | undefined;
+  let parsedConfig: unknown | undefined;
   const bindings: DeclarativeAdminContractBinding[] = [];
 
   if (configPath && (await fileExists(configPath))) {
     try {
       const rawText = await readFile(configPath, "utf8");
       const parsed = parseYaml(rawText);
+      parsedConfig = parsed;
       const isGateway =
         typeof parsed === "object" &&
         parsed !== null &&
@@ -206,6 +208,7 @@ export async function studioCommand(
     repository,
     storageDriver,
     ...(configPath !== undefined ? { configPath } : {}),
+    ...(parsedConfig !== undefined ? { configObject: parsedConfig } : {}),
     ...(configPath !== undefined
       ? {
           onConfigSync: async (update: {

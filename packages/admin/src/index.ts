@@ -36,6 +36,13 @@ export {
   type RunningDeclarativeAdminServer,
 } from "./server.js";
 export {
+  generateClientExportSnippets,
+  type ClientSnippetDefinition,
+  type ClientSnippetsResponse,
+  type GenerateSnippetsOptions,
+  type SnippetEnvInstruction,
+} from "./snippets.js";
+export {
   DECLARATIVE_ADMIN_API_PREFIX,
   DEFAULT_DECLARATIVE_ADMIN_PORT,
   DEFAULT_STUDIO_PORT,

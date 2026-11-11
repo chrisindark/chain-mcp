@@ -120,6 +120,9 @@ importers:
       "@chainmcp/auth":
         specifier: workspace:*
         version: link:../auth
+      "@chainmcp/config":
+        specifier: workspace:*
+        version: link:../config
       "@chainmcp/core":
         specifier: workspace:*
         version: link:../core

@@ -499,4 +499,70 @@ contracts:
     expect(telemJson.ok).toBe(true);
     expect(telemJson.events).toEqual([]);
   });
+
+  it("M13-5: serves one-click client export snippets with secret redaction and UI components", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "chainmcp-studio-snippets-"));
+    tempDirs.push(dir);
+
+    const configContent = `
+version: 1
+name: studio-export-test
+security:
+  requireInboundAuth: false
+  allowedUpstreamHosts:
+    - api.example.com
+auth:
+  inbound:
+    apiKeys:
+      super-secret-key-do-not-leak:
+        tenantId: default
+        principalId: operator
+cache:
+  redis:
+    url: "\${REDIS_URL:-redis://127.0.0.1:6379}"
+`;
+    const configPath = join(dir, "chainmcp.config.yaml");
+    await writeFile(configPath, configContent, "utf8");
+
+    const result = await studioCommand({
+      config: configPath,
+      port: 0,
+      host: "127.0.0.1",
+    });
+    activeStudios.push(result);
+
+    // 1. Verify HTML console includes export snippet components
+    const pageRes = await fetch(`${result.url}/`);
+    expect(pageRes.status).toBe(200);
+    const html = await pageRes.text();
+    expect(html).toContain('id="export-section"');
+    expect(html).toContain("Client Export Snippets");
+    expect(html).toContain('id="tab-claude"');
+    expect(html).toContain('id="tab-cursor"');
+    expect(html).toContain('id="tab-code"');
+    expect(html).toContain('id="copy-snippet"');
+    expect(html).toContain('id="snippet-content"');
+    expect(html).toContain('id="env-instructions-container"');
+
+    // 2. Query /api/v1/export/snippets
+    const snippetRes = await fetch(`${result.url}/api/v1/export/snippets`, {
+      headers: { authorization: `Bearer ${result.token}` },
+    });
+    expect(snippetRes.status).toBe(200);
+    const snippetJson = await snippetRes.json();
+    expect(snippetJson.ok).toBe(true);
+    expect(snippetJson.snippets.claudeDesktop).toBeDefined();
+    expect(snippetJson.snippets.cursor).toBeDefined();
+    expect(snippetJson.snippets.claudeCode).toBeDefined();
+
+    // Verify secret redaction: literal secret MUST NOT leak
+    const rawSnippetResponse = JSON.stringify(snippetJson);
+    expect(rawSnippetResponse).not.toContain("super-secret-key-do-not-leak");
+
+    // Verify environment variable reference extraction
+    const envVars = snippetJson.envInstructions.map(
+      (i: { variable: string }) => i.variable,
+    );
+    expect(envVars).toContain("REDIS_URL");
+  });
 });

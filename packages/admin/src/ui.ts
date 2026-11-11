@@ -240,6 +240,53 @@ export const ADMIN_INDEX_HTML = `<!doctype html>
         </div>
       </section>
 
+      <section class="card" id="export-section">
+        <div class="card-heading">
+          <h2>Client Export Snippets</h2>
+          <button id="load-snippets" type="button" class="secondary">
+            Refresh snippets
+          </button>
+        </div>
+        <p class="hint">
+          One-click configuration snippets for Claude Desktop, Cursor, and Claude Code CLI,
+          pre-populated with correct server paths, transport options, and automatic secret redaction.
+        </p>
+
+        <div class="grid">
+          <label>
+            Transport
+            <select id="export-transport">
+              <option value="stdio">Local stdio (npx @chainmcp/cli)</option>
+              <option value="sse">Remote SSE (mcp-remote / HTTP)</option>
+            </select>
+          </label>
+          <label>
+            Server Name
+            <input id="export-server-name" spellcheck="false" placeholder="chainmcp" />
+          </label>
+        </div>
+
+        <div class="tab-controls" role="tablist">
+          <button id="tab-claude" type="button" class="tab-btn active" role="tab" aria-selected="true">Claude Desktop</button>
+          <button id="tab-cursor" type="button" class="tab-btn" role="tab" aria-selected="false">Cursor</button>
+          <button id="tab-code" type="button" class="tab-btn" role="tab" aria-selected="false">Claude Code CLI</button>
+        </div>
+
+        <div class="snippet-panel">
+          <div class="snippet-header">
+            <span id="snippet-filename" class="code-path">claude_desktop_config.json</span>
+            <button id="copy-snippet" type="button" class="secondary">Copy snippet</button>
+          </div>
+          <pre id="snippet-content" class="code-block" aria-live="polite">Ready to export snippets.</pre>
+        </div>
+
+        <div id="env-instructions-container" class="env-instructions hidden">
+          <h3 class="env-title">Required Environment Variables</h3>
+          <p class="hint">Export these in your shell before launching the MCP client:</p>
+          <pre id="env-instructions-content" class="code-block"></pre>
+        </div>
+      </section>
+
       <section class="card">
         <div class="card-heading">
           <h2>Builder</h2>
@@ -759,6 +806,83 @@ pre {
   color: var(--fg);
 }
 
+.tab-controls {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+}
+
+.tab-btn {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tab-btn:hover {
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.tab-btn.active {
+  background: var(--card);
+  color: var(--accent);
+  border-color: var(--border);
+  font-weight: 600;
+}
+
+.snippet-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+
+.snippet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+
+.code-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.code-block {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.env-instructions {
+  margin-top: 1rem;
+  border-top: 1px dashed var(--border);
+  padding-top: 0.75rem;
+}
+
+.env-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.9rem;
+}
+
 noscript {
   display: block;
   max-width: 60rem;
@@ -1078,6 +1202,7 @@ export const ADMIN_APP_JS = `(function () {
       })(tools[i]);
     }
     loadObservabilityMetrics().catch(function () {});
+    loadClientSnippets().catch(function () {});
   }
 
   async function testFireTool() {
@@ -1481,6 +1606,158 @@ export const ADMIN_APP_JS = `(function () {
     });
     obsDetailModal.addEventListener("click", function (e) {
       if (e.target === obsDetailModal) obsDetailModal.classList.add("hidden");
+    });
+  }
+
+  // 6. Client Export Snippets
+  var exportTransport = document.getElementById("export-transport");
+  var exportServerName = document.getElementById("export-server-name");
+  var loadSnippetsBtn = document.getElementById("load-snippets");
+  var tabClaude = document.getElementById("tab-claude");
+  var tabCursor = document.getElementById("tab-cursor");
+  var tabCode = document.getElementById("tab-code");
+  var snippetFilename = document.getElementById("snippet-filename");
+  var snippetContent = document.getElementById("snippet-content");
+  var copySnippetBtn = document.getElementById("copy-snippet");
+  var envContainer = document.getElementById("env-instructions-container");
+  var envContent = document.getElementById("env-instructions-content");
+
+  var currentSnippets = null;
+  var activeClientTab = "claude-desktop";
+
+  function updateSnippetDisplay() {
+    if (!currentSnippets || !currentSnippets.snippets) return;
+    if (activeClientTab === "claude-desktop") {
+      var d = currentSnippets.snippets.claudeDesktop;
+      if (snippetFilename) snippetFilename.textContent = d.filename || "claude_desktop_config.json";
+      if (snippetContent) snippetContent.textContent = d.snippet;
+    } else if (activeClientTab === "cursor") {
+      var c = currentSnippets.snippets.cursor;
+      if (snippetFilename) snippetFilename.textContent = c.filename || ".cursor/mcp.json";
+      if (snippetContent) snippetContent.textContent = c.snippet;
+    } else if (activeClientTab === "claude-code") {
+      var k = currentSnippets.snippets.claudeCode;
+      if (snippetFilename) snippetFilename.textContent = "Claude Code CLI";
+      if (snippetContent) snippetContent.textContent = k.snippet;
+    }
+
+    if (envContainer && envContent) {
+      if (currentSnippets.envInstructions && currentSnippets.envInstructions.length > 0) {
+        var lines = currentSnippets.envInstructions
+          .map(function (inst) {
+            return (
+              "# " +
+              inst.description +
+              "\n" +
+              inst.bashExport +
+              "\n# PowerShell:\n" +
+              inst.powershellExport
+            );
+          })
+          .join("\n\n");
+        envContent.textContent = lines;
+        envContainer.classList.remove("hidden");
+      } else {
+        envContainer.classList.add("hidden");
+      }
+    }
+  }
+
+  function setActiveTab(tab) {
+    activeClientTab = tab;
+    if (tabClaude) {
+      tabClaude.classList.toggle("active", tab === "claude-desktop");
+      tabClaude.setAttribute("aria-selected", tab === "claude-desktop" ? "true" : "false");
+    }
+    if (tabCursor) {
+      tabCursor.classList.toggle("active", tab === "cursor");
+      tabCursor.setAttribute("aria-selected", tab === "cursor" ? "true" : "false");
+    }
+    if (tabCode) {
+      tabCode.classList.toggle("active", tab === "claude-code");
+      tabCode.setAttribute("aria-selected", tab === "claude-code" ? "true" : "false");
+    }
+    updateSnippetDisplay();
+  }
+
+  async function loadClientSnippets() {
+    try {
+      var transport = exportTransport ? exportTransport.value : "stdio";
+      var name = exportServerName && exportServerName.value ? exportServerName.value.trim() : "";
+      var endpoint;
+      var picked;
+      try {
+        picked = selectedContract();
+      } catch (ignored) {}
+
+      if (picked) {
+        endpoint =
+          "/api/v1/tenants/" +
+          encodeURIComponent(picked.tenantId) +
+          "/contracts/" +
+          encodeURIComponent(picked.contractName) +
+          "/snippets?transport=" +
+          encodeURIComponent(transport) +
+          (name ? "&name=" + encodeURIComponent(name) : "");
+      } else {
+        endpoint =
+          "/api/v1/export/snippets?transport=" +
+          encodeURIComponent(transport) +
+          (name ? "&name=" + encodeURIComponent(name) : "");
+      }
+      var res = await request("GET", endpoint);
+      if (res.ok && res.payload) {
+        currentSnippets = res.payload;
+        if (exportServerName && !exportServerName.value && res.payload.serverName) {
+          exportServerName.value = res.payload.serverName;
+        }
+        updateSnippetDisplay();
+      } else if (snippetContent) {
+        snippetContent.textContent = "Failed to load snippets (HTTP " + res.status + ")";
+      }
+    } catch (err) {
+      if (snippetContent) {
+        snippetContent.textContent = "Failed to load snippets: " + (err.message || String(err));
+      }
+    }
+  }
+
+  if (tabClaude) {
+    tabClaude.addEventListener("click", function () {
+      setActiveTab("claude-desktop");
+    });
+  }
+  if (tabCursor) {
+    tabCursor.addEventListener("click", function () {
+      setActiveTab("cursor");
+    });
+  }
+  if (tabCode) {
+    tabCode.addEventListener("click", function () {
+      setActiveTab("claude-code");
+    });
+  }
+  if (loadSnippetsBtn) {
+    loadSnippetsBtn.addEventListener("click", action(loadClientSnippets));
+  }
+  if (exportTransport) {
+    exportTransport.addEventListener("change", action(loadClientSnippets));
+  }
+  if (exportServerName) {
+    exportServerName.addEventListener("change", action(loadClientSnippets));
+  }
+
+  if (copySnippetBtn) {
+    copySnippetBtn.addEventListener("click", function () {
+      if (snippetContent && snippetContent.textContent) {
+        navigator.clipboard.writeText(snippetContent.textContent).then(function () {
+          var prev = copySnippetBtn.textContent;
+          copySnippetBtn.textContent = "Copied!";
+          setTimeout(function () {
+            copySnippetBtn.textContent = prev;
+          }, 1500);
+        }).catch(function () {});
+      }
     });
   }
 

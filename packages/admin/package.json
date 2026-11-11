@@ -32,6 +32,7 @@
   "dependencies": {
     "@chainmcp/analytics": "workspace:*",
     "@chainmcp/auth": "workspace:*",
+    "@chainmcp/config": "workspace:*",
     "@chainmcp/core": "workspace:*",
     "@chainmcp/declarative": "workspace:*",
     "@chainmcp/executor": "workspace:*",

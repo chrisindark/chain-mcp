@@ -55,6 +55,7 @@ import {
   type TelemetryMetricsSummary,
   type TelemetryToolMetrics,
 } from "./types.js";
+import { generateClientExportSnippets } from "./snippets.js";
 import { ADMIN_APP_CSS, ADMIN_APP_JS, ADMIN_INDEX_HTML } from "./ui.js";
 
 const CONTRACT_NAME = /^[A-Za-z0-9_-]{1,64}$/;
@@ -313,6 +314,8 @@ export class DeclarativeAdmin {
   readonly #store: DescriptorRevisionStore;
   readonly #storageDriver: StorageDriver | undefined;
   readonly #configPath: string | undefined;
+  readonly #configObject: unknown | undefined;
+  readonly #serverName: string | undefined;
   readonly #onConfigSync: DeclarativeAdminOptions["onConfigSync"];
   readonly #transport: DeclarativeAdminOptions["transport"];
   readonly #resolveHost: DeclarativeAdminOptions["resolveHost"];
@@ -363,6 +366,8 @@ export class DeclarativeAdmin {
     this.#store = options.repository ?? new InMemoryDescriptorRevisionStore();
     this.#storageDriver = options.storageDriver;
     this.#configPath = options.configPath;
+    this.#configObject = options.configObject;
+    this.#serverName = options.serverName;
     this.#onConfigSync = options.onConfigSync;
     this.#transport = options.transport;
     this.#resolveHost = options.resolveHost;
@@ -446,10 +451,12 @@ export class DeclarativeAdmin {
           "GET /api/v1/status",
           "GET /api/v1/healthz",
           "GET /api/v1/contracts",
+          "GET /api/v1/export/snippets",
           "GET /api/v1/telemetry",
           "GET /api/v1/telemetry/metrics",
           "GET /api/v1/tenants/{tenant}/telemetry",
           "GET /api/v1/tenants/{tenant}/telemetry/metrics",
+          "GET /api/v1/tenants/{tenant}/contracts/{contract}/snippets",
           "GET /api/v1/tenants/{tenant}/contracts/{contract}/tools",
           "GET /api/v1/tenants/{tenant}/contracts/{contract}/tools/{toolName}",
           "PATCH /api/v1/tenants/{tenant}/contracts/{contract}/tools/{toolName}",
@@ -504,6 +511,30 @@ export class DeclarativeAdmin {
             allowedHosts: [...binding.destinationPolicy.allowedHosts],
           })),
       });
+    }
+
+    if (
+      segments.length === 2 &&
+      segments[0] === "export" &&
+      segments[1] === "snippets"
+    ) {
+      assertMethod(request, ["GET"]);
+      const transportParam = url.searchParams.get("transport");
+      const transport =
+        transportParam === "sse" || transportParam === "stdio"
+          ? transportParam
+          : "stdio";
+      const serverName =
+        url.searchParams.get("name") ?? this.#serverName ?? "chainmcp";
+      const sseUrl = url.searchParams.get("sseUrl") ?? undefined;
+      const snippets = await generateClientExportSnippets({
+        serverName,
+        configPath: this.#configPath,
+        configObject: this.#configObject,
+        transport,
+        sseUrl,
+      });
+      return jsonResponse(200, snippets);
     }
 
     if (
@@ -715,6 +746,26 @@ export class DeclarativeAdmin {
 
     if (rest.length === 1) {
       switch (rest[0]) {
+        case "snippets": {
+          assertMethod(request, ["GET"]);
+          const transportParam = url.searchParams.get("transport");
+          const transport =
+            transportParam === "sse" || transportParam === "stdio"
+              ? transportParam
+              : "stdio";
+          const serverName =
+            url.searchParams.get("name") ?? binding.contractName;
+          const sseUrl = url.searchParams.get("sseUrl") ?? undefined;
+          const snippets = await generateClientExportSnippets({
+            serverName,
+            configPath: this.#configPath,
+            configObject: this.#configObject,
+            transport,
+            sseUrl,
+          });
+          return jsonResponse(200, snippets);
+        }
+
         case "tools": {
           assertMethod(request, ["GET"]);
           const active = this.#gateway

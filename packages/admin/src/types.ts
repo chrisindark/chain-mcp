@@ -139,6 +139,10 @@ export interface DeclarativeAdminOptions {
   readonly tokenizer?: Tokenizer | undefined;
   /** Optional config file path to synchronize with descriptor and tool curation changes. */
   readonly configPath?: string | undefined;
+  /** Optional parsed config object for export snippet generation. */
+  readonly configObject?: unknown | undefined;
+  /** Optional server name for export snippet generation. */
+  readonly serverName?: string | undefined;
   /** Optional callback invoked when a tool's enabled/curated state changes. */
   readonly onConfigSync?:
     | ((update: {
@@ -527,3 +531,10 @@ export interface TelemetryEventResponse {
   readonly spanId?: string | undefined;
   readonly metadata?: Record<string, unknown> | undefined;
 }
+
+export type {
+  ClientSnippetDefinition,
+  ClientSnippetsResponse,
+  GenerateSnippetsOptions,
+  SnippetEnvInstruction,
+} from "./snippets.js";
