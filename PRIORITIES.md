@@ -768,7 +768,7 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 
 ### M13-3 — Interactive Projection Playground with live upstream test-firing & token-saving diffs
 
-**Status: ready to start.** Deliver an interactive playground in Studio to test-fire tools against upstream APIs, inspect raw vs projected payloads side by side, and interactively configure `createFieldProjector()` include/exclude paths with live token-saving calculation.
+**Status: done (2026-11-11).** Delivered interactive projection playground in Studio to test-fire tools against upstream APIs in sandboxed, non-cached mode, inspect raw vs projected payloads side by side, and interactively configure `createFieldProjector()` include/exclude paths with live token-saving calculations and token reduction percentages. Handled error bounds and SSRF destination policy enforcement. Unit and integration tests in `@chainmcp/admin/tests/api.test.ts` and `@chainmcp/cli/tests/studio.test.ts`.
 
 **Do**
 

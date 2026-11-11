@@ -443,4 +443,22 @@ contracts:
     );
     expect(updatedContract.tools.exclude).toEqual(["delete_item"]);
   });
+
+  it("M13-3: serves Interactive Projection Playground UI and supports test-firing", async () => {
+    const result = await studioCommand({
+      port: 0,
+      host: "127.0.0.1",
+    });
+    activeStudios.push(result);
+
+    // 1. Verify HTML console includes playground sections
+    const pageRes = await fetch(`${result.url}/`);
+    expect(pageRes.status).toBe(200);
+    const html = await pageRes.text();
+    expect(html).toContain('id="playground-section"');
+    expect(html).toContain("Projection Playground");
+    expect(html).toContain('id="pg-test-fire"');
+    expect(html).toContain("playground-diff-grid");
+    expect(html).toContain('id="m-savings-pct"');
+  });
 });

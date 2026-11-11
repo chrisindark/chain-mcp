@@ -74,6 +74,61 @@ export const ADMIN_INDEX_HTML = `<!doctype html>
         </p>
       </section>
 
+      <section class="card" id="playground-section">
+        <div class="card-heading">
+          <h2>Interactive Projection Playground</h2>
+          <span class="badge" id="playground-tool-badge">Select a tool</span>
+        </div>
+        <p class="hint">
+          Test-fire tools against upstream APIs in sandboxed, non-cached mode.
+          Configure field inclusion and exclusion paths to inspect raw vs projected
+          payloads side by side and calculate context token savings.
+        </p>
+
+        <div class="grid">
+          <label>
+            Tool to test
+            <select id="pg-tool-select">
+              <option value="">Load tools first</option>
+            </select>
+          </label>
+          <label>
+            Include fields (comma-separated, e.g. <code>id, name</code>)
+            <input id="pg-include" spellcheck="false" placeholder="id, name, email" />
+          </label>
+        </div>
+
+        <div class="grid">
+          <label>
+            Exclude fields (comma-separated, e.g. <code>metadata, internalId</code>)
+            <input id="pg-exclude" spellcheck="false" placeholder="metadata, internalId" />
+          </label>
+          <div class="playground-tokens" id="pg-metrics-summary">
+            <span class="token-metric">Raw: <strong id="m-raw-tokens">-</strong> tokens</span>
+            <span class="token-metric">Projected: <strong id="m-proj-tokens">-</strong> tokens</span>
+            <span class="token-metric savings">Reduction: <strong id="m-savings-pct">-</strong></span>
+          </div>
+        </div>
+
+        <label for="pg-arguments">Arguments (JSON object)<textarea id="pg-arguments" rows="4" spellcheck="false">{}</textarea></label>
+
+        <div class="actions">
+          <button id="pg-test-fire" type="button" class="primary">Test Fire Upstream</button>
+          <span id="pg-status" class="status" role="status" aria-live="polite"></span>
+        </div>
+
+        <div class="playground-diff-grid">
+          <div>
+            <h3>Raw Upstream Output</h3>
+            <pre id="pg-raw-output">Ready to fire.</pre>
+          </div>
+          <div>
+            <h3>Projected LLM Output</h3>
+            <pre id="pg-projected-output">Ready to fire.</pre>
+          </div>
+        </div>
+      </section>
+
       <section class="card">
         <div class="card-heading">
           <h2>Builder</h2>
@@ -374,6 +429,34 @@ button:disabled {
   gap: 0.5rem;
 }
 
+.playground-diff-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+@media (max-width: 768px) {
+  .playground-diff-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.playground-tokens {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+}
+
+.token-metric.savings strong {
+  color: var(--ok);
+}
+
 .hint {
   margin: 0.75rem 0 0;
   font-size: 0.8rem;
@@ -450,10 +533,22 @@ export const ADMIN_APP_JS = `(function () {
   var output = document.getElementById("output");
   var status = document.getElementById("status");
   var toolsList = document.getElementById("tools-list");
+  var pgToolSelect = document.getElementById("pg-tool-select");
+  var pgInclude = document.getElementById("pg-include");
+  var pgExclude = document.getElementById("pg-exclude");
+  var pgArguments = document.getElementById("pg-arguments");
+  var pgRawOutput = document.getElementById("pg-raw-output");
+  var pgProjectedOutput = document.getElementById("pg-projected-output");
+  var pgStatus = document.getElementById("pg-status");
+  var pgBadge = document.getElementById("playground-tool-badge");
+  var mRawTokens = document.getElementById("m-raw-tokens");
+  var mProjTokens = document.getElementById("m-proj-tokens");
+  var mSavingsPct = document.getElementById("m-savings-pct");
   var buttons = [
     document.getElementById("load"),
     document.getElementById("revisions"),
     document.getElementById("load-tools"),
+    document.getElementById("pg-test-fire"),
     document.getElementById("validate"),
     document.getElementById("preview"),
     document.getElementById("publish"),
@@ -586,15 +681,29 @@ export const ADMIN_APP_JS = `(function () {
     }
     var tools = (result.payload && result.payload.tools) || [];
     toolsList.textContent = "";
+    if (pgToolSelect) {
+      pgToolSelect.textContent = "";
+    }
     if (tools.length === 0) {
       var emptyMsg = document.createElement("p");
       emptyMsg.className = "hint";
       emptyMsg.textContent = "No tools defined in this contract.";
       toolsList.appendChild(emptyMsg);
+      if (pgBadge) pgBadge.textContent = "No tools";
       return;
     }
 
+    if (pgBadge && tools.length > 0) {
+      pgBadge.textContent = tools[0].name;
+    }
+
     for (var i = 0; i < tools.length; i += 1) {
+      if (pgToolSelect) {
+        var opt = document.createElement("option");
+        opt.value = tools[i].name;
+        opt.textContent = tools[i].name + (tools[i].enabled === false ? " (pruned)" : "");
+        pgToolSelect.appendChild(opt);
+      }
       (function (tool) {
         var item = document.createElement("div");
         item.className = "tool-item";
@@ -666,12 +775,86 @@ export const ADMIN_APP_JS = `(function () {
           await loadTools();
         }));
 
+        var playBtn = document.createElement("button");
+        playBtn.type = "button";
+        playBtn.className = "secondary";
+        playBtn.textContent = "Playground";
+        playBtn.addEventListener("click", function () {
+          if (pgToolSelect) pgToolSelect.value = tool.name;
+          if (pgBadge) pgBadge.textContent = tool.name;
+          var el = document.getElementById("playground-section");
+          if (el) el.scrollIntoView({ behavior: "smooth" });
+          if (pgArguments) pgArguments.focus();
+        });
+
         actions.appendChild(toggleBtn);
+        actions.appendChild(playBtn);
         item.appendChild(actions);
 
         toolsList.appendChild(item);
       })(tools[i]);
     }
+  }
+
+  async function testFireTool() {
+    var toolName = pgToolSelect ? pgToolSelect.value : "";
+    if (!toolName) {
+      setStatus("Select a tool to test first", "error");
+      return;
+    }
+    var parsedArgs = {};
+    var rawArgs = pgArguments ? pgArguments.value.trim() : "";
+    if (rawArgs) {
+      try {
+        parsedArgs = JSON.parse(rawArgs);
+      } catch (err) {
+        showError("Arguments must be valid JSON: " + (err && err.message ? err.message : String(err)));
+        return;
+      }
+    }
+    var body = { arguments: parsedArgs };
+    var inc = pgInclude ? pgInclude.value.trim() : "";
+    var exc = pgExclude ? pgExclude.value.trim() : "";
+    if (inc || exc) {
+      body.projection = {};
+      if (inc) body.projection.include = inc.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+      if (exc) body.projection.exclude = exc.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+    }
+
+    if (pgStatus) {
+      pgStatus.textContent = "Test firing upstream...";
+      pgStatus.className = "status";
+    }
+
+    var res = await request(
+      "POST",
+      endpoint("tools/" + encodeURIComponent(toolName) + "/test"),
+      body
+    );
+
+    if (!res.ok) {
+      if (pgRawOutput) pgRawOutput.textContent = JSON.stringify(res.payload, null, 2);
+      if (pgProjectedOutput) pgProjectedOutput.textContent = "Execution failed.";
+      if (pgStatus) {
+        pgStatus.textContent = "HTTP " + res.status + " · Test failed";
+        pgStatus.className = "status error";
+      }
+      return;
+    }
+
+    var data = res.payload;
+    if (pgRawOutput) pgRawOutput.textContent = JSON.stringify(data.raw, null, 2);
+    if (pgProjectedOutput) pgProjectedOutput.textContent = JSON.stringify(data.projected, null, 2);
+    if (data.metrics) {
+      if (mRawTokens) mRawTokens.textContent = String(data.metrics.rawTokens);
+      if (mProjTokens) mProjTokens.textContent = String(data.metrics.projectedTokens);
+      if (mSavingsPct) mSavingsPct.textContent = data.metrics.percentSavings + "% (" + data.metrics.savedTokens + " tokens)";
+    }
+    if (pgStatus) {
+      pgStatus.textContent = "HTTP 200 · " + data.executionTimeMs + " ms";
+      pgStatus.className = "status ok";
+    }
+    setStatus("Tool '" + toolName + "' test fired in " + data.executionTimeMs + " ms", "ok");
   }
 
   async function submit(action) {
@@ -716,6 +899,15 @@ export const ADMIN_APP_JS = `(function () {
   document.getElementById("load").addEventListener("click", action(loadContracts));
   document.getElementById("revisions").addEventListener("click", action(loadRevisions));
   document.getElementById("load-tools").addEventListener("click", action(loadTools));
+  if (pgToolSelect) {
+    pgToolSelect.addEventListener("change", function () {
+      if (pgBadge) pgBadge.textContent = pgToolSelect.value;
+    });
+  }
+  var testFireBtn = document.getElementById("pg-test-fire");
+  if (testFireBtn) {
+    testFireBtn.addEventListener("click", action(testFireTool));
+  }
   contractSelect.addEventListener("change", action(loadTools));
   document.getElementById("validate").addEventListener("click", action(function () {
     return submit("validate");

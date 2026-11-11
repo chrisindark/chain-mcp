@@ -1,4 +1,4 @@
-import type { FieldSelection, Logger } from "@chainmcp/core";
+import type { FieldSelection, Logger, Tokenizer } from "@chainmcp/core";
 import type { UpstreamCredentialProvider } from "@chainmcp/auth";
 import type { HostResolver, UpstreamTransport } from "@chainmcp/executor";
 import type { StorageDriver } from "@chainmcp/storage";
@@ -73,6 +73,7 @@ export type DeclarativeAdminAuditEventType =
   | "admin_preview"
   | "admin_publish"
   | "admin_curate"
+  | "admin_test_tool"
   | "admin_rollback"
   | "admin_restore"
   | "admin_auth_failed"
@@ -134,6 +135,8 @@ export interface DeclarativeAdminOptions {
   readonly logger?: Logger;
   readonly auditSink?: DeclarativeAdminAuditSink;
   readonly now?: () => number;
+  /** Optional tokenizer used for token counting in playground and metrics. */
+  readonly tokenizer?: Tokenizer | undefined;
   /** Optional config file path to synchronize with descriptor and tool curation changes. */
   readonly configPath?: string | undefined;
   /** Optional callback invoked when a tool's enabled/curated state changes. */
@@ -438,5 +441,31 @@ export function descriptorPolicyPreview(
     ...(policy.outputFields === undefined
       ? {}
       : { outputFields: policy.outputFields }),
+  };
+}
+
+export interface DeclarativeAdminToolTestRequest {
+  readonly arguments?: Record<string, unknown> | undefined;
+  readonly projection?: FieldSelection | undefined;
+}
+
+export interface DeclarativeAdminToolTestMetrics {
+  readonly rawTokens: number;
+  readonly projectedTokens: number;
+  readonly savedTokens: number;
+  readonly percentSavings: number;
+  readonly tokenizerId: string;
+}
+
+export interface DeclarativeAdminToolTestResult {
+  readonly ok: boolean;
+  readonly toolName: string;
+  readonly executionTimeMs: number;
+  readonly raw?: unknown;
+  readonly projected?: unknown;
+  readonly metrics?: DeclarativeAdminToolTestMetrics;
+  readonly error?: {
+    readonly code: string;
+    readonly message: string;
   };
 }

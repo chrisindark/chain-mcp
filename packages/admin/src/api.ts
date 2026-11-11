@@ -1,4 +1,12 @@
-import type { ToolDefinition } from "@chainmcp/core";
+import { randomBytes } from "node:crypto";
+import {
+  assertFieldSelection,
+  createFieldProjector,
+  type FieldSelection,
+  type Tokenizer,
+  type ToolContext,
+  type ToolDefinition,
+} from "@chainmcp/core";
 import type { StorageDriver } from "@chainmcp/storage";
 import {
   DeclarativeDescriptorError,
@@ -60,6 +68,17 @@ const UI_HEADERS: Readonly<Record<string, string>> = {
     "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 };
 
+function createDefaultTokenizer(): Tokenizer {
+  return {
+    id: "approximate-chars-ratio-4",
+    measurement: "estimate",
+    count(text: string): number {
+      if (!text) return 0;
+      return Math.ceil(text.length / 4);
+    },
+  };
+}
+
 /**
  * Self-hosted admin surface for versioned declarative HTTP descriptors.
  *
@@ -85,6 +104,7 @@ export class DeclarativeAdmin {
   readonly #onConfigSync: DeclarativeAdminOptions["onConfigSync"];
   readonly #transport: DeclarativeAdminOptions["transport"];
   readonly #resolveHost: DeclarativeAdminOptions["resolveHost"];
+  readonly #tokenizer: Tokenizer;
 
   constructor(options: DeclarativeAdminOptions) {
     if (typeof options !== "object" || options === null) {
@@ -134,6 +154,7 @@ export class DeclarativeAdmin {
     this.#onConfigSync = options.onConfigSync;
     this.#transport = options.transport;
     this.#resolveHost = options.resolveHost;
+    this.#tokenizer = options.tokenizer ?? createDefaultTokenizer();
     if (
       typeof this.#store !== "object" ||
       this.#store === null ||
@@ -218,6 +239,7 @@ export class DeclarativeAdmin {
           "GET /api/v1/tenants/{tenant}/contracts/{contract}/tools",
           "GET /api/v1/tenants/{tenant}/contracts/{contract}/tools/{toolName}",
           "PATCH /api/v1/tenants/{tenant}/contracts/{contract}/tools/{toolName}",
+          "POST /api/v1/tenants/{tenant}/contracts/{contract}/tools/{toolName}/test",
           "POST /api/v1/tenants/{tenant}/contracts/{contract}/curate",
           "GET /api/v1/tenants/{tenant}/contracts/{contract}/revisions",
           "GET /api/v1/tenants/{tenant}/contracts/{contract}/revisions/{revisionId}",
@@ -439,6 +461,18 @@ export class DeclarativeAdmin {
       assertMethod(request, ["PATCH"]);
       const toolName = rest[1]!;
       return await this.handleCurateTool(
+        request,
+        binding,
+        toolName,
+        route,
+        principal,
+      );
+    }
+
+    if (rest.length === 3 && rest[0] === "tools" && rest[2] === "test") {
+      assertMethod(request, ["POST"]);
+      const toolName = rest[1]!;
+      return await this.handleTestTool(
         request,
         binding,
         toolName,
@@ -739,6 +773,226 @@ export class DeclarativeAdmin {
       route,
       principal,
     );
+  }
+
+  private async handleTestTool(
+    request: Request,
+    binding: DeclarativeAdminContractBinding,
+    toolName: string,
+    route: string,
+    principal: DeclarativeAdminPrincipal,
+  ): Promise<Response> {
+    const body = await readJsonBody(request, this.#maxRequestBytes);
+    if (body !== null && typeof body !== "object") {
+      throw new DeclarativeAdminError(
+        "ADMIN_REQUEST_INVALID",
+        400,
+        "Test request body must be a JSON object",
+      );
+    }
+    const dict = (body as Record<string, unknown>) ?? {};
+
+    const activeRecord = await this.readStore(() =>
+      this.#store.getActive(binding.tenantId, binding.contractName),
+    ).catch(() => undefined);
+
+    let desc: DeclarativeToolDescriptor | undefined;
+    if (activeRecord && activeRecord.descriptors.length > 0) {
+      desc = activeRecord.descriptors.find((d) => d.name === toolName);
+    }
+
+    if (!desc) {
+      const activeGateway = this.#gateway
+        .getRegistry()
+        .getActiveRevision(binding.tenantId, binding.contractName);
+      if (
+        activeGateway?.metadata &&
+        Array.isArray(activeGateway.metadata.descriptorSet)
+      ) {
+        desc = (
+          activeGateway.metadata
+            .descriptorSet as readonly DeclarativeToolDescriptor[]
+        ).find((d) => d.name === toolName);
+      }
+    }
+
+    if (!desc) {
+      throw new DeclarativeAdminError(
+        "ADMIN_TOOL_NOT_FOUND",
+        404,
+        `Tool '${toolName}' was not found in contract '${binding.contractName}'`,
+      );
+    }
+
+    // Build sandboxed executor for this binding with direct un-cached execution
+    const limits = binding.limits;
+    const transport = binding.transport ?? this.#transport;
+    const resolveHost = binding.resolveHost ?? this.#resolveHost;
+    const executor = createUpstreamExecutor({
+      baseUrl: binding.destinationPolicy.baseUrl,
+      allowedHosts: binding.destinationPolicy.allowedHosts,
+      ...(binding.destinationPolicy.allowInsecureHttp === undefined
+        ? {}
+        : {
+            allowInsecureHttp: binding.destinationPolicy.allowInsecureHttp,
+          }),
+      ...(limits?.maxResponseBytes === undefined
+        ? {}
+        : { maxResponseBytes: limits.maxResponseBytes }),
+      ...(limits?.maxRequestBytes === undefined
+        ? {}
+        : { maxRequestBytes: limits.maxRequestBytes }),
+      ...(limits?.maxRedirects === undefined
+        ? {}
+        : { maxRedirects: limits.maxRedirects }),
+      ...(limits?.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: limits.timeoutMs }),
+      ownerTenantId: binding.tenantId,
+      ...(resolveHost === undefined ? {} : { resolveHost }),
+      ...(transport === undefined ? {} : { transport }),
+      ...(binding.credentialProvider === undefined
+        ? {}
+        : { credentialProvider: binding.credentialProvider }),
+    });
+
+    const source = new DeclarativeToolSource({
+      descriptors: [{ ...desc, enabled: true }],
+      executor,
+      ...(binding.authSchemes === undefined
+        ? {}
+        : { authSchemes: binding.authSchemes }),
+    });
+
+    const [tool] = source.getTools();
+    if (!tool) {
+      throw new DeclarativeAdminError(
+        "ADMIN_TOOL_NOT_FOUND",
+        404,
+        `Failed to bind tool '${toolName}' for testing`,
+      );
+    }
+
+    const testArgs =
+      "arguments" in dict &&
+      typeof dict.arguments === "object" &&
+      dict.arguments !== null
+        ? (dict.arguments as Record<string, unknown>)
+        : {};
+
+    let selection: FieldSelection | undefined;
+    if (
+      "projection" in dict &&
+      typeof dict.projection === "object" &&
+      dict.projection !== null
+    ) {
+      selection = dict.projection as FieldSelection;
+      try {
+        assertFieldSelection(selection);
+      } catch (error) {
+        throw new DeclarativeAdminError(
+          "ADMIN_REQUEST_INVALID",
+          400,
+          `Invalid projection: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    } else if (desc.policy?.outputFields) {
+      selection = desc.policy.outputFields;
+    }
+
+    const context: ToolContext = {
+      tenantId: binding.tenantId,
+      requestId: `test-${Date.now()}-${randomBytes(4).toString("hex")}`,
+      principal: {
+        id: principal.tokenId,
+        scopes: desc.policy?.requiredScopes ?? [],
+      },
+    };
+
+    const startTime = performance.now();
+    let raw: unknown;
+    try {
+      raw = await tool.execute(testArgs, context);
+    } catch (error) {
+      const executionTimeMs = Math.round(performance.now() - startTime);
+      await this.emitAudit({
+        type: "admin_test_tool",
+        timestamp: this.#now(),
+        route,
+        tokenId: principal.tokenId,
+        tenantId: binding.tenantId,
+        contractName: binding.contractName,
+        toolName,
+        reason: `test_failed:${error instanceof Error ? error.message : String(error)}`,
+      });
+
+      return jsonResponse(400, {
+        ok: false,
+        toolName,
+        executionTimeMs,
+        error: {
+          code:
+            error instanceof Error && "code" in error
+              ? String((error as { code: unknown }).code)
+              : "TEST_EXECUTION_FAILED",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+
+    const executionTimeMs = Math.round(performance.now() - startTime);
+
+    let projected = raw;
+    if (
+      selection &&
+      ((selection.include && selection.include.length > 0) ||
+        (selection.exclude && selection.exclude.length > 0))
+    ) {
+      const projector = createFieldProjector();
+      projected = projector.project({
+        tool: {
+          name: toolName,
+          output: { fields: selection },
+        } as unknown as ToolDefinition,
+        result: raw,
+        context,
+      });
+    }
+
+    const rawStr = typeof raw === "string" ? raw : JSON.stringify(raw);
+    const projectedStr =
+      typeof projected === "string" ? projected : JSON.stringify(projected);
+    const rawTokens = this.#tokenizer.count(rawStr);
+    const projectedTokens = this.#tokenizer.count(projectedStr);
+    const savedTokens = Math.max(0, rawTokens - projectedTokens);
+    const percentSavings =
+      rawTokens > 0 ? Math.round((savedTokens / rawTokens) * 100) : 0;
+
+    await this.emitAudit({
+      type: "admin_test_tool",
+      timestamp: this.#now(),
+      route,
+      tokenId: principal.tokenId,
+      tenantId: binding.tenantId,
+      contractName: binding.contractName,
+      toolName,
+      reason: `test_success:${savedTokens}_tokens_saved`,
+    });
+
+    return jsonResponse(200, {
+      ok: true,
+      toolName,
+      executionTimeMs,
+      raw,
+      projected,
+      metrics: {
+        rawTokens,
+        projectedTokens,
+        savedTokens,
+        percentSavings,
+        tokenizerId: this.#tokenizer.id,
+      },
+    });
   }
 
   private async handleCurate(

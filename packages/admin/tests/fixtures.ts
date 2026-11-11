@@ -1,4 +1,9 @@
 import type { DeclarativeAuthSchemeMap } from "@chainmcp/declarative";
+import type {
+  UpstreamTransport,
+  UpstreamTransportRequest,
+  UpstreamTransportResponse,
+} from "@chainmcp/executor";
 import { DynamicGateway } from "@chainmcp/gateway";
 
 import {
@@ -64,6 +69,7 @@ export function makeBinding(
       allowedHosts: ["api.example.com"],
     },
     authSchemes,
+    resolveHost: async () => ["8.8.8.8"],
     ...overrides,
   };
 }
@@ -124,3 +130,29 @@ export function adminRequest(
 }
 
 export const CONTRACT_PATH = "/api/v1/tenants/tenant-a/contracts/users";
+
+export class FakeTransport implements UpstreamTransport {
+  readonly requests: UpstreamTransportRequest[] = [];
+  responder: (
+    request: UpstreamTransportRequest,
+  ) => UpstreamTransportResponse | Promise<UpstreamTransportResponse> = () =>
+    jsonResponse({ ok: true });
+
+  async request(
+    request: UpstreamTransportRequest,
+  ): Promise<UpstreamTransportResponse> {
+    this.requests.push(request);
+    return await this.responder(request);
+  }
+}
+
+export function jsonResponse(
+  body: unknown,
+  status = 200,
+): UpstreamTransportResponse {
+  return {
+    status,
+    headers: { "content-type": "application/json" },
+    body: new TextEncoder().encode(JSON.stringify(body)),
+  };
+}

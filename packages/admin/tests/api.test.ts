@@ -7,8 +7,10 @@ import { DeclarativeAdmin, extractBearerToken } from "../src/index.js";
 import {
   ADMIN_TOKEN,
   CONTRACT_PATH,
+  FakeTransport,
   SCOPED_TOKEN,
   adminRequest,
+  jsonResponse,
   makeAdmin,
   makeBinding,
   makeDescriptor,
@@ -729,6 +731,239 @@ describe("tool curation and endpoint filtering", () => {
     expect(forbiddenRes.status).toBe(403);
     expect(await forbiddenRes.json()).toMatchObject({
       error: { code: "ADMIN_TENANT_FORBIDDEN" },
+    });
+  });
+
+  describe("M13-3: interactive projection playground and test-firing", () => {
+    const mockCredentialProvider = {
+      resolveCredential: async () => ({
+        type: "apiKey" as const,
+        name: "X-API-Key",
+        location: "header" as const,
+        value: "test-secret-key",
+      }),
+    };
+
+    it("test-fires a tool, applies projection, and calculates token savings", async () => {
+      const transport = new FakeTransport();
+      const rawData = {
+        id: "u123",
+        username: "alice",
+        email: "alice@example.com",
+        secretHash: "sensitive-password-hash-never-send-to-llm",
+        preferences: {
+          theme: "dark",
+          notifications: { email: true, sms: false, push: true },
+        },
+        roles: ["admin", "editor"],
+      };
+      transport.responder = () => jsonResponse(rawData);
+
+      const binding = makeBinding({
+        credentialProvider: mockCredentialProvider,
+      });
+      const { admin, audit } = makeAdmin({ transport, contracts: [binding] });
+
+      const desc = makeDescriptor({
+        name: "get_user",
+        request: {
+          method: "GET",
+          path: "/users/{userId}",
+          parameters: [{ name: "userId", in: "path", required: true }],
+        },
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["userId"],
+          properties: {
+            userId: { type: "string" },
+          },
+        },
+      });
+
+      const pubRes = await admin.handle(
+        adminRequest(`${CONTRACT_PATH}/publish`, "POST", {
+          body: { descriptors: [desc] },
+        }),
+      );
+      expect(pubRes.status).toBe(201);
+
+      // 1. Test fire without projection: returns full raw response as projected, zero saved tokens
+      const testResNoProj = await admin.handle(
+        adminRequest(`${CONTRACT_PATH}/tools/get_user/test`, "POST", {
+          body: {
+            arguments: { userId: "u123" },
+          },
+        }),
+      );
+      expect(testResNoProj.status).toBe(200);
+      const jsonNoProj = await testResNoProj.json();
+      expect(jsonNoProj.ok).toBe(true);
+      expect(jsonNoProj.toolName).toBe("get_user");
+      expect(jsonNoProj.executionTimeMs).toBeGreaterThanOrEqual(0);
+      expect(jsonNoProj.raw).toEqual(rawData);
+      expect(jsonNoProj.projected).toEqual(rawData);
+      expect(jsonNoProj.metrics.rawTokens).toBeGreaterThan(0);
+      expect(jsonNoProj.metrics.projectedTokens).toBe(
+        jsonNoProj.metrics.rawTokens,
+      );
+      expect(jsonNoProj.metrics.savedTokens).toBe(0);
+      expect(jsonNoProj.metrics.percentSavings).toBe(0);
+
+      // 2. Test fire with `include` projection: prunes unselected properties and saves tokens
+      const testResInclude = await admin.handle(
+        adminRequest(`${CONTRACT_PATH}/tools/get_user/test`, "POST", {
+          body: {
+            arguments: { userId: "u123" },
+            projection: { include: ["id", "username"] },
+          },
+        }),
+      );
+      expect(testResInclude.status).toBe(200);
+      const jsonInclude = await testResInclude.json();
+      expect(jsonInclude.ok).toBe(true);
+      expect(jsonInclude.raw).toEqual(rawData);
+      expect(jsonInclude.projected).toEqual({ id: "u123", username: "alice" });
+      expect(jsonInclude.metrics.rawTokens).toBeGreaterThan(0);
+      expect(jsonInclude.metrics.projectedTokens).toBeLessThan(
+        jsonInclude.metrics.rawTokens,
+      );
+      expect(jsonInclude.metrics.savedTokens).toBe(
+        jsonInclude.metrics.rawTokens - jsonInclude.metrics.projectedTokens,
+      );
+      expect(jsonInclude.metrics.savedTokens).toBeGreaterThan(0);
+      expect(jsonInclude.metrics.percentSavings).toBeGreaterThan(0);
+
+      // 3. Test fire with `exclude` projection: removes secretHash
+      const testResExclude = await admin.handle(
+        adminRequest(`${CONTRACT_PATH}/tools/get_user/test`, "POST", {
+          body: {
+            arguments: { userId: "u123" },
+            projection: { exclude: ["secretHash"] },
+          },
+        }),
+      );
+      expect(testResExclude.status).toBe(200);
+      const jsonExclude = await testResExclude.json();
+      expect(jsonExclude.ok).toBe(true);
+      expect(jsonExclude.projected.secretHash).toBeUndefined();
+      expect(jsonExclude.projected.id).toBe("u123");
+      expect(jsonExclude.metrics.savedTokens).toBeGreaterThan(0);
+
+      // 4. Verify audit event was logged without credentials
+      const testEvents = audit.filter((e) => e.type === "admin_test_tool");
+      expect(testEvents.length).toBeGreaterThanOrEqual(3);
+      for (const ev of testEvents) {
+        expect(ev.contractName).toBe("users");
+        expect(ev.toolName).toBe("get_user");
+        expect(JSON.stringify(ev)).not.toContain("sensitive-password-hash");
+      }
+    });
+
+    it("applies descriptor policy outputFields when request projection is omitted", async () => {
+      const transport = new FakeTransport();
+      const rawData = {
+        id: "u99",
+        name: "Bob",
+        extraDetails: "large text string...",
+      };
+      transport.responder = () => jsonResponse(rawData);
+
+      const binding = makeBinding({
+        credentialProvider: mockCredentialProvider,
+      });
+      const { admin } = makeAdmin({ transport, contracts: [binding] });
+
+      const desc = makeDescriptor({
+        name: "get_user",
+        policy: {
+          outputFields: { include: ["id", "name"] },
+        },
+      });
+
+      await admin.handle(
+        adminRequest(`${CONTRACT_PATH}/publish`, "POST", {
+          body: { descriptors: [desc] },
+        }),
+      );
+
+      const testRes = await admin.handle(
+        adminRequest(`${CONTRACT_PATH}/tools/get_user/test`, "POST", {
+          body: { arguments: { userId: "u99" } },
+        }),
+      );
+      expect(testRes.status).toBe(200);
+      const json = await testRes.json();
+      expect(json.ok).toBe(true);
+      expect(json.raw).toEqual(rawData);
+      expect(json.projected).toEqual({ id: "u99", name: "Bob" });
+      expect(json.metrics.savedTokens).toBeGreaterThan(0);
+    });
+
+    it("handles negative cases: unknown tool, forbidden tenant, invalid projection, and upstream failure", async () => {
+      const transport = new FakeTransport();
+      const binding = makeBinding({
+        credentialProvider: mockCredentialProvider,
+      });
+      const { admin } = makeAdmin({ transport, contracts: [binding] });
+      const desc = makeDescriptor({ name: "get_user" });
+
+      await admin.handle(
+        adminRequest(`${CONTRACT_PATH}/publish`, "POST", {
+          body: { descriptors: [desc] },
+        }),
+      );
+
+      // 1. Unknown tool -> 404
+      const unknownRes = await admin.handle(
+        adminRequest(`${CONTRACT_PATH}/tools/ghost_tool/test`, "POST", {
+          body: {},
+        }),
+      );
+      expect(unknownRes.status).toBe(404);
+      expect(await unknownRes.json()).toMatchObject({
+        error: { code: "ADMIN_TOOL_NOT_FOUND" },
+      });
+
+      // 2. Forbidden tenant -> 403
+      const forbiddenRes = await admin.handle(
+        adminRequest(`${CONTRACT_PATH}/tools/get_user/test`, "POST", {
+          token: SCOPED_TOKEN, // for tenant-b, contract is tenant-a
+          body: {},
+        }),
+      );
+      expect(forbiddenRes.status).toBe(403);
+      expect(await forbiddenRes.json()).toMatchObject({
+        error: { code: "ADMIN_TENANT_FORBIDDEN" },
+      });
+
+      // 3. Invalid projection syntax -> 400
+      const invalidProjRes = await admin.handle(
+        adminRequest(`${CONTRACT_PATH}/tools/get_user/test`, "POST", {
+          body: {
+            projection: { include: "not-an-array" },
+          },
+        }),
+      );
+      expect(invalidProjRes.status).toBe(400);
+      expect(await invalidProjRes.json()).toMatchObject({
+        error: { code: "ADMIN_REQUEST_INVALID" },
+      });
+
+      // 4. Upstream failure -> 400 ok: false
+      transport.responder = () => {
+        throw new Error("Connection refused by upstream host");
+      };
+      const failRes = await admin.handle(
+        adminRequest(`${CONTRACT_PATH}/tools/get_user/test`, "POST", {
+          body: { arguments: { userId: "u1" } },
+        }),
+      );
+      expect(failRes.status).toBe(400);
+      const failJson = await failRes.json();
+      expect(failJson.ok).toBe(false);
+      expect(failJson.toolName).toBe("get_user");
+      expect(failJson.error.message).toContain("Upstream request failed");
     });
   });
 });
