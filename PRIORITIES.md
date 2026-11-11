@@ -1,8 +1,8 @@
 # ChainMcp Priorities — Local-First Path to 1.0
 
-**Status:** pre-1.0 (`0.6.0`)
+**Status:** pre-1.0 (`0.7.0`)
 **Baseline:** `pnpm check` green (format, lint, build, typecheck, all workspace tests, SBOM, version sync).
-**Scope:** all workspace packages and capabilities. The 0.6.0 release is published to the public npm registry under the `@chainmcp` scope.
+**Scope:** all workspace packages and capabilities. The 0.7.0 release is published to the public npm registry under the `@chainmcp` scope.
 
 This file replaces the open items that were previously spread across `ROADMAP.md`, the remediation plan, and the risk register. `ROADMAP.md` remains the historical delivery record; this file is the active work queue.
 

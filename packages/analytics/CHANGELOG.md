@@ -1,5 +1,13 @@
 # @chainmcp/analytics
 
+## 0.7.0
+
+### Patch Changes
+
+- Updated dependencies [984d136]
+  - @chainmcp/storage@0.7.0
+  - @chainmcp/core@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes

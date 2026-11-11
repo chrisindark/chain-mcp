@@ -1,5 +1,59 @@
 # @chainmcp/cli
 
+## 0.7.0
+
+### Minor Changes
+
+- 93822a8: Add one-click client export snippets with secret redaction (M13-5):
+
+  - `@chainmcp/admin`: Added `generateClientExportSnippets()` and client snippet types generating ready-to-paste configurations for Claude Desktop (`claude_desktop_config.json`), Cursor (`.cursor/mcp.json`), and Claude Code CLI for both `stdio` and `sse` transports with OS path guidance.
+  - `@chainmcp/admin`: Enforced complete secret redaction via `@chainmcp/config`'s `redactConfigSecrets` and deep object sanitization, ensuring zero credential leakage in snippets and environment instructions.
+  - `@chainmcp/admin`: Exposed `GET /api/v1/export/snippets` and `GET /api/v1/tenants/{tenant}/contracts/{contract}/snippets` endpoints with transport, server name, and SSE URL options.
+  - `@chainmcp/admin`: Added Client Export Snippets interactive card in Web Studio UI with client tabs (Claude Desktop, Cursor, Claude Code CLI), transport selection, live snippet preview, clipboard copy with visual feedback, and environment variable setup guides.
+  - `@chainmcp/cli`: Updated Web Studio to pass configuration AST to admin for snippet generation and added integration tests for snippets endpoints and Web Studio UI components.
+
+- ef31d58: Add Web Studio foundation and `chainmcp studio` command with loopback security, status/telemetry endpoints, and unified storage integration (M13-1).
+- 984d136: Add Live Shield & OTel Observability Dashboard from SQLite WAL storage (M13-4):
+
+  - `@chainmcp/storage`: Extended `TelemetryQueryOptions` and `TelemetryRingBuffer` (`MemoryStorageDriver` and `SqliteStorageDriver`) to support `until`, `isError`, `offset`, and `order: "asc" | "desc"` query filters.
+  - `@chainmcp/admin`: Added `GET /api/v1/telemetry/metrics` and `GET /api/v1/tenants/{tenant}/telemetry/metrics` endpoints aggregating total requests, cache hit ratio, error rates, p50/p95/p99 duration percentiles, token usage, per-tool breakdown, and 12-bucket timeSeries.
+  - `@chainmcp/admin`: Extended `GET /api/v1/telemetry` with status, time bounds, pagination, W3C trace correlation (`traceId`, `spanId`), and automatic secret redaction using `@chainmcp/analytics`.
+  - `@chainmcp/admin`: Added Shield & OTel Observability card in Web Studio UI with live metric badges, auto-refresh polling, filter controls, event table, and detail inspection modal.
+  - `@chainmcp/cli`: Added Web Studio observability integration tests.
+
+- f0a5ae8: Add interactive projection playground with live upstream test-firing and token savings metrics to Web Studio (M13-3):
+
+  - `@chainmcp/admin`: Added `POST /api/v1/tenants/{tenant}/contracts/{contract}/tools/{toolName}/test` endpoint for direct upstream test-firing with sandboxed execution, non-cached mode, and SSRF enforcement. Evaluates field projections (`include`/`exclude`), measures execution latency, counts raw vs. projected tokens using tokenizer, and reports token savings and percentage reduction with `admin_test_tool` audit records.
+  - `@chainmcp/admin`: Added Interactive Projection Playground section in Web Studio UI with tool selector, argument JSON editor, include/exclude field filters, side-by-side Raw vs. Projected diff view, and live token savings metrics badge.
+  - `@chainmcp/cli`: Added Web Studio playground integration tests.
+
+- c8a1025: Add visual tool curation, endpoint filtering, and bidirectional configuration sync to Web Studio (M13-2):
+
+  - `@chainmcp/declarative`: Added `enabled?: boolean` on tool descriptors, filtering out disabled tools from `DeclarativeToolSource.getTools()` while preserving descriptors in store.
+  - `@chainmcp/config`: Added `tools` filter configuration (`include`, `exclude`) and `filterToolsByConfig` helper to `ContractConfigSchema` and `GatewayContractConfigSchema`.
+  - `@chainmcp/admin`: Added `GET .../tools`, `GET .../tools/{toolName}`, `PATCH .../tools/{toolName}`, and `POST .../curate` endpoints with `admin_curate` audit logging and `onConfigSync` notification. Added visual Tools & Curation card in Web Studio UI.
+  - `@chainmcp/cli`: Added `syncConfigToolCuration` atomic configuration sync for both `chainmcp.config.yaml` and `gateway.config.yaml` multi-contract files, and auto-restores active revisions on Studio launch.
+
+### Patch Changes
+
+- Updated dependencies [93822a8]
+- Updated dependencies [ef31d58]
+- Updated dependencies [984d136]
+- Updated dependencies [f0a5ae8]
+- Updated dependencies [c8a1025]
+  - @chainmcp/admin@0.7.0
+  - @chainmcp/storage@0.7.0
+  - @chainmcp/config@0.7.0
+  - @chainmcp/analytics@0.7.0
+  - @chainmcp/json-navigation@0.7.0
+  - @chainmcp/auth@0.7.0
+  - @chainmcp/compiler@0.7.0
+  - @chainmcp/core@0.7.0
+  - @chainmcp/executor@0.7.0
+  - @chainmcp/gateway@0.7.0
+  - @chainmcp/rate-limit@0.7.0
+  - @chainmcp/server@0.7.0
+
 ## 0.6.0
 
 ### Patch Changes

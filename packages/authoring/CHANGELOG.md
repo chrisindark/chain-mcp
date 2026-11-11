@@ -1,5 +1,11 @@
 # @chainmcp/authoring
 
+## 0.7.0
+
+### Patch Changes
+
+- @chainmcp/core@0.7.0
+
 ## 0.6.0
 
 ### Patch Changes
