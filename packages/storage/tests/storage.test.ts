@@ -133,6 +133,31 @@ describe("Storage Package (@chainmcp/storage)", () => {
       // Filter by tool
       const fetchOnly = await buffer.query({ toolName: "fetch_data" });
       expect(fetchOnly.map((e) => e.id)).toEqual(["ev-3", "ev-4"]);
+
+      // Filter by until, isError, and order
+      await buffer.push({
+        id: "ev-5",
+        timestamp: 500,
+        tenantId: "t1",
+        toolName: "fetch_data",
+        isError: true,
+      });
+
+      const errs = await buffer.query({ isError: true });
+      expect(errs.map((e) => e.id)).toEqual(["ev-5"]);
+
+      const timeBounded = await buffer.query({ since: 250, until: 450 });
+      expect(timeBounded.map((e) => e.id)).toEqual(["ev-3", "ev-4"]);
+
+      const descOrdered = await buffer.query({ order: "desc", limit: 2 });
+      expect(descOrdered.map((e) => e.id)).toEqual(["ev-5", "ev-4"]);
+
+      const offsetDesc = await buffer.query({
+        order: "desc",
+        offset: 1,
+        limit: 2,
+      });
+      expect(offsetDesc.map((e) => e.id)).toEqual(["ev-4", "ev-3"]);
     });
   });
 
@@ -243,6 +268,12 @@ describe("Storage Package (@chainmcp/storage)", () => {
 
         const filtered = await ring.query({ since: 2500 });
         expect(filtered.map((e) => e.id)).toEqual(["e3"]);
+
+        const errs = await ring.query({ isError: true });
+        expect(errs.map((e) => e.id)).toEqual(["e2"]);
+
+        const descOrdered = await ring.query({ order: "desc" });
+        expect(descOrdered.map((e) => e.id)).toEqual(["e3", "e2"]);
 
         await ring.clear();
         expect(await ring.query()).toHaveLength(0);

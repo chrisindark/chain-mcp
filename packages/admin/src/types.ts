@@ -469,3 +469,61 @@ export interface DeclarativeAdminToolTestResult {
     readonly message: string;
   };
 }
+
+export interface TelemetryMetricsSummary {
+  readonly totalRequests: number;
+  readonly totalErrors: number;
+  readonly errorRate: number;
+  readonly totalCached: number;
+  readonly cacheHitRatio: number;
+  readonly totalTokens: number;
+  readonly avgTokensPerRequest: number;
+  readonly p50DurationMs: number;
+  readonly p95DurationMs: number;
+  readonly p99DurationMs: number;
+  readonly avgDurationMs: number;
+}
+
+export interface TelemetryToolMetrics {
+  readonly toolName: string;
+  readonly requests: number;
+  readonly errors: number;
+  readonly cached: number;
+  readonly tokens: number;
+  readonly avgDurationMs: number;
+}
+
+export interface TelemetryTimeBucket {
+  readonly bucketStart: number;
+  readonly bucketEnd: number;
+  readonly requests: number;
+  readonly errors: number;
+  readonly cached: number;
+  readonly tokens: number;
+}
+
+export interface TelemetryMetricsResponse {
+  readonly ok: boolean;
+  readonly window: {
+    readonly since: number;
+    readonly until: number;
+  };
+  readonly summary: TelemetryMetricsSummary;
+  readonly byTool: readonly TelemetryToolMetrics[];
+  readonly timeSeries: readonly TelemetryTimeBucket[];
+}
+
+export interface TelemetryEventResponse {
+  readonly id: string;
+  readonly timestamp: number;
+  readonly tenantId?: string | undefined;
+  readonly toolName?: string | undefined;
+  readonly durationMs?: number | undefined;
+  readonly isError?: boolean | undefined;
+  readonly errorCode?: string | undefined;
+  readonly cached?: boolean | undefined;
+  readonly tokenCount?: number | undefined;
+  readonly traceId?: string | undefined;
+  readonly spanId?: string | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
+}

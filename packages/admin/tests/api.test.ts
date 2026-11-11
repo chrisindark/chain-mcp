@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DynamicGateway } from "@chainmcp/gateway";
-import { MemoryStorageDriver } from "@chainmcp/storage";
+import { MemoryStorageDriver, SqliteStorageDriver } from "@chainmcp/storage";
 
 import { DeclarativeAdmin, extractBearerToken } from "../src/index.js";
 import {
@@ -964,6 +964,210 @@ describe("tool curation and endpoint filtering", () => {
       expect(failJson.ok).toBe(false);
       expect(failJson.toolName).toBe("get_user");
       expect(failJson.error.message).toContain("Upstream request failed");
+    });
+  });
+
+  describe("M13-4: live shield & OTel observability dashboard", () => {
+    it("aggregates metrics for invocation rates, cache hit ratio, error rates, latency percentiles, and tokens", async () => {
+      const storageDriver = new MemoryStorageDriver();
+      await storageDriver.init();
+      const ring = storageDriver.getTelemetryRingBuffer();
+
+      const baseTime = 1_700_000_000_000;
+      // Push 3 events:
+      // 1. Success, uncached, 10ms, 100 tokens, tool "get_user", with W3C traceparent and secret
+      await ring.push({
+        id: "ev-1",
+        timestamp: baseTime + 10_000,
+        tenantId: "tenant-a",
+        toolName: "get_user",
+        durationMs: 10,
+        isError: false,
+        cached: false,
+        tokenCount: 100,
+        metadata: {
+          traceparent:
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+          authorization: "Bearer super-secret-token-12345",
+        },
+      });
+
+      // 2. Success, cached, 20ms, 150 tokens, tool "get_user"
+      await ring.push({
+        id: "ev-2",
+        timestamp: baseTime + 20_000,
+        tenantId: "tenant-a",
+        toolName: "get_user",
+        durationMs: 20,
+        isError: false,
+        cached: true,
+        tokenCount: 150,
+      });
+
+      // 3. Error, uncached, 50ms, tool "delete_user", error UPSTREAM_TIMEOUT
+      await ring.push({
+        id: "ev-3",
+        timestamp: baseTime + 30_000,
+        tenantId: "tenant-a",
+        toolName: "delete_user",
+        durationMs: 50,
+        isError: true,
+        errorCode: "UPSTREAM_TIMEOUT",
+        cached: false,
+      });
+
+      const { admin } = makeAdmin({ storageDriver });
+
+      // Query metrics
+      const metricsRes = await admin.handle(
+        adminRequest(
+          `/api/v1/telemetry/metrics?since=${baseTime}&until=${baseTime + 60_000}`,
+          "GET",
+        ),
+      );
+      expect(metricsRes.status).toBe(200);
+      const metrics = await metricsRes.json();
+      expect(metrics.ok).toBe(true);
+      expect(metrics.summary.totalRequests).toBe(3);
+      expect(metrics.summary.totalErrors).toBe(1);
+      expect(metrics.summary.errorRate).toBe(0.333);
+      expect(metrics.summary.totalCached).toBe(1);
+      expect(metrics.summary.cacheHitRatio).toBe(0.333);
+      expect(metrics.summary.totalTokens).toBe(250);
+      expect(metrics.summary.avgTokensPerRequest).toBe(83);
+      expect(metrics.summary.p50DurationMs).toBe(20);
+      expect(metrics.summary.p95DurationMs).toBe(50);
+      expect(metrics.summary.avgDurationMs).toBe(26.7);
+
+      expect(metrics.byTool).toHaveLength(2);
+      expect(metrics.byTool[0]).toMatchObject({
+        toolName: "get_user",
+        requests: 2,
+        cached: 1,
+        tokens: 250,
+      });
+      expect(metrics.byTool[1]).toMatchObject({
+        toolName: "delete_user",
+        requests: 1,
+        errors: 1,
+      });
+      expect(metrics.timeSeries).toHaveLength(12);
+
+      // Query telemetry events list with secret redaction and OTel trace correlation
+      const eventsRes = await admin.handle(
+        adminRequest("/api/v1/telemetry?order=desc", "GET"),
+      );
+      expect(eventsRes.status).toBe(200);
+      const eventsData = await eventsRes.json();
+      expect(eventsData.ok).toBe(true);
+      expect(eventsData.count).toBe(3);
+
+      const ev1 = eventsData.events.find(
+        (e: { id: string }) => e.id === "ev-1",
+      );
+      expect(ev1).toBeDefined();
+      expect(ev1.traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
+      expect(ev1.spanId).toBe("00f067aa0ba902b7");
+      // Secret must be redacted!
+      expect(ev1.metadata.authorization).toBe("[REDACTED]");
+      expect(JSON.stringify(ev1)).not.toContain("super-secret-token-12345");
+
+      // Filter by status=error
+      const errorOnlyRes = await admin.handle(
+        adminRequest("/api/v1/telemetry?status=error", "GET"),
+      );
+      expect(errorOnlyRes.status).toBe(200);
+      const errorData = await errorOnlyRes.json();
+      expect(errorData.events).toHaveLength(1);
+      expect(errorData.events[0].id).toBe("ev-3");
+      expect(errorData.events[0].errorCode).toBe("UPSTREAM_TIMEOUT");
+
+      // Pagination with limit and offset
+      const pageRes = await admin.handle(
+        adminRequest("/api/v1/telemetry?order=desc&limit=1&offset=1", "GET"),
+      );
+      expect(pageRes.status).toBe(200);
+      const pageData = await pageRes.json();
+      expect(pageData.events).toHaveLength(1);
+      expect(pageData.events[0].id).toBe("ev-2");
+    });
+
+    it("enforces tenant boundary for telemetry metrics and events", async () => {
+      const storageDriver = new MemoryStorageDriver();
+      await storageDriver.init();
+      const ring = storageDriver.getTelemetryRingBuffer();
+
+      await ring.push({
+        id: "ev-b",
+        timestamp: Date.now(),
+        tenantId: "tenant-b",
+        toolName: "billing",
+      });
+
+      const { admin } = makeAdmin({ storageDriver });
+
+      // Authorized for tenant-b with SCOPED_TOKEN
+      const okRes = await admin.handle(
+        adminRequest("/api/v1/tenants/tenant-b/telemetry/metrics", "GET", {
+          token: SCOPED_TOKEN,
+        }),
+      );
+      expect(okRes.status).toBe(200);
+
+      // Forbidden for tenant-a with SCOPED_TOKEN
+      const forbiddenRes = await admin.handle(
+        adminRequest("/api/v1/tenants/tenant-a/telemetry/metrics", "GET", {
+          token: SCOPED_TOKEN,
+        }),
+      );
+      expect(forbiddenRes.status).toBe(403);
+      expect(await forbiddenRes.json()).toMatchObject({
+        error: { code: "ADMIN_TENANT_FORBIDDEN" },
+      });
+    });
+
+    it("verifies SQLite WAL non-blocking concurrent telemetry recording and querying", async () => {
+      const storageDriver = new SqliteStorageDriver({ path: ":memory:" });
+      await storageDriver.init();
+      const ring = storageDriver.getTelemetryRingBuffer();
+
+      const { admin } = makeAdmin({ storageDriver });
+
+      // Concurrently push events while reading metrics
+      const pushPromise = (async () => {
+        for (let i = 0; i < 20; i++) {
+          await ring.push({
+            id: `concurrent-${i}`,
+            timestamp: Date.now(),
+            tenantId: "tenant-a",
+            toolName: "concurrent_tool",
+            durationMs: i * 2,
+            isError: i % 5 === 0,
+            cached: i % 2 === 0,
+          });
+        }
+      })();
+
+      const queryPromise = (async () => {
+        const results: Response[] = [];
+        for (let j = 0; j < 5; j++) {
+          results.push(
+            await admin.handle(
+              adminRequest("/api/v1/telemetry/metrics", "GET"),
+            ),
+          );
+        }
+        return results;
+      })();
+
+      const [, responses] = await Promise.all([pushPromise, queryPromise]);
+      for (const res of responses) {
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.ok).toBe(true);
+      }
+
+      await storageDriver.close();
     });
   });
 });

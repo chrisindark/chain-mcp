@@ -389,13 +389,27 @@ export class SqliteTelemetryRingBuffer implements TelemetryRingBuffer {
       sql += " AND tool_name = ?";
       params.push(options.toolName);
     }
-    if (options?.since) {
+    if (options?.since !== undefined) {
       sql += " AND timestamp >= ?";
       params.push(options.since);
     }
+    if (options?.until !== undefined) {
+      sql += " AND timestamp <= ?";
+      params.push(options.until);
+    }
+    if (options?.isError !== undefined) {
+      sql += " AND is_error = ?";
+      params.push(options.isError ? 1 : 0);
+    }
 
-    sql += " ORDER BY timestamp ASC LIMIT ?";
+    const order = options?.order === "desc" ? "DESC" : "ASC";
+    sql += ` ORDER BY timestamp ${order} LIMIT ?`;
     params.push(options?.limit ?? 100);
+
+    if (options?.offset !== undefined && options.offset > 0) {
+      sql += " OFFSET ?";
+      params.push(options.offset);
+    }
 
     const stmt = this.db.prepare(sql);
     const rows = stmt.all(...params) as Array<{

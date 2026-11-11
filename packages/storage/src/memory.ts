@@ -255,12 +255,30 @@ export class MemoryTelemetryRingBuffer implements TelemetryRingBuffer {
     if (options?.toolName) {
       result = result.filter((e) => e.toolName === options.toolName);
     }
-    if (options?.since) {
+    if (options?.since !== undefined) {
       const since = options.since;
       result = result.filter((e) => e.timestamp >= since);
     }
+    if (options?.until !== undefined) {
+      const until = options.until;
+      result = result.filter((e) => e.timestamp <= until);
+    }
+    if (options?.isError !== undefined) {
+      const isErr = options.isError;
+      result = result.filter((e) => (e.isError ?? false) === isErr);
+    }
+
+    if (options?.order === "desc") {
+      result = [...result].sort((a, b) => b.timestamp - a.timestamp);
+      const offset = options?.offset ?? 0;
+      const limit = options?.limit ?? 100;
+      return result.slice(offset, offset + limit);
+    }
 
     const limit = options?.limit ?? 100;
+    if (options?.offset !== undefined && options.offset > 0) {
+      return result.slice(options.offset, options.offset + limit);
+    }
     return result.slice(-limit);
   }
 

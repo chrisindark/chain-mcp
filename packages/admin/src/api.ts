@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { redactValue } from "@chainmcp/analytics";
 import {
   assertFieldSelection,
   createFieldProjector,
@@ -7,7 +8,7 @@ import {
   type ToolContext,
   type ToolDefinition,
 } from "@chainmcp/core";
-import type { StorageDriver } from "@chainmcp/storage";
+import type { StorageDriver, TelemetryEvent } from "@chainmcp/storage";
 import {
   DeclarativeDescriptorError,
   DeclarativeToolSource,
@@ -49,6 +50,10 @@ import {
   type DeclarativeAdminToolSummary,
   type DescriptorRevisionStore,
   type StoredDescriptorRevision,
+  type TelemetryEventResponse,
+  type TelemetryMetricsResponse,
+  type TelemetryMetricsSummary,
+  type TelemetryToolMetrics,
 } from "./types.js";
 import { ADMIN_APP_CSS, ADMIN_APP_JS, ADMIN_INDEX_HTML } from "./ui.js";
 
@@ -67,6 +72,213 @@ const UI_HEADERS: Readonly<Record<string, string>> = {
   "content-security-policy":
     "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 };
+
+function extractTraceCorrelation(metadata?: Record<string, unknown>): {
+  readonly traceId?: string;
+  readonly spanId?: string;
+} {
+  if (!metadata || typeof metadata !== "object") return {};
+  let traceId =
+    typeof metadata.traceId === "string" ? metadata.traceId : undefined;
+  let spanId =
+    typeof metadata.spanId === "string" ? metadata.spanId : undefined;
+
+  if ((!traceId || !spanId) && typeof metadata.traceparent === "string") {
+    const parts = metadata.traceparent.split("-");
+    if (parts.length >= 4) {
+      if (!traceId && parts[1]?.length === 32) traceId = parts[1];
+      if (!spanId && parts[2]?.length === 16) spanId = parts[2];
+    }
+  }
+
+  return {
+    ...(traceId ? { traceId } : {}),
+    ...(spanId ? { spanId } : {}),
+  };
+}
+
+function formatTelemetryEvent(event: TelemetryEvent): TelemetryEventResponse {
+  const correlation = extractTraceCorrelation(event.metadata);
+  const redactedMetadata = event.metadata
+    ? (redactValue(event.metadata) as Record<string, unknown>)
+    : undefined;
+
+  return {
+    id: event.id,
+    timestamp: event.timestamp,
+    ...(event.tenantId !== undefined ? { tenantId: event.tenantId } : {}),
+    ...(event.toolName !== undefined ? { toolName: event.toolName } : {}),
+    ...(event.durationMs !== undefined ? { durationMs: event.durationMs } : {}),
+    ...(event.isError !== undefined ? { isError: event.isError } : {}),
+    ...(event.errorCode !== undefined ? { errorCode: event.errorCode } : {}),
+    ...(event.cached !== undefined ? { cached: event.cached } : {}),
+    ...(event.tokenCount !== undefined ? { tokenCount: event.tokenCount } : {}),
+    ...correlation,
+    ...(redactedMetadata !== undefined ? { metadata: redactedMetadata } : {}),
+  };
+}
+
+export function computeTelemetryMetrics(
+  events: readonly TelemetryEvent[],
+  since: number,
+  until: number,
+): TelemetryMetricsResponse {
+  const totalRequests = events.length;
+  let totalErrors = 0;
+  let totalCached = 0;
+  let totalTokens = 0;
+  const durations: number[] = [];
+
+  const toolStats = new Map<
+    string,
+    {
+      requests: number;
+      errors: number;
+      cached: number;
+      tokens: number;
+      durations: number[];
+    }
+  >();
+
+  for (const event of events) {
+    if (event.isError) totalErrors++;
+    if (event.cached) totalCached++;
+    if (typeof event.tokenCount === "number" && event.tokenCount > 0) {
+      totalTokens += event.tokenCount;
+    }
+    if (typeof event.durationMs === "number" && event.durationMs >= 0) {
+      durations.push(event.durationMs);
+    }
+
+    const tool = event.toolName || "unknown";
+    let stats = toolStats.get(tool);
+    if (!stats) {
+      stats = {
+        requests: 0,
+        errors: 0,
+        cached: 0,
+        tokens: 0,
+        durations: [],
+      };
+      toolStats.set(tool, stats);
+    }
+    stats.requests++;
+    if (event.isError) stats.errors++;
+    if (event.cached) stats.cached++;
+    if (typeof event.tokenCount === "number") stats.tokens += event.tokenCount;
+    if (typeof event.durationMs === "number")
+      stats.durations.push(event.durationMs);
+  }
+
+  durations.sort((a, b) => a - b);
+  const percentile = (p: number): number => {
+    if (durations.length === 0) return 0;
+    const index = Math.ceil((p / 100) * durations.length) - 1;
+    return durations[Math.max(0, Math.min(index, durations.length - 1))] ?? 0;
+  };
+
+  const avgDurationMs =
+    durations.length > 0
+      ? Math.round(
+          (durations.reduce((acc, v) => acc + v, 0) / durations.length) * 10,
+        ) / 10
+      : 0;
+
+  const errorRate =
+    totalRequests > 0
+      ? Math.round((totalErrors / totalRequests) * 1000) / 1000
+      : 0;
+  const cacheHitRatio =
+    totalRequests > 0
+      ? Math.round((totalCached / totalRequests) * 1000) / 1000
+      : 0;
+  const avgTokensPerRequest =
+    totalRequests > 0 ? Math.round(totalTokens / totalRequests) : 0;
+
+  const summary: TelemetryMetricsSummary = {
+    totalRequests,
+    totalErrors,
+    errorRate,
+    totalCached,
+    cacheHitRatio,
+    totalTokens,
+    avgTokensPerRequest,
+    p50DurationMs: percentile(50),
+    p95DurationMs: percentile(95),
+    p99DurationMs: percentile(99),
+    avgDurationMs,
+  };
+
+  const byTool: TelemetryToolMetrics[] = [...toolStats.entries()]
+    .map(([toolName, stats]) => {
+      const avg =
+        stats.durations.length > 0
+          ? Math.round(
+              (stats.durations.reduce((a, b) => a + b, 0) /
+                stats.durations.length) *
+                10,
+            ) / 10
+          : 0;
+      return {
+        toolName,
+        requests: stats.requests,
+        errors: stats.errors,
+        cached: stats.cached,
+        tokens: stats.tokens,
+        avgDurationMs: avg,
+      };
+    })
+    .sort((a, b) => b.requests - a.requests);
+
+  interface MutableBucket {
+    bucketStart: number;
+    bucketEnd: number;
+    requests: number;
+    errors: number;
+    cached: number;
+    tokens: number;
+  }
+  const bucketCount = 12;
+  const windowDuration = Math.max(1, until - since);
+  const bucketSize = Math.max(1, Math.ceil(windowDuration / bucketCount));
+  const buckets: MutableBucket[] = [];
+
+  for (let i = 0; i < bucketCount; i++) {
+    const bStart = since + i * bucketSize;
+    const bEnd = Math.min(until, bStart + bucketSize);
+    buckets.push({
+      bucketStart: bStart,
+      bucketEnd: bEnd,
+      requests: 0,
+      errors: 0,
+      cached: 0,
+      tokens: 0,
+    });
+  }
+
+  for (const event of events) {
+    if (event.timestamp < since || event.timestamp > until) continue;
+    const bucketIndex = Math.min(
+      bucketCount - 1,
+      Math.max(0, Math.floor((event.timestamp - since) / bucketSize)),
+    );
+    const b = buckets[bucketIndex];
+    if (b) {
+      b.requests++;
+      if (event.isError) b.errors++;
+      if (event.cached) b.cached++;
+      if (typeof event.tokenCount === "number") b.tokens += event.tokenCount;
+    }
+  }
+
+  return {
+    ok: true,
+    window: { since, until },
+    summary,
+    byTool,
+    timeSeries: buckets,
+  };
+}
 
 function createDefaultTokenizer(): Tokenizer {
   return {
@@ -235,7 +447,9 @@ export class DeclarativeAdmin {
           "GET /api/v1/healthz",
           "GET /api/v1/contracts",
           "GET /api/v1/telemetry",
+          "GET /api/v1/telemetry/metrics",
           "GET /api/v1/tenants/{tenant}/telemetry",
+          "GET /api/v1/tenants/{tenant}/telemetry/metrics",
           "GET /api/v1/tenants/{tenant}/contracts/{contract}/tools",
           "GET /api/v1/tenants/{tenant}/contracts/{contract}/tools/{toolName}",
           "PATCH /api/v1/tenants/{tenant}/contracts/{contract}/tools/{toolName}",
@@ -292,6 +506,50 @@ export class DeclarativeAdmin {
       });
     }
 
+    if (
+      segments.length === 2 &&
+      segments[0] === "telemetry" &&
+      segments[1] === "metrics"
+    ) {
+      assertMethod(request, ["GET"]);
+      const tenantParam = url.searchParams.get("tenant") ?? undefined;
+      if (
+        tenantParam &&
+        principal.tenants !== "*" &&
+        !principal.tenants.includes(tenantParam)
+      ) {
+        throw new DeclarativeAdminError(
+          "ADMIN_TENANT_FORBIDDEN",
+          403,
+          `Token is not authorized for tenant '${tenantParam}'`,
+        );
+      }
+      const toolName = url.searchParams.get("tool") ?? undefined;
+      const now = this.#now();
+      const until = url.searchParams.has("until")
+        ? Number(url.searchParams.get("until"))
+        : now;
+      const since = url.searchParams.has("since")
+        ? Number(url.searchParams.get("since"))
+        : until - 3_600_000;
+
+      if (!this.#storageDriver) {
+        return jsonResponse(200, computeTelemetryMetrics([], since, until));
+      }
+      const ringBuffer = this.#storageDriver.getTelemetryRingBuffer();
+      const rawEvents = await ringBuffer.query({
+        ...(tenantParam ? { tenantId: tenantParam } : {}),
+        ...(toolName ? { toolName } : {}),
+        since,
+        until,
+        limit: 10_000,
+      });
+      return jsonResponse(
+        200,
+        computeTelemetryMetrics(rawEvents, since, until),
+      );
+    }
+
     if (segments.length === 1 && segments[0] === "telemetry") {
       assertMethod(request, ["GET"]);
       const tenantParam = url.searchParams.get("tenant") ?? undefined;
@@ -307,24 +565,79 @@ export class DeclarativeAdmin {
         );
       }
       const toolName = url.searchParams.get("tool") ?? undefined;
+      const statusParam = url.searchParams.get("status") ?? undefined;
+      const isError =
+        statusParam === "error"
+          ? true
+          : statusParam === "success"
+            ? false
+            : undefined;
       const since = url.searchParams.has("since")
         ? Number(url.searchParams.get("since"))
         : undefined;
-      const limit = url.searchParams.has("limit")
-        ? Number(url.searchParams.get("limit"))
+      const until = url.searchParams.has("until")
+        ? Number(url.searchParams.get("until"))
         : undefined;
+      const limit = url.searchParams.has("limit")
+        ? Math.min(1000, Math.max(1, Number(url.searchParams.get("limit"))))
+        : 100;
+      const offset = url.searchParams.has("offset")
+        ? Math.max(0, Number(url.searchParams.get("offset")))
+        : 0;
+      const orderParam = url.searchParams.get("order");
+      const order = orderParam === "asc" ? "asc" : "desc";
 
       if (!this.#storageDriver) {
-        return jsonResponse(200, { events: [] });
+        return jsonResponse(200, { ok: true, events: [], count: 0 });
       }
       const ringBuffer = this.#storageDriver.getTelemetryRingBuffer();
-      const events = await ringBuffer.query({
+      const rawEvents = await ringBuffer.query({
         ...(tenantParam ? { tenantId: tenantParam } : {}),
         ...(toolName ? { toolName } : {}),
+        ...(isError !== undefined ? { isError } : {}),
         ...(since !== undefined ? { since } : {}),
-        ...(limit !== undefined ? { limit } : {}),
+        ...(until !== undefined ? { until } : {}),
+        limit,
+        offset,
+        order,
       });
-      return jsonResponse(200, { events });
+      const events = rawEvents.map(formatTelemetryEvent);
+      return jsonResponse(200, { ok: true, events, count: events.length });
+    }
+
+    if (
+      segments.length === 4 &&
+      segments[0] === "tenants" &&
+      segments[2] === "telemetry" &&
+      segments[3] === "metrics"
+    ) {
+      assertMethod(request, ["GET"]);
+      const tenant = segments[1]!;
+      assertTenantAllowed(principal, tenant);
+      const toolName = url.searchParams.get("tool") ?? undefined;
+      const now = this.#now();
+      const until = url.searchParams.has("until")
+        ? Number(url.searchParams.get("until"))
+        : now;
+      const since = url.searchParams.has("since")
+        ? Number(url.searchParams.get("since"))
+        : until - 3_600_000;
+
+      if (!this.#storageDriver) {
+        return jsonResponse(200, computeTelemetryMetrics([], since, until));
+      }
+      const ringBuffer = this.#storageDriver.getTelemetryRingBuffer();
+      const rawEvents = await ringBuffer.query({
+        tenantId: tenant,
+        ...(toolName ? { toolName } : {}),
+        since,
+        until,
+        limit: 10_000,
+      });
+      return jsonResponse(
+        200,
+        computeTelemetryMetrics(rawEvents, since, until),
+      );
     }
 
     if (
@@ -336,24 +649,44 @@ export class DeclarativeAdmin {
       const tenant = segments[1]!;
       assertTenantAllowed(principal, tenant);
       const toolName = url.searchParams.get("tool") ?? undefined;
+      const statusParam = url.searchParams.get("status") ?? undefined;
+      const isError =
+        statusParam === "error"
+          ? true
+          : statusParam === "success"
+            ? false
+            : undefined;
       const since = url.searchParams.has("since")
         ? Number(url.searchParams.get("since"))
         : undefined;
-      const limit = url.searchParams.has("limit")
-        ? Number(url.searchParams.get("limit"))
+      const until = url.searchParams.has("until")
+        ? Number(url.searchParams.get("until"))
         : undefined;
+      const limit = url.searchParams.has("limit")
+        ? Math.min(1000, Math.max(1, Number(url.searchParams.get("limit"))))
+        : 100;
+      const offset = url.searchParams.has("offset")
+        ? Math.max(0, Number(url.searchParams.get("offset")))
+        : 0;
+      const orderParam = url.searchParams.get("order");
+      const order = orderParam === "asc" ? "asc" : "desc";
 
       if (!this.#storageDriver) {
-        return jsonResponse(200, { events: [] });
+        return jsonResponse(200, { ok: true, events: [], count: 0 });
       }
       const ringBuffer = this.#storageDriver.getTelemetryRingBuffer();
-      const events = await ringBuffer.query({
+      const rawEvents = await ringBuffer.query({
         tenantId: tenant,
         ...(toolName ? { toolName } : {}),
+        ...(isError !== undefined ? { isError } : {}),
         ...(since !== undefined ? { since } : {}),
-        ...(limit !== undefined ? { limit } : {}),
+        ...(until !== undefined ? { until } : {}),
+        limit,
+        offset,
+        order,
       });
-      return jsonResponse(200, { events });
+      const events = rawEvents.map(formatTelemetryEvent);
+      return jsonResponse(200, { ok: true, events, count: events.length });
     }
 
     if (
@@ -926,6 +1259,30 @@ export class DeclarativeAdmin {
         reason: `test_failed:${error instanceof Error ? error.message : String(error)}`,
       });
 
+      if (this.#storageDriver) {
+        const ring = this.#storageDriver.getTelemetryRingBuffer();
+        await ring
+          .push({
+            id: `tel-${Date.now()}-${randomBytes(4).toString("hex")}`,
+            timestamp: this.#now(),
+            tenantId: binding.tenantId,
+            toolName,
+            durationMs: executionTimeMs,
+            isError: true,
+            errorCode:
+              error instanceof Error && "code" in error
+                ? String((error as { code: unknown }).code)
+                : "TEST_EXECUTION_FAILED",
+            cached: false,
+            metadata: {
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
+              source: "studio_playground",
+            },
+          })
+          .catch(() => undefined);
+      }
+
       return jsonResponse(400, {
         ok: false,
         toolName,
@@ -978,6 +1335,28 @@ export class DeclarativeAdmin {
       toolName,
       reason: `test_success:${savedTokens}_tokens_saved`,
     });
+
+    if (this.#storageDriver) {
+      const ring = this.#storageDriver.getTelemetryRingBuffer();
+      await ring
+        .push({
+          id: `tel-${Date.now()}-${randomBytes(4).toString("hex")}`,
+          timestamp: this.#now(),
+          tenantId: binding.tenantId,
+          toolName,
+          durationMs: executionTimeMs,
+          isError: false,
+          cached: false,
+          tokenCount: projectedTokens,
+          metadata: {
+            rawTokens,
+            projectedTokens,
+            savedTokens,
+            source: "studio_playground",
+          },
+        })
+        .catch(() => undefined);
+    }
 
     return jsonResponse(200, {
       ok: true,

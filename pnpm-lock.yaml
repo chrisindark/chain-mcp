@@ -114,6 +114,9 @@ importers:
 
   packages/admin:
     dependencies:
+      "@chainmcp/analytics":
+        specifier: workspace:*
+        version: link:../analytics
       "@chainmcp/auth":
         specifier: workspace:*
         version: link:../auth

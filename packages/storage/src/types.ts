@@ -119,7 +119,11 @@ export interface TelemetryQueryOptions {
   tenantId?: string | undefined;
   toolName?: string | undefined;
   since?: number | undefined;
+  until?: number | undefined;
   limit?: number | undefined;
+  offset?: number | undefined;
+  isError?: boolean | undefined;
+  order?: "asc" | "desc" | undefined;
 }
 
 export interface TelemetryRingBuffer {

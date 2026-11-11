@@ -787,7 +787,7 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 
 ### M13-4 — Live Shield & OTel Observability Dashboard from SQLite WAL storage
 
-**Status: ready to start.** Deliver a real-time observability and governance dashboard in Studio reading directly from `@chainmcp/storage` (`TelemetryRingBuffer` / SQLite WAL `chainmcp_telemetry_events`).
+**Status: done (2026-11-11).** Delivered a real-time observability and governance dashboard in Studio reading directly from `@chainmcp/storage` (`TelemetryRingBuffer` / SQLite WAL `chainmcp_telemetry`). Exposes aggregated metrics endpoints (`/api/v1/telemetry/metrics`), filtered events queries (`/api/v1/telemetry`), W3C trace / OTLP span correlation, secret redaction, and an interactive Shield & Observability card in Web Studio UI. Unit and integration tests in `@chainmcp/storage/tests/storage.test.ts`, `@chainmcp/admin/tests/api.test.ts`, and `@chainmcp/cli/tests/studio.test.ts`.
 
 **Do**
 

@@ -129,6 +129,117 @@ export const ADMIN_INDEX_HTML = `<!doctype html>
         </div>
       </section>
 
+      <section class="card" id="observability-section">
+        <div class="card-heading">
+          <h2>Shield &amp; OTel Observability</h2>
+          <div class="header-actions">
+            <label class="inline-select">
+              Live Auto-Refresh
+              <select id="obs-auto-refresh">
+                <option value="0">Off</option>
+                <option value="3000">Every 3s</option>
+                <option value="5000">Every 5s</option>
+                <option value="10000">Every 10s</option>
+              </select>
+            </label>
+            <button id="obs-refresh" type="button" class="secondary">
+              Refresh metrics
+            </button>
+          </div>
+        </div>
+        <p class="hint">
+          Real-time governance, token accounting, cache shield efficiency, and
+          OTel span correlation querying directly from storage.
+        </p>
+
+        <div class="grid filter-bar">
+          <label>
+            Time Window
+            <select id="obs-time-window">
+              <option value="300000">Last 5 minutes</option>
+              <option value="900000">Last 15 minutes</option>
+              <option value="3600000" selected>Last 1 hour</option>
+              <option value="86400000">Last 24 hours</option>
+            </select>
+          </label>
+          <label>
+            Tool Filter
+            <select id="obs-tool-filter">
+              <option value="">All Tools</option>
+            </select>
+          </label>
+          <label>
+            Status
+            <select id="obs-status-filter">
+              <option value="all">All (Success &amp; Error)</option>
+              <option value="success">Success only</option>
+              <option value="error">Errors only</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="metrics-cards-grid" id="obs-metrics-cards">
+          <div class="metric-card">
+            <span class="metric-title">Invocation Volume</span>
+            <span class="metric-value" id="m-val-requests">0</span>
+            <span class="metric-sub" id="m-sub-requests">0 errors</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-title">Shield Cache Hit Ratio</span>
+            <span class="metric-value highlight" id="m-val-cache">0%</span>
+            <span class="metric-sub" id="m-sub-cache">0 cached requests</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-title">Error Rate</span>
+            <span class="metric-value" id="m-val-errors">0%</span>
+            <span class="metric-sub" id="m-sub-errors">healthy</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-title">Token Consumption</span>
+            <span class="metric-value" id="m-val-tokens">0</span>
+            <span class="metric-sub" id="m-sub-tokens">0 avg / req</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-title">p95 Latency</span>
+            <span class="metric-value" id="m-val-p95">0ms</span>
+            <span class="metric-sub" id="m-sub-latency">p50: 0ms | p99: 0ms</span>
+          </div>
+        </div>
+
+        <div class="telemetry-table-container">
+          <h3>Recent Invocations &amp; Spans</h3>
+          <table class="telemetry-table" id="obs-telemetry-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Tool</th>
+                <th>Status</th>
+                <th>Cache</th>
+                <th>Duration</th>
+                <th>Tokens</th>
+                <th>Trace / Span</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="obs-telemetry-body">
+              <tr>
+                <td colspan="8" class="empty-state">No recent events recorded.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div id="obs-detail-modal" class="modal-backdrop hidden">
+          <div class="modal-card">
+            <div class="modal-heading">
+              <h3>Telemetry Event Details</h3>
+              <button id="obs-modal-close" type="button" class="close-btn">&times;</button>
+            </div>
+            <pre id="obs-modal-content">Loading...</pre>
+          </div>
+        </div>
+      </section>
+
       <section class="card">
         <div class="card-heading">
           <h2>Builder</h2>
@@ -490,6 +601,164 @@ pre {
   border: 0;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.inline-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+}
+
+.inline-select select {
+  margin: 0;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+.metrics-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.metric-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-title {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 0.25rem;
+}
+
+.metric-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.metric-value.highlight {
+  color: var(--ok);
+}
+
+.metric-sub {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 0.25rem;
+}
+
+.telemetry-table-container {
+  margin-top: 1.25rem;
+  overflow-x: auto;
+}
+
+.telemetry-table-container h3 {
+  font-size: 0.9rem;
+  margin: 0 0 0.5rem;
+}
+
+.telemetry-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  text-align: left;
+}
+
+.telemetry-table th,
+.telemetry-table td {
+  padding: 0.5rem 0.65rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.telemetry-table th {
+  color: var(--muted);
+  font-weight: 600;
+  border-top: 1px solid var(--border);
+}
+
+.badge.cached {
+  background: rgba(14, 116, 144, 0.15);
+  color: var(--brand);
+}
+
+.badge.trace {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.7rem;
+  text-transform: none;
+  background: rgba(120, 120, 120, 0.12);
+  color: var(--fg);
+}
+
+.empty-state {
+  text-align: center;
+  color: var(--muted);
+  padding: 1.5rem !important;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-backdrop.hidden {
+  display: none;
+}
+
+.modal-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 90%;
+  max-width: 44rem;
+  max-height: 85vh;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.modal-heading h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.close-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.4rem;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 0 0.4rem;
+}
+
+.close-btn:hover {
+  color: var(--fg);
+}
+
 noscript {
   display: block;
   max-width: 60rem;
@@ -684,12 +953,20 @@ export const ADMIN_APP_JS = `(function () {
     if (pgToolSelect) {
       pgToolSelect.textContent = "";
     }
+    if (obsToolFilter) {
+      obsToolFilter.textContent = "";
+      var allOpt = document.createElement("option");
+      allOpt.value = "";
+      allOpt.textContent = "All Tools";
+      obsToolFilter.appendChild(allOpt);
+    }
     if (tools.length === 0) {
       var emptyMsg = document.createElement("p");
       emptyMsg.className = "hint";
       emptyMsg.textContent = "No tools defined in this contract.";
       toolsList.appendChild(emptyMsg);
       if (pgBadge) pgBadge.textContent = "No tools";
+      loadObservabilityMetrics().catch(function () {});
       return;
     }
 
@@ -703,6 +980,12 @@ export const ADMIN_APP_JS = `(function () {
         opt.value = tools[i].name;
         opt.textContent = tools[i].name + (tools[i].enabled === false ? " (pruned)" : "");
         pgToolSelect.appendChild(opt);
+      }
+      if (obsToolFilter) {
+        var toOpt = document.createElement("option");
+        toOpt.value = tools[i].name;
+        toOpt.textContent = tools[i].name;
+        obsToolFilter.appendChild(toOpt);
       }
       (function (tool) {
         var item = document.createElement("div");
@@ -794,6 +1077,7 @@ export const ADMIN_APP_JS = `(function () {
         toolsList.appendChild(item);
       })(tools[i]);
     }
+    loadObservabilityMetrics().catch(function () {});
   }
 
   async function testFireTool() {
@@ -839,6 +1123,7 @@ export const ADMIN_APP_JS = `(function () {
         pgStatus.textContent = "HTTP " + res.status + " · Test failed";
         pgStatus.className = "status error";
       }
+      loadObservabilityMetrics().catch(function () {});
       return;
     }
 
@@ -855,6 +1140,7 @@ export const ADMIN_APP_JS = `(function () {
       pgStatus.className = "status ok";
     }
     setStatus("Tool '" + toolName + "' test fired in " + data.executionTimeMs + " ms", "ok");
+    loadObservabilityMetrics().catch(function () {});
   }
 
   async function submit(action) {
@@ -1014,6 +1300,190 @@ export const ADMIN_APP_JS = `(function () {
       setStatus("Parameter added: " + n, "ok");
     });
   }
+  // Observability & Shield Dashboard controller
+  var obsAutoRefresh = document.getElementById("obs-auto-refresh");
+  var obsRefreshBtn = document.getElementById("obs-refresh");
+  var obsTimeWindow = document.getElementById("obs-time-window");
+  var obsToolFilter = document.getElementById("obs-tool-filter");
+  var obsStatusFilter = document.getElementById("obs-status-filter");
+  var mValRequests = document.getElementById("m-val-requests");
+  var mSubRequests = document.getElementById("m-sub-requests");
+  var mValCache = document.getElementById("m-val-cache");
+  var mSubCache = document.getElementById("m-sub-cache");
+  var mValErrors = document.getElementById("m-val-errors");
+  var mSubErrors = document.getElementById("m-sub-errors");
+  var mValTokens = document.getElementById("m-val-tokens");
+  var mSubTokens = document.getElementById("m-sub-tokens");
+  var mValP95 = document.getElementById("m-val-p95");
+  var mSubLatency = document.getElementById("m-sub-latency");
+  var obsTelemetryBody = document.getElementById("obs-telemetry-body");
+  var obsDetailModal = document.getElementById("obs-detail-modal");
+  var obsModalContent = document.getElementById("obs-modal-content");
+  var obsModalClose = document.getElementById("obs-modal-close");
+  var obsTimer = null;
+
+  async function loadObservabilityMetrics() {
+    var windowMs = obsTimeWindow ? Number(obsTimeWindow.value || 3600000) : 3600000;
+    var until = Date.now();
+    var since = until - windowMs;
+    var tool = obsToolFilter ? obsToolFilter.value : "";
+    var statusVal = obsStatusFilter ? obsStatusFilter.value : "all";
+
+    var qs = "since=" + since + "&until=" + until;
+    if (tool) qs += "&tool=" + encodeURIComponent(tool);
+
+    var picked;
+    try {
+      picked = selectedContract();
+    } catch {
+      picked = null;
+    }
+
+    var metricsPath = picked
+      ? "/api/v1/tenants/" + encodeURIComponent(picked.tenantId) + "/telemetry/metrics?" + qs
+      : "/api/v1/telemetry/metrics?" + qs;
+
+    var telemPath = picked
+      ? "/api/v1/tenants/" + encodeURIComponent(picked.tenantId) + "/telemetry?" + qs
+      : "/api/v1/telemetry?" + qs;
+
+    if (statusVal && statusVal !== "all") {
+      telemPath += "&status=" + encodeURIComponent(statusVal);
+    }
+    telemPath += "&limit=50&order=desc";
+
+    var [metricsRes, telemRes] = await Promise.all([
+      request("GET", metricsPath),
+      request("GET", telemPath)
+    ]);
+
+    if (metricsRes.ok && metricsRes.payload && metricsRes.payload.summary) {
+      var s = metricsRes.payload.summary;
+      if (mValRequests) mValRequests.textContent = Number(s.totalRequests || 0).toLocaleString();
+      if (mSubRequests) mSubRequests.textContent = (s.totalErrors || 0) + " errors (" + Math.round((s.errorRate || 0) * 100) + "%)";
+      if (mValCache) mValCache.textContent = Math.round((s.cacheHitRatio || 0) * 100) + "%";
+      if (mSubCache) mSubCache.textContent = (s.totalCached || 0) + " cached requests";
+      if (mValErrors) mValErrors.textContent = Math.round((s.errorRate || 0) * 100) + "%";
+      if (mSubErrors) mSubErrors.textContent = s.totalErrors > 0 ? s.totalErrors + " failed" : "healthy";
+      if (mValTokens) mValTokens.textContent = Number(s.totalTokens || 0).toLocaleString();
+      if (mSubTokens) mSubTokens.textContent = (s.avgTokensPerRequest || 0) + " avg / req";
+      if (mValP95) mValP95.textContent = (s.p95DurationMs || 0) + "ms";
+      if (mSubLatency) mSubLatency.textContent = "p50: " + (s.p50DurationMs || 0) + "ms | p99: " + (s.p99DurationMs || 0) + "ms";
+    }
+
+    if (telemRes.ok && telemRes.payload && Array.isArray(telemRes.payload.events) && obsTelemetryBody) {
+      var events = telemRes.payload.events;
+      obsTelemetryBody.textContent = "";
+      if (events.length === 0) {
+        var emptyRow = document.createElement("tr");
+        var emptyCell = document.createElement("td");
+        emptyCell.colSpan = 8;
+        emptyCell.className = "empty-state";
+        emptyCell.textContent = "No recent telemetry events recorded.";
+        emptyRow.appendChild(emptyCell);
+        obsTelemetryBody.appendChild(emptyRow);
+      } else {
+        events.forEach(function (ev) {
+          var tr = document.createElement("tr");
+
+          var tdTime = document.createElement("td");
+          tdTime.textContent = new Date(ev.timestamp).toLocaleTimeString();
+          tr.appendChild(tdTime);
+
+          var tdTool = document.createElement("td");
+          tdTool.className = "tool-name";
+          tdTool.textContent = ev.toolName || "-";
+          tr.appendChild(tdTool);
+
+          var tdStatus = document.createElement("td");
+          var stBadge = document.createElement("span");
+          stBadge.className = "badge " + (ev.isError ? "disabled" : "enabled");
+          stBadge.textContent = ev.isError ? (ev.errorCode || "error") : "ok";
+          tdStatus.appendChild(stBadge);
+          tr.appendChild(tdStatus);
+
+          var tdCache = document.createElement("td");
+          var cBadge = document.createElement("span");
+          cBadge.className = "badge " + (ev.cached ? "cached" : "");
+          cBadge.textContent = ev.cached ? "HIT" : "MISS";
+          tdCache.appendChild(cBadge);
+          tr.appendChild(tdCache);
+
+          var tdDuration = document.createElement("td");
+          tdDuration.textContent = ev.durationMs !== undefined ? ev.durationMs + "ms" : "-";
+          tr.appendChild(tdDuration);
+
+          var tdTokens = document.createElement("td");
+          tdTokens.textContent = ev.tokenCount !== undefined ? String(ev.tokenCount) : "-";
+          tr.appendChild(tdTokens);
+
+          var tdTrace = document.createElement("td");
+          if (ev.traceId) {
+            var trBadge = document.createElement("span");
+            trBadge.className = "badge trace";
+            trBadge.title = ev.traceId;
+            trBadge.textContent = ev.traceId.slice(0, 8) + "...";
+            tdTrace.appendChild(trBadge);
+          } else {
+            tdTrace.textContent = "-";
+          }
+          tr.appendChild(tdTrace);
+
+          var tdActions = document.createElement("td");
+          var btnInspect = document.createElement("button");
+          btnInspect.type = "button";
+          btnInspect.className = "secondary";
+          btnInspect.style.padding = "0.2rem 0.5rem";
+          btnInspect.style.fontSize = "0.75rem";
+          btnInspect.textContent = "Inspect";
+          btnInspect.addEventListener("click", function () {
+            if (obsModalContent) obsModalContent.textContent = JSON.stringify(ev, null, 2);
+            if (obsDetailModal) obsDetailModal.classList.remove("hidden");
+          });
+          tdActions.appendChild(btnInspect);
+          tr.appendChild(tdActions);
+
+          obsTelemetryBody.appendChild(tr);
+        });
+      }
+    }
+  }
+
+  if (obsRefreshBtn) {
+    obsRefreshBtn.addEventListener("click", action(loadObservabilityMetrics));
+  }
+  if (obsTimeWindow) {
+    obsTimeWindow.addEventListener("change", action(loadObservabilityMetrics));
+  }
+  if (obsToolFilter) {
+    obsToolFilter.addEventListener("change", action(loadObservabilityMetrics));
+  }
+  if (obsStatusFilter) {
+    obsStatusFilter.addEventListener("change", action(loadObservabilityMetrics));
+  }
+  if (obsAutoRefresh) {
+    obsAutoRefresh.addEventListener("change", function () {
+      if (obsTimer) {
+        clearInterval(obsTimer);
+        obsTimer = null;
+      }
+      var ms = Number(obsAutoRefresh.value || 0);
+      if (ms > 0) {
+        obsTimer = setInterval(function () {
+          loadObservabilityMetrics().catch(function () {});
+        }, ms);
+      }
+    });
+  }
+  if (obsModalClose && obsDetailModal) {
+    obsModalClose.addEventListener("click", function () {
+      obsDetailModal.classList.add("hidden");
+    });
+    obsDetailModal.addEventListener("click", function (e) {
+      if (e.target === obsDetailModal) obsDetailModal.classList.add("hidden");
+    });
+  }
+
   async function checkStudioStatus() {
     try {
       var res = await fetch("/api/v1/status", { cache: "no-store" });

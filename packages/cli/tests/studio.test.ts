@@ -66,7 +66,7 @@ describe("M13-1: chainmcp studio command", () => {
     });
     expect(telemRes.status).toBe(200);
     const telemJson = await telemRes.json();
-    expect(telemJson).toEqual({ events: [] });
+    expect(telemJson).toMatchObject({ events: [] });
   });
 
   it("launches Web Studio with SQLite WAL storage configuration", async () => {
@@ -460,5 +460,43 @@ contracts:
     expect(html).toContain('id="pg-test-fire"');
     expect(html).toContain("playground-diff-grid");
     expect(html).toContain('id="m-savings-pct"');
+  });
+
+  it("M13-4: serves Live Shield & OTel Observability Dashboard and metrics endpoint", async () => {
+    const result = await studioCommand({
+      port: 0,
+      host: "127.0.0.1",
+    });
+    activeStudios.push(result);
+
+    // 1. Verify HTML console includes observability dashboard
+    const pageRes = await fetch(`${result.url}/`);
+    expect(pageRes.status).toBe(200);
+    const html = await pageRes.text();
+    expect(html).toContain('id="observability-section"');
+    expect(html).toContain("Shield &amp; OTel Observability");
+    expect(html).toContain('id="obs-auto-refresh"');
+    expect(html).toContain('id="obs-metrics-cards"');
+    expect(html).toContain('id="obs-telemetry-table"');
+
+    // 2. Query /api/v1/telemetry/metrics
+    const metricsRes = await fetch(`${result.url}/api/v1/telemetry/metrics`, {
+      headers: { authorization: `Bearer ${result.token}` },
+    });
+    expect(metricsRes.status).toBe(200);
+    const metricsJson = await metricsRes.json();
+    expect(metricsJson.ok).toBe(true);
+    expect(metricsJson.summary).toBeDefined();
+    expect(metricsJson.summary.totalRequests).toBe(0);
+    expect(metricsJson.timeSeries).toHaveLength(12);
+
+    // 3. Query /api/v1/telemetry
+    const telemRes = await fetch(`${result.url}/api/v1/telemetry`, {
+      headers: { authorization: `Bearer ${result.token}` },
+    });
+    expect(telemRes.status).toBe(200);
+    const telemJson = await telemRes.json();
+    expect(telemJson.ok).toBe(true);
+    expect(telemJson.events).toEqual([]);
   });
 });
