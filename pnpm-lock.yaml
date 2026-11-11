@@ -204,6 +204,9 @@ importers:
       "@chainmcp/server":
         specifier: workspace:*
         version: link:../server
+      "@chainmcp/storage":
+        specifier: workspace:*
+        version: link:../storage
       yaml:
         specifier: ^2.9.1
         version: 2.9.1

@@ -729,7 +729,7 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 
 ### M13-1 — Web Studio foundation, zero-dependency static server & embedded admin app (`chainmcp studio`)
 
-**Status: ready to start.** Build a lightweight, local-first visual Web Studio server command `chainmcp studio` atop `@chainmcp/admin` and `@chainmcp/storage`. Serves an embedded, zero-external-CDN frontend UI asset bundle over HTTP with secure loopback defaults, token authentication, and integration with the active configuration (`chainmcp.config.yaml` / `gateway.config.yaml`).
+**Status: done (2026-11-11).** Added `chainmcp studio` command in `@chainmcp/cli` backed by `@chainmcp/admin` and `@chainmcp/storage`. Serves an embedded, zero-external-CDN UI asset bundle over HTTP on loopback with strict CSP, Host header validation (DNS rebinding defense), and Origin / `Sec-Fetch-Site` verification (anti-CSRF). Exposes `/api/v1/status` for studio UI initialization and authenticated `/api/v1/telemetry` + `/api/v1/tenants/{tenant}/telemetry` querying `@chainmcp/storage` (`TelemetryRingBuffer`). Integrates with `chainmcp.config.yaml` / `gateway.config.yaml` storage configurations (SQLite WAL and Memory). Added unit and integration tests in `packages/admin/tests/api.test.ts` and `packages/cli/tests/studio.test.ts` (7 tests). Additive.
 
 **Do**
 

@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "@chainmcp/core";
+import type { StorageDriver } from "@chainmcp/storage";
 import {
   DeclarativeDescriptorError,
   DeclarativeToolSource,
@@ -79,6 +80,7 @@ export class DeclarativeAdmin {
   readonly #auditSink: DeclarativeAdminOptions["auditSink"];
   readonly #logger: DeclarativeAdminOptions["logger"];
   readonly #store: DescriptorRevisionStore;
+  readonly #storageDriver: StorageDriver | undefined;
   readonly #transport: DeclarativeAdminOptions["transport"];
   readonly #resolveHost: DeclarativeAdminOptions["resolveHost"];
 
@@ -125,6 +127,7 @@ export class DeclarativeAdmin {
     this.#auditSink = options.auditSink;
     this.#logger = options.logger;
     this.#store = options.repository ?? new InMemoryDescriptorRevisionStore();
+    this.#storageDriver = options.storageDriver;
     this.#transport = options.transport;
     this.#resolveHost = options.resolveHost;
     if (
@@ -146,6 +149,11 @@ export class DeclarativeAdmin {
   /** The configured revision store, for startup diagnostics. */
   get storeKind(): string {
     return this.#store.kind;
+  }
+
+  /** The configured storage driver, if any. */
+  get storageDriver(): StorageDriver | undefined {
+    return this.#storageDriver;
   }
 
   /** HTTP entry point. Never throws; failures become JSON error responses. */
@@ -193,7 +201,11 @@ export class DeclarativeAdmin {
         service: "chainmcp-declarative-admin",
         apiVersion: 1,
         endpoints: [
+          "GET /api/v1/status",
+          "GET /api/v1/healthz",
           "GET /api/v1/contracts",
+          "GET /api/v1/telemetry",
+          "GET /api/v1/tenants/{tenant}/telemetry",
           "GET /api/v1/tenants/{tenant}/contracts/{contract}/tools",
           "GET /api/v1/tenants/{tenant}/contracts/{contract}/revisions",
           "GET /api/v1/tenants/{tenant}/contracts/{contract}/revisions/{revisionId}",
@@ -208,6 +220,21 @@ export class DeclarativeAdmin {
     if (segments.length === 1 && segments[0] === "healthz") {
       assertMethod(request, ["GET"]);
       return jsonResponse(200, { status: "ok" });
+    }
+
+    if (segments.length === 1 && segments[0] === "status") {
+      assertMethod(request, ["GET"]);
+      return jsonResponse(200, {
+        status: "ok",
+        service: "chainmcp-studio",
+        apiVersion: 1,
+        storeKind: this.#store.kind,
+        storage: {
+          connected: this.#storageDriver?.isConnected ?? false,
+          driver: this.#storageDriver?.id ?? "none",
+        },
+        contractsCount: this.#bindings.size,
+      });
     }
 
     const principal = await this.authenticate(request, url);
@@ -229,6 +256,70 @@ export class DeclarativeAdmin {
             allowedHosts: [...binding.destinationPolicy.allowedHosts],
           })),
       });
+    }
+
+    if (segments.length === 1 && segments[0] === "telemetry") {
+      assertMethod(request, ["GET"]);
+      const tenantParam = url.searchParams.get("tenant") ?? undefined;
+      if (
+        tenantParam &&
+        principal.tenants !== "*" &&
+        !principal.tenants.includes(tenantParam)
+      ) {
+        throw new DeclarativeAdminError(
+          "ADMIN_TENANT_FORBIDDEN",
+          403,
+          `Token is not authorized for tenant '${tenantParam}'`,
+        );
+      }
+      const toolName = url.searchParams.get("tool") ?? undefined;
+      const since = url.searchParams.has("since")
+        ? Number(url.searchParams.get("since"))
+        : undefined;
+      const limit = url.searchParams.has("limit")
+        ? Number(url.searchParams.get("limit"))
+        : undefined;
+
+      if (!this.#storageDriver) {
+        return jsonResponse(200, { events: [] });
+      }
+      const ringBuffer = this.#storageDriver.getTelemetryRingBuffer();
+      const events = await ringBuffer.query({
+        ...(tenantParam ? { tenantId: tenantParam } : {}),
+        ...(toolName ? { toolName } : {}),
+        ...(since !== undefined ? { since } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      });
+      return jsonResponse(200, { events });
+    }
+
+    if (
+      segments.length === 3 &&
+      segments[0] === "tenants" &&
+      segments[2] === "telemetry"
+    ) {
+      assertMethod(request, ["GET"]);
+      const tenant = segments[1]!;
+      assertTenantAllowed(principal, tenant);
+      const toolName = url.searchParams.get("tool") ?? undefined;
+      const since = url.searchParams.has("since")
+        ? Number(url.searchParams.get("since"))
+        : undefined;
+      const limit = url.searchParams.has("limit")
+        ? Number(url.searchParams.get("limit"))
+        : undefined;
+
+      if (!this.#storageDriver) {
+        return jsonResponse(200, { events: [] });
+      }
+      const ringBuffer = this.#storageDriver.getTelemetryRingBuffer();
+      const events = await ringBuffer.query({
+        tenantId: tenant,
+        ...(toolName ? { toolName } : {}),
+        ...(since !== undefined ? { since } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      });
+      return jsonResponse(200, { events });
     }
 
     if (

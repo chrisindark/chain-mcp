@@ -45,6 +45,7 @@
     "@chainmcp/json-navigation": "workspace:*",
     "@chainmcp/rate-limit": "workspace:*",
     "@chainmcp/server": "workspace:*",
+    "@chainmcp/storage": "workspace:*",
     "yaml": "^2.9.1"
   },
   "devDependencies": {

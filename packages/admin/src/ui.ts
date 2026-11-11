@@ -12,14 +12,14 @@ export const ADMIN_INDEX_HTML = `<!doctype html>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex, nofollow" />
-    <title>ChainMcp declarative admin</title>
+    <title>ChainMcp Web Studio — Declarative admin</title>
     <link rel="stylesheet" href="/ui/app.css" />
   </head>
   <body>
     <header class="site-header">
-      <h1>Declarative tool admin</h1>
+      <h1>ChainMcp Web Studio — Declarative tool admin</h1>
       <p>
-        Self-hosted surface for validating, previewing, and publishing
+        Self-hosted visual studio and operator console for validating, previewing, and publishing
         descriptor-backed tools. Validation and preview never contact the
         upstream API; publishing goes through the dynamic gateway.
       </p>
@@ -50,6 +50,7 @@ export const ADMIN_INDEX_HTML = `<!doctype html>
           <button id="load" type="button">Load contracts</button>
           <button id="revisions" type="button">Load revisions</button>
           <span id="status" class="status" role="status" aria-live="polite"></span>
+          <span id="studio-status" class="status" role="status" aria-live="polite"></span>
         </div>
         <p class="hint">
           The token stays in this page's memory. Nothing is persisted by the
@@ -617,6 +618,20 @@ export const ADMIN_APP_JS = `(function () {
       setStatus("Parameter added: " + n, "ok");
     });
   }
+  async function checkStudioStatus() {
+    try {
+      var res = await fetch("/api/v1/status", { cache: "no-store" });
+      if (res.ok) {
+        var data = await res.json();
+        var el = document.getElementById("studio-status");
+        if (el && data && data.storage) {
+          el.textContent = "Studio ready (" + (data.storage.driver || "memory") + " storage)";
+          el.className = "status ok";
+        }
+      }
+    } catch (ignored) {}
+  }
+  checkStudioStatus();
 })();
 
 `;

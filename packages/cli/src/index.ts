@@ -46,6 +46,11 @@ export { configExplainCommand } from "./commands/config.js";
 export { doctorCommand } from "./commands/doctor.js";
 export { adminCommand } from "./commands/admin.js";
 export {
+  studioCommand,
+  type StudioCommandOptions,
+  type StudioCommandResult,
+} from "./commands/studio.js";
+export {
   DEFAULT_CONFIG_FILENAMES,
   findConfigPath,
   loadServerConfigFile,

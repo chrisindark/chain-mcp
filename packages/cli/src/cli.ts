@@ -8,6 +8,7 @@ import { diffCommand } from "./commands/diff.js";
 import { exportCommand } from "./commands/export.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { adminCommand } from "./commands/admin.js";
+import { studioCommand } from "./commands/studio.js";
 import { gatewayServeCommand } from "./commands/gateway-serve.js";
 import { initCommand } from "./commands/init.js";
 import { serveCommand } from "./commands/serve.js";
@@ -31,6 +32,7 @@ Commands:
   dev       Run local developer authoring loop (stdio)
   export    Export a self-contained, portable generated server project
   config    Inspect resolved configuration (config explain)
+  studio    Launch local-first visual Web Studio and admin app
 
 Options:
   --version, -v   Show CLI version
@@ -110,6 +112,15 @@ Command options:
   config explain:
     --config <path>      Path to chainmcp.config.yaml
     --json               Emit redacted configuration as JSON
+
+  studio:
+    --config <path>      Path to chainmcp.config.yaml or gateway.config.yaml
+    --port <number>      HTTP port for Web Studio (default: 3341)
+    --host <string>      HTTP host for Web Studio (default: 127.0.0.1)
+    --tenant <id>        Tenant identifier for context
+    --token <token>      Admin bearer token (or CHAINMCP_ADMIN_TOKEN)
+    --allow-remote       Permit non-loopback HTTP bind
+    --json               Emit startup information as JSON
 `;
 
 function asString(val: unknown): string | undefined {
@@ -149,6 +160,8 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       json: { type: "boolean", default: false },
       "allow-http": { type: "boolean", default: false },
       transport: { type: "string" },
+      token: { type: "string" },
+      "allow-remote": { type: "boolean", default: false },
       "allow-unauthenticated-http": { type: "boolean", default: false },
       "require-contract": { type: "boolean", default: false },
       "local-deps": { type: "string" },
@@ -692,6 +705,78 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
             : `Admin error: ${result.error}`,
         );
       return result.ok ? 0 : 1;
+    }
+
+    case "studio": {
+      const result = await studioCommand({
+        ...(asString(values.config) !== undefined
+          ? { config: asString(values.config) }
+          : {}),
+        ...(asString(values.host) !== undefined
+          ? { host: asString(values.host) }
+          : {}),
+        ...(values.port !== undefined ? { port: Number(values.port) } : {}),
+        ...(asString(values.tenant) !== undefined
+          ? { tenant: asString(values.tenant) }
+          : {}),
+        ...(asString(values.token) !== undefined
+          ? { token: asString(values.token) }
+          : {}),
+        ...(asBoolean(values["allow-remote"]) !== undefined
+          ? { allowRemote: asBoolean(values["allow-remote"]) }
+          : {}),
+        ...(asBoolean(values.json) !== undefined
+          ? { json: asBoolean(values.json) }
+          : {}),
+      });
+
+      if (!result.ok) {
+        errLog(
+          `Studio error: ${result.error ?? "Failed to start ChainMcp Studio."}`,
+        );
+        return 1;
+      }
+
+      if (values.json) {
+        log(
+          JSON.stringify(
+            {
+              ok: true,
+              url: result.url,
+              host: result.host,
+              port: result.port,
+              storeKind: result.storeKind,
+              storageDriver: result.storageDriver,
+              storagePath: result.storagePath,
+              contractCount: result.contractCount,
+              token: result.token,
+            },
+            null,
+            2,
+          ),
+        );
+        return 0;
+      }
+
+      log(
+        `
+┌─────────────────────────────────────────────────────────────┐
+│  ChainMcp Web Studio                                        │
+│                                                             │
+│  Console:   ${(result.url ?? "").padEnd(46)} │
+│  Host:      ${((result.host ?? "") + " (loopback-only)").padEnd(46)} │
+│  Storage:   ${((result.storageDriver ?? "memory") + (result.storagePath ? " (" + result.storagePath + ")" : "")).padEnd(46)} │
+│  Security:  Host / Origin protected, strict CSP             │
+│  Auth:      Bearer token required                           │
+│  Token:     ${(result.token ?? "").padEnd(46)} │
+└─────────────────────────────────────────────────────────────┘
+      `.trim(),
+      );
+
+      if (result.closed) {
+        await result.closed;
+      }
+      return 0;
     }
 
     case "doctor": {

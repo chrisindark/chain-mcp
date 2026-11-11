@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DynamicGateway } from "@chainmcp/gateway";
+import { MemoryStorageDriver } from "@chainmcp/storage";
 
 import { DeclarativeAdmin, extractBearerToken } from "../src/index.js";
 import {
@@ -448,5 +449,91 @@ describe("admin publish", () => {
           contracts: [makeBinding(), makeBinding()],
         }),
     ).toThrowError(/duplicated/);
+  });
+});
+
+describe("studio status and telemetry endpoints", () => {
+  it("serves GET /api/v1/status with storage driver information", async () => {
+    const storageDriver = new MemoryStorageDriver();
+    await storageDriver.init();
+    const { admin } = makeAdmin({ storageDriver });
+
+    const response = await admin.handle(
+      new Request("http://127.0.0.1:3341/api/v1/status", { method: "GET" }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      status: "ok",
+      service: "chainmcp-studio",
+      apiVersion: 1,
+      storeKind: expect.any(String),
+      storage: {
+        connected: true,
+        driver: "memory",
+      },
+      contractsCount: expect.any(Number),
+    });
+  });
+
+  it("serves GET /api/v1/telemetry and filters by tenant and tool", async () => {
+    const storageDriver = new MemoryStorageDriver();
+    await storageDriver.init();
+    const ringBuffer = storageDriver.getTelemetryRingBuffer();
+    await ringBuffer.push({
+      id: "evt-1",
+      timestamp: Date.now(),
+      tenantId: "tenant-a",
+      toolName: "get_user",
+      durationMs: 15,
+      isError: false,
+    });
+    await ringBuffer.push({
+      id: "evt-2",
+      timestamp: Date.now(),
+      tenantId: "tenant-b",
+      toolName: "list_orders",
+      durationMs: 30,
+      isError: false,
+    });
+
+    const { admin } = makeAdmin({ storageDriver });
+
+    // Authenticated query across all tenants
+    const resAll = await admin.handle(
+      adminRequest("/api/v1/telemetry", "GET", { token: ADMIN_TOKEN }),
+    );
+    expect(resAll.status).toBe(200);
+    const bodyAll = await resAll.json();
+    expect(bodyAll.events).toHaveLength(2);
+
+    // Tenant-scoped query
+    const resA = await admin.handle(
+      adminRequest("/api/v1/telemetry?tenant=tenant-a", "GET", {
+        token: ADMIN_TOKEN,
+      }),
+    );
+    expect(resA.status).toBe(200);
+    const bodyA = await resA.json();
+    expect(bodyA.events).toHaveLength(1);
+    expect(bodyA.events[0].toolName).toBe("get_user");
+
+    // Path variant: /api/v1/tenants/tenant-a/telemetry
+    const resPath = await admin.handle(
+      adminRequest("/api/v1/tenants/tenant-a/telemetry", "GET", {
+        token: ADMIN_TOKEN,
+      }),
+    );
+    expect(resPath.status).toBe(200);
+    const bodyPath = await resPath.json();
+    expect(bodyPath.events).toHaveLength(1);
+
+    // Scoped token (tenant-b) forbidden for tenant-a
+    const resForbidden = await admin.handle(
+      adminRequest("/api/v1/telemetry?tenant=tenant-a", "GET", {
+        token: SCOPED_TOKEN, // scoped to tenant-b only
+      }),
+    );
+    expect(resForbidden.status).toBe(403);
   });
 });

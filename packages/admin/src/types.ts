@@ -1,6 +1,7 @@
 import type { FieldSelection, Logger } from "@chainmcp/core";
 import type { UpstreamCredentialProvider } from "@chainmcp/auth";
 import type { HostResolver, UpstreamTransport } from "@chainmcp/executor";
+import type { StorageDriver } from "@chainmcp/storage";
 import type {
   DeclarativeAuthSchemeMap,
   DeclarativeDescriptorErrorCode,
@@ -18,8 +19,9 @@ import type {
 /** HTTP prefix for every admin API route. */
 export const DECLARATIVE_ADMIN_API_PREFIX = "/api/v1";
 
-/** Default port for the self-hosted admin surface. */
+/** Default port for the self-hosted admin surface and Web Studio. */
 export const DEFAULT_DECLARATIVE_ADMIN_PORT = 3341;
+export const DEFAULT_STUDIO_PORT = DEFAULT_DECLARATIVE_ADMIN_PORT;
 
 /** Default maximum request body size for descriptor submissions. */
 export const MAX_DECLARATIVE_ADMIN_REQUEST_BYTES = 1_048_576;
@@ -111,6 +113,11 @@ export interface DeclarativeAdminOptions {
    * or a database adapter for durable revisions.
    */
   readonly repository?: DescriptorRevisionStore;
+  /**
+   * Storage driver from @chainmcp/storage (e.g. SqliteStorageDriver or MemoryStorageDriver)
+   * used for persistent descriptor revisions and telemetry queries.
+   */
+  readonly storageDriver?: StorageDriver;
   /**
    * Transport for descriptor-backed tools. Defaults to the executor's fetch
    * transport. Inject one to stub upstreams instead of calling the network.

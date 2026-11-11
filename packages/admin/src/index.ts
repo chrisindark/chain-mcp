@@ -38,6 +38,7 @@ export {
 export {
   DECLARATIVE_ADMIN_API_PREFIX,
   DEFAULT_DECLARATIVE_ADMIN_PORT,
+  DEFAULT_STUDIO_PORT,
   DESCRIPTOR_STORE_VERSION,
   DeclarativeAdminError,
   DescriptorStoreError,
