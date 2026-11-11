@@ -17,6 +17,7 @@ import {
   createStorageDriverFromConfig,
   createTokenizerFromConfig,
   createUpstreamCredentialProviderFromConfig,
+  filterToolsByConfig,
   loadTokenizerFromConfig,
   logRateLimiterStartup,
   parseConfig,
@@ -2157,6 +2158,32 @@ describe("buildExecutorOptions and buildRuntimeOptions", () => {
         driver,
       );
       expect(options?.storageDriver).toBe(driver);
+    });
+
+    it("parses contract tools filter config and filters tool definitions", () => {
+      const config = parseConfig({
+        version: 1,
+        name: "filtered-contract",
+        contract: {
+          source: "./pets.yaml",
+          tools: {
+            include: ["get_pet", "list_pets"],
+            exclude: ["list_pets"],
+          },
+        },
+      });
+      expect(config.contract?.tools).toEqual({
+        include: ["get_pet", "list_pets"],
+        exclude: ["list_pets"],
+      });
+
+      const tools = [
+        { name: "get_pet" },
+        { name: "list_pets" },
+        { name: "delete_pet" },
+      ];
+      const filtered = filterToolsByConfig(tools, config.contract?.tools);
+      expect(filtered).toEqual([{ name: "get_pet" }]);
     });
   });
 });

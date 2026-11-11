@@ -81,6 +81,8 @@ export class DeclarativeAdmin {
   readonly #logger: DeclarativeAdminOptions["logger"];
   readonly #store: DescriptorRevisionStore;
   readonly #storageDriver: StorageDriver | undefined;
+  readonly #configPath: string | undefined;
+  readonly #onConfigSync: DeclarativeAdminOptions["onConfigSync"];
   readonly #transport: DeclarativeAdminOptions["transport"];
   readonly #resolveHost: DeclarativeAdminOptions["resolveHost"];
 
@@ -128,6 +130,8 @@ export class DeclarativeAdmin {
     this.#logger = options.logger;
     this.#store = options.repository ?? new InMemoryDescriptorRevisionStore();
     this.#storageDriver = options.storageDriver;
+    this.#configPath = options.configPath;
+    this.#onConfigSync = options.onConfigSync;
     this.#transport = options.transport;
     this.#resolveHost = options.resolveHost;
     if (
@@ -154,6 +158,11 @@ export class DeclarativeAdmin {
   /** The configured storage driver, if any. */
   get storageDriver(): StorageDriver | undefined {
     return this.#storageDriver;
+  }
+
+  /** The configured configuration file path, if any. */
+  get configPath(): string | undefined {
+    return this.#configPath;
   }
 
   /** HTTP entry point. Never throws; failures become JSON error responses. */
@@ -207,6 +216,9 @@ export class DeclarativeAdmin {
           "GET /api/v1/telemetry",
           "GET /api/v1/tenants/{tenant}/telemetry",
           "GET /api/v1/tenants/{tenant}/contracts/{contract}/tools",
+          "GET /api/v1/tenants/{tenant}/contracts/{contract}/tools/{toolName}",
+          "PATCH /api/v1/tenants/{tenant}/contracts/{contract}/tools/{toolName}",
+          "POST /api/v1/tenants/{tenant}/contracts/{contract}/curate",
           "GET /api/v1/tenants/{tenant}/contracts/{contract}/revisions",
           "GET /api/v1/tenants/{tenant}/contracts/{contract}/revisions/{revisionId}",
           "POST /api/v1/tenants/{tenant}/contracts/{contract}/validate",
@@ -353,20 +365,42 @@ export class DeclarativeAdmin {
           const active = this.#gateway
             .getRegistry()
             .getActiveRevision(tenantId, contractName);
-          const tools: DeclarativeAdminToolSummary[] = (
-            active?.tools ?? []
-          ).map((tool) => ({
-            name: tool.name,
-            description: tool.description,
-            contractRevision: tool.contractRevision ?? "",
-            requiredScopes: [...(tool.operation.requiredScopes ?? [])],
-          }));
+          const activeRecord = await this.#store
+            .getActive(tenantId, contractName)
+            .catch(() => undefined);
+
+          let tools: DeclarativeAdminToolSummary[];
+          if (activeRecord && activeRecord.descriptors.length > 0) {
+            tools = activeRecord.descriptors.map((desc) => ({
+              name: desc.name,
+              description: desc.description,
+              contractRevision: active?.revisionId ?? activeRecord.revisionId,
+              requiredScopes: desc.policy?.requiredScopes
+                ? [...desc.policy.requiredScopes]
+                : [],
+              inputSchema: desc.inputSchema,
+              enabled: desc.enabled !== false,
+            }));
+          } else {
+            tools = (active?.tools ?? []).map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              contractRevision: tool.contractRevision ?? "",
+              requiredScopes: [...(tool.operation.requiredScopes ?? [])],
+              inputSchema: tool.inputSchema,
+              enabled: true,
+            }));
+          }
           return jsonResponse(200, {
             tenantId,
             contractName,
-            revisionId: active?.revisionId ?? null,
+            revisionId: active?.revisionId ?? activeRecord?.revisionId ?? null,
             tools,
           });
+        }
+        case "curate": {
+          assertMethod(request, ["POST"]);
+          return await this.handleCurate(request, binding, route, principal);
         }
         case "revisions": {
           assertMethod(request, ["GET"]);
@@ -396,6 +430,21 @@ export class DeclarativeAdmin {
         default:
           throw routeNotFound(request);
       }
+    }
+
+    if (rest.length === 2 && rest[0] === "tools") {
+      if (request.method === "GET") {
+        return await this.handleGetTool(binding, rest[1]!);
+      }
+      assertMethod(request, ["PATCH"]);
+      const toolName = rest[1]!;
+      return await this.handleCurateTool(
+        request,
+        binding,
+        toolName,
+        route,
+        principal,
+      );
     }
 
     if (rest.length === 2 && rest[0] === "revisions") {
@@ -601,6 +650,279 @@ export class DeclarativeAdmin {
     });
 
     return jsonResponse(201, published);
+  }
+
+  private async handleGetTool(
+    binding: DeclarativeAdminContractBinding,
+    toolName: string,
+  ): Promise<Response> {
+    const activeRecord = await this.readStore(() =>
+      this.#store.getActive(binding.tenantId, binding.contractName),
+    ).catch(() => undefined);
+    const activeGateway = this.#gateway
+      .getRegistry()
+      .getActiveRevision(binding.tenantId, binding.contractName);
+
+    if (activeRecord && activeRecord.descriptors.length > 0) {
+      const desc = activeRecord.descriptors.find((d) => d.name === toolName);
+      if (!desc) {
+        throw new DeclarativeAdminError(
+          "ADMIN_TOOL_NOT_FOUND",
+          404,
+          `Tool '${toolName}' was not found in contract '${binding.contractName}'`,
+        );
+      }
+      return jsonResponse(200, {
+        tenantId: binding.tenantId,
+        contractName: binding.contractName,
+        tool: {
+          name: desc.name,
+          description: desc.description,
+          contractRevision:
+            activeGateway?.revisionId ?? activeRecord.revisionId,
+          requiredScopes: desc.policy?.requiredScopes
+            ? [...desc.policy.requiredScopes]
+            : [],
+          inputSchema: desc.inputSchema,
+          enabled: desc.enabled !== false,
+        },
+      });
+    }
+
+    const tool = activeGateway?.tools.find((t) => t.name === toolName);
+    if (!tool) {
+      throw new DeclarativeAdminError(
+        "ADMIN_TOOL_NOT_FOUND",
+        404,
+        `Tool '${toolName}' was not found in contract '${binding.contractName}'`,
+      );
+    }
+
+    return jsonResponse(200, {
+      tenantId: binding.tenantId,
+      contractName: binding.contractName,
+      tool: {
+        name: tool.name,
+        description: tool.description,
+        contractRevision: tool.contractRevision ?? "",
+        requiredScopes: [...(tool.operation.requiredScopes ?? [])],
+        inputSchema: tool.inputSchema,
+        enabled: true,
+      },
+    });
+  }
+
+  private async handleCurateTool(
+    request: Request,
+    binding: DeclarativeAdminContractBinding,
+    toolName: string,
+    route: string,
+    principal: DeclarativeAdminPrincipal,
+  ): Promise<Response> {
+    const body = await readJsonBody(request, this.#maxRequestBytes);
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      typeof (body as { enabled?: unknown }).enabled !== "boolean"
+    ) {
+      throw new DeclarativeAdminError(
+        "ADMIN_REQUEST_INVALID",
+        400,
+        "Curate request body must be a JSON object with a boolean 'enabled' property",
+      );
+    }
+    const targetEnabled = (body as { enabled: boolean }).enabled;
+
+    return await this.executeCurate(
+      binding,
+      [{ toolName, enabled: targetEnabled }],
+      route,
+      principal,
+    );
+  }
+
+  private async handleCurate(
+    request: Request,
+    binding: DeclarativeAdminContractBinding,
+    route: string,
+    principal: DeclarativeAdminPrincipal,
+  ): Promise<Response> {
+    const body = await readJsonBody(request, this.#maxRequestBytes);
+    if (typeof body !== "object" || body === null) {
+      throw new DeclarativeAdminError(
+        "ADMIN_REQUEST_INVALID",
+        400,
+        "Curate request body must be a JSON object",
+      );
+    }
+
+    const dict = body as Record<string, unknown>;
+    const updates: Array<{ toolName: string; enabled: boolean }> = [];
+    if ("toolName" in dict && typeof dict.toolName === "string") {
+      if (typeof dict.enabled !== "boolean") {
+        throw new DeclarativeAdminError(
+          "ADMIN_REQUEST_INVALID",
+          400,
+          "Curate request body property 'enabled' must be a boolean",
+        );
+      }
+      updates.push({
+        toolName: dict.toolName,
+        enabled: dict.enabled,
+      });
+    } else if (
+      "tools" in dict &&
+      typeof dict.tools === "object" &&
+      dict.tools !== null
+    ) {
+      for (const [name, enabled] of Object.entries(
+        dict.tools as Record<string, unknown>,
+      )) {
+        if (typeof enabled !== "boolean") {
+          throw new DeclarativeAdminError(
+            "ADMIN_REQUEST_INVALID",
+            400,
+            `Tool '${name}' enabled value must be a boolean`,
+          );
+        }
+        updates.push({ toolName: name, enabled });
+      }
+    } else {
+      throw new DeclarativeAdminError(
+        "ADMIN_REQUEST_INVALID",
+        400,
+        "Curate request must contain 'toolName' and 'enabled', or a 'tools' map",
+      );
+    }
+
+    return await this.executeCurate(binding, updates, route, principal);
+  }
+
+  private async executeCurate(
+    binding: DeclarativeAdminContractBinding,
+    updates: ReadonlyArray<{ toolName: string; enabled: boolean }>,
+    route: string,
+    principal: DeclarativeAdminPrincipal,
+  ): Promise<Response> {
+    if (updates.length === 0) {
+      throw new DeclarativeAdminError(
+        "ADMIN_REQUEST_INVALID",
+        400,
+        "No tool curation updates provided",
+      );
+    }
+
+    const activeRecord = await this.readStore(() =>
+      this.#store.getActive(binding.tenantId, binding.contractName),
+    );
+
+    let descriptors: readonly DeclarativeToolDescriptor[] | undefined =
+      activeRecord?.descriptors;
+
+    if (!descriptors || descriptors.length === 0) {
+      const activeGateway = this.#gateway
+        .getRegistry()
+        .getActiveRevision(binding.tenantId, binding.contractName);
+      if (
+        activeGateway?.metadata &&
+        Array.isArray(activeGateway.metadata.descriptorSet)
+      ) {
+        descriptors = activeGateway.metadata
+          .descriptorSet as readonly DeclarativeToolDescriptor[];
+      }
+    }
+
+    if (!descriptors || descriptors.length === 0) {
+      throw new DeclarativeAdminError(
+        "ADMIN_TOOL_NOT_FOUND",
+        404,
+        `No active descriptors found for contract '${binding.contractName}'`,
+      );
+    }
+
+    const updateMap = new Map(updates.map((u) => [u.toolName, u.enabled]));
+    for (const toolName of updateMap.keys()) {
+      if (!descriptors.some((d) => d.name === toolName)) {
+        throw new DeclarativeAdminError(
+          "ADMIN_TOOL_NOT_FOUND",
+          404,
+          `Tool '${toolName}' was not found in contract '${binding.contractName}'`,
+        );
+      }
+    }
+
+    const updatedDescriptors = descriptors.map((desc) => {
+      if (updateMap.has(desc.name)) {
+        return {
+          ...desc,
+          enabled: updateMap.get(desc.name)!,
+        };
+      }
+      return desc;
+    });
+
+    if (updatedDescriptors.every((d) => d.enabled === false)) {
+      throw new DeclarativeAdminError(
+        "ADMIN_REQUEST_INVALID",
+        400,
+        "Cannot disable all tools: contract must have at least one active tool",
+      );
+    }
+
+    const { evaluation, parsed } = evaluateDescriptorSet({
+      descriptors: updatedDescriptors,
+      authSchemes: binding.authSchemes,
+    });
+
+    if (!evaluation.valid) {
+      return jsonResponse(422, evaluation);
+    }
+
+    const published = await this.publishParsedDescriptors(
+      binding,
+      parsed,
+      principal.tokenId,
+    );
+
+    if (this.#onConfigSync) {
+      for (const [toolName, enabled] of updateMap.entries()) {
+        await this.#onConfigSync({
+          tenantId: binding.tenantId,
+          contractName: binding.contractName,
+          toolName,
+          enabled,
+        });
+      }
+    }
+
+    await this.emitAudit({
+      type: "admin_curate",
+      timestamp: this.#now(),
+      route,
+      tokenId: principal.tokenId,
+      tenantId: binding.tenantId,
+      contractName: binding.contractName,
+      toolName: updates.length === 1 ? updates[0]!.toolName : undefined,
+      enabled: updates.length === 1 ? updates[0]!.enabled : undefined,
+      revisionId: published.revisionId,
+      ...(published.gatewayRevisionId === undefined
+        ? {}
+        : { gatewayRevisionId: published.gatewayRevisionId }),
+      toolCount: published.toolCount,
+      reason: updates
+        .map((u) => `${u.toolName}:${u.enabled ? "enabled" : "disabled"}`)
+        .join(","),
+    });
+
+    return jsonResponse(200, {
+      ok: true,
+      toolName: updates.length === 1 ? updates[0]!.toolName : undefined,
+      enabled: updates.length === 1 ? updates[0]!.enabled : undefined,
+      updates,
+      revisionId: published.revisionId,
+      gatewayRevisionId: published.gatewayRevisionId,
+      toolCount: published.toolCount,
+    });
   }
 
   /**
@@ -945,6 +1267,8 @@ export class DeclarativeAdmin {
         ? {}
         : { gatewayRevisionId: event.gatewayRevisionId }),
       ...(event.toolCount === undefined ? {} : { toolCount: event.toolCount }),
+      ...(event.toolName === undefined ? {} : { toolName: event.toolName }),
+      ...(event.enabled === undefined ? {} : { enabled: event.enabled }),
       ...(event.reason === undefined ? {} : { reason: event.reason }),
     };
     try {

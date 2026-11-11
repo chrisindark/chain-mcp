@@ -749,7 +749,7 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 
 ### M13-2 — Visual tool curation, endpoint filtering & bidirectional configuration sync
 
-**Status: ready to start.** Allow operators to browse discovered endpoints from OpenAPI specs, declarative descriptors, or proxied MCP servers (`tools/list`), handpick active tools, and prune unused endpoints to prevent LLM context bloat. Changes synchronize bidirectionally with local config files and descriptor stores.
+**Status: done (2026-11-11).** Added visual tool curation and bidirectional configuration sync to Web Studio. Exposes `GET .../tools`, `GET .../tools/{toolName}`, `PATCH .../tools/{toolName}`, and `POST .../curate` in `@chainmcp/admin` with `admin_curate` audit logging. Disabled/pruned tools are excluded from gateway revisions and `tools/list`, failing closed with `TOOL_NOT_FOUND` if called directly. Bidirectional sync (`syncConfigToolCuration`) atomically updates tool `exclude` filters in `chainmcp.config.yaml` and `gateway.config.yaml` multi-contract definitions. Web Studio UI includes interactive Tools & Curation console with schema inspection and live pruning toggles. Added positive, negative, security boundary, and configuration sync integration tests in `packages/admin/tests/api.test.ts` and `packages/cli/tests/studio.test.ts`. Additive.
 
 **Do**
 

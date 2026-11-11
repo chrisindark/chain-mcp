@@ -72,6 +72,7 @@ export type DeclarativeAdminAuditEventType =
   | "admin_validate"
   | "admin_preview"
   | "admin_publish"
+  | "admin_curate"
   | "admin_rollback"
   | "admin_restore"
   | "admin_auth_failed"
@@ -88,6 +89,8 @@ export interface DeclarativeAdminAuditEvent {
   readonly tokenId?: string | undefined;
   readonly tenantId?: string | undefined;
   readonly contractName?: string | undefined;
+  readonly toolName?: string | undefined;
+  readonly enabled?: boolean | undefined;
   readonly revisionId?: string | undefined;
   readonly gatewayRevisionId?: string | undefined;
   readonly toolCount?: number | undefined;
@@ -131,6 +134,17 @@ export interface DeclarativeAdminOptions {
   readonly logger?: Logger;
   readonly auditSink?: DeclarativeAdminAuditSink;
   readonly now?: () => number;
+  /** Optional config file path to synchronize with descriptor and tool curation changes. */
+  readonly configPath?: string | undefined;
+  /** Optional callback invoked when a tool's enabled/curated state changes. */
+  readonly onConfigSync?:
+    | ((update: {
+        tenantId: string;
+        contractName: string;
+        toolName: string;
+        enabled: boolean;
+      }) => Promise<void>)
+    | undefined;
 }
 
 export type DeclarativeAdminErrorCode =
@@ -141,6 +155,7 @@ export type DeclarativeAdminErrorCode =
   | "ADMIN_ROUTE_NOT_FOUND"
   | "ADMIN_METHOD_NOT_ALLOWED"
   | "ADMIN_CONTRACT_UNKNOWN"
+  | "ADMIN_TOOL_NOT_FOUND"
   | "ADMIN_REQUEST_INVALID"
   | "ADMIN_REQUEST_TOO_LARGE"
   | "ADMIN_MEDIA_TYPE_UNSUPPORTED"
@@ -402,6 +417,8 @@ export interface DeclarativeAdminToolSummary {
   readonly description: string;
   readonly contractRevision: string;
   readonly requiredScopes: readonly string[];
+  readonly inputSchema?: unknown | undefined;
+  readonly enabled?: boolean | undefined;
 }
 
 /** The request field's declared policy is echoed back for UI display. */

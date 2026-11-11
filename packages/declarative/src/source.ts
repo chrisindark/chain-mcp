@@ -94,7 +94,9 @@ export class DeclarativeToolSource implements ToolSource {
 
     this.parsedTools = Object.freeze(parsed);
     this.tools = Object.freeze(
-      this.parsedTools.map((tool) => this.createTool(tool)),
+      this.parsedTools
+        .filter((tool) => tool.descriptor.enabled !== false)
+        .map((tool) => this.createTool(tool)),
     );
   }
 

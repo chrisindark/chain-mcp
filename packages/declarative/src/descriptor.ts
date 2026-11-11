@@ -112,6 +112,7 @@ const RawDescriptorSchema = z.strictObject({
   descriptorVersion: z.number(),
   name: z.string(),
   description: z.string(),
+  enabled: z.boolean().optional(),
   request: RequestSchema,
   inputSchema: z.unknown(),
   authentication: AuthenticationSchema.optional(),
@@ -230,6 +231,7 @@ export function parseDeclarativeToolDescriptor(
     descriptorVersion: 1,
     name,
     description,
+    ...(raw.enabled !== undefined ? { enabled: raw.enabled } : {}),
     request: {
       method,
       path,

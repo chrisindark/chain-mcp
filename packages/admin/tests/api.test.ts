@@ -537,3 +537,198 @@ describe("studio status and telemetry endpoints", () => {
     expect(resForbidden.status).toBe(403);
   });
 });
+
+describe("tool curation and endpoint filtering", () => {
+  it("inspects tools, toggles active status, and propagates to gateway revision", async () => {
+    let syncedUpdate: {
+      tenantId: string;
+      contractName: string;
+      toolName: string;
+      enabled: boolean;
+    } | null = null;
+
+    const { admin, gateway, audit } = makeAdmin({
+      onConfigSync: async (update) => {
+        syncedUpdate = update;
+      },
+    });
+
+    // 1. Publish contract with two tools
+    const desc1 = makeDescriptor({ name: "get_user" });
+    const desc2 = makeDescriptor({
+      name: "list_users",
+      request: {
+        method: "GET",
+        path: "/users",
+        parameters: [{ name: "limit", in: "query" }],
+      },
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          limit: { type: "integer", minimum: 1, maximum: 100 },
+        },
+      },
+    });
+    const pubRes = await admin.handle(
+      adminRequest(`${CONTRACT_PATH}/publish`, "POST", {
+        body: { descriptors: [desc1, desc2] },
+      }),
+    );
+    expect(pubRes.status).toBe(201);
+
+    const testCtx = {
+      tenantId: "tenant-a",
+      requestId: "req-curate",
+      principal: { id: "c1", scopes: ["users:read"] },
+    };
+
+    // Initial gateway verification: both tools callable
+    const toolsInitial = await gateway.listTools(testCtx);
+    expect(toolsInitial.map((t) => t.name).sort()).toEqual([
+      "get_user",
+      "list_users",
+    ]);
+
+    // 2. GET tools list returns inputSchema and enabled: true
+    const listRes = await admin.handle(
+      adminRequest(`${CONTRACT_PATH}/tools`, "GET"),
+    );
+    expect(listRes.status).toBe(200);
+    const listBody = await listRes.json();
+    expect(listBody.tools).toHaveLength(2);
+    expect(listBody.tools[0]).toMatchObject({
+      name: "get_user",
+      enabled: true,
+      inputSchema: expect.any(Object),
+    });
+
+    // 3. GET single tool
+    const singleRes = await admin.handle(
+      adminRequest(`${CONTRACT_PATH}/tools/get_user`, "GET"),
+    );
+    expect(singleRes.status).toBe(200);
+    const singleBody = await singleRes.json();
+    expect(singleBody.tool.name).toBe("get_user");
+    expect(singleBody.tool.enabled).toBe(true);
+
+    // 4. PATCH disable tool
+    const patchRes = await admin.handle(
+      adminRequest(`${CONTRACT_PATH}/tools/get_user`, "PATCH", {
+        body: { enabled: false },
+      }),
+    );
+    expect(patchRes.status).toBe(200);
+    const patchBody = await patchRes.json();
+    expect(patchBody.ok).toBe(true);
+    expect(patchBody.toolName).toBe("get_user");
+    expect(patchBody.enabled).toBe(false);
+
+    // Verify onConfigSync was called
+    expect(syncedUpdate).toEqual({
+      tenantId: "tenant-a",
+      contractName: "users",
+      toolName: "get_user",
+      enabled: false,
+    });
+
+    // Verify audit event
+    const curateEvents = audit.filter((e) => e.type === "admin_curate");
+    expect(curateEvents.length).toBeGreaterThan(0);
+    expect(curateEvents[curateEvents.length - 1]).toMatchObject({
+      toolName: "get_user",
+      enabled: false,
+    });
+
+    // 5. Verify gateway tools list: get_user is EXCLUDED
+    const toolsAfterDisable = await gateway.listTools(testCtx);
+    expect(toolsAfterDisable.map((t) => t.name)).toEqual(["list_users"]);
+
+    // Calling the disabled tool directly fails with TOOL_NOT_FOUND
+    await expect(
+      gateway.callTool("get_user", { userId: "u1" }, testCtx),
+    ).rejects.toThrowError(/not found/i);
+
+    // 6. PATCH re-enable tool
+    const reEnableRes = await admin.handle(
+      adminRequest(`${CONTRACT_PATH}/tools/get_user`, "PATCH", {
+        body: { enabled: true },
+      }),
+    );
+    expect(reEnableRes.status).toBe(200);
+
+    const toolsAfterReEnable = await gateway.listTools(testCtx);
+    expect(toolsAfterReEnable.map((t) => t.name).sort()).toEqual([
+      "get_user",
+      "list_users",
+    ]);
+
+    // 7. Batch curate via POST .../curate
+    const batchRes = await admin.handle(
+      adminRequest(`${CONTRACT_PATH}/curate`, "POST", {
+        body: { tools: { list_users: false } },
+      }),
+    );
+    expect(batchRes.status).toBe(200);
+    const toolsAfterBatch = await gateway.listTools(testCtx);
+    expect(toolsAfterBatch.map((t) => t.name)).toEqual(["get_user"]);
+  });
+
+  it("handles negative curation cases and security boundaries", async () => {
+    const { admin } = makeAdmin();
+    const desc = makeDescriptor({ name: "get_user" });
+    await admin.handle(
+      adminRequest(`${CONTRACT_PATH}/publish`, "POST", {
+        body: { descriptors: [desc] },
+      }),
+    );
+
+    // 1. Unknown tool 404
+    const unknownRes = await admin.handle(
+      adminRequest(`${CONTRACT_PATH}/tools/non_existent_tool`, "PATCH", {
+        body: { enabled: false },
+      }),
+    );
+    expect(unknownRes.status).toBe(404);
+    expect(await unknownRes.json()).toMatchObject({
+      error: { code: "ADMIN_TOOL_NOT_FOUND" },
+    });
+
+    // 2. Invalid body 400
+    const invalidBodyRes = await admin.handle(
+      adminRequest(`${CONTRACT_PATH}/tools/get_user`, "PATCH", {
+        body: { enabled: "not-a-boolean" },
+      }),
+    );
+    expect(invalidBodyRes.status).toBe(400);
+    expect(await invalidBodyRes.json()).toMatchObject({
+      error: { code: "ADMIN_REQUEST_INVALID" },
+    });
+
+    // 3. Disabling all tools 400
+    const disableAllRes = await admin.handle(
+      adminRequest(`${CONTRACT_PATH}/tools/get_user`, "PATCH", {
+        body: { enabled: false },
+      }),
+    );
+    expect(disableAllRes.status).toBe(400);
+    expect(await disableAllRes.json()).toMatchObject({
+      error: {
+        code: "ADMIN_REQUEST_INVALID",
+        message: expect.stringContaining("Cannot disable all tools"),
+      },
+    });
+
+    // 4. Tenant forbidden 403
+    const forbiddenRes = await admin.handle(
+      adminRequest(`${CONTRACT_PATH}/tools/get_user`, "PATCH", {
+        token: SCOPED_TOKEN, // authorized for tenant-b, contract is tenant-a
+        body: { enabled: false },
+      }),
+    );
+    expect(forbiddenRes.status).toBe(403);
+    expect(await forbiddenRes.json()).toMatchObject({
+      error: { code: "ADMIN_TENANT_FORBIDDEN" },
+    });
+  });
+});

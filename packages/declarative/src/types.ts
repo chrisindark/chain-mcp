@@ -97,6 +97,7 @@ export interface DeclarativeToolDescriptor {
   descriptorVersion: typeof DECLARATIVE_DESCRIPTOR_VERSION;
   name: string;
   description: string;
+  enabled?: boolean;
   request: DeclarativeRequestDescriptor;
   inputSchema: JsonSchema;
   authentication?: DeclarativeAuthenticationDescriptor;

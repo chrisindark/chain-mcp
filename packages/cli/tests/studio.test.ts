@@ -1,12 +1,14 @@
 import { request as httpRequest } from "node:http";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 import { runCli } from "../src/cli.js";
 import {
   studioCommand,
+  syncConfigToolCuration,
   type StudioCommandResult,
 } from "../src/commands/studio.js";
 
@@ -214,5 +216,231 @@ storage:
 
     const exitCode = await studioExitCodePromise;
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("M13-2: Visual tool curation and bidirectional configuration sync", () => {
+  it("syncs tool curation updates atomically to chainmcp.config.yaml", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "chainmcp-studio-sync-"));
+    tempDirs.push(dir);
+    const configPath = join(dir, "chainmcp.config.yaml");
+
+    const initialYaml = `
+version: 1
+name: petstore
+contract:
+  source: ./openapi.yaml
+`;
+    await writeFile(configPath, initialYaml, "utf8");
+
+    // 1. Disable "delete_pet"
+    await syncConfigToolCuration(configPath, {
+      tenantId: "default",
+      contractName: "petstore",
+      toolName: "delete_pet",
+      enabled: false,
+    });
+
+    let content = await readFile(configPath, "utf8");
+    let parsed = parseYaml(content);
+    expect(parsed.contract?.tools?.exclude).toEqual(["delete_pet"]);
+
+    // 2. Disable another tool "add_pet"
+    await syncConfigToolCuration(configPath, {
+      tenantId: "default",
+      contractName: "petstore",
+      toolName: "add_pet",
+      enabled: false,
+    });
+
+    content = await readFile(configPath, "utf8");
+    parsed = parseYaml(content);
+    expect(parsed.contract?.tools?.exclude).toEqual(["delete_pet", "add_pet"]);
+
+    // 3. Re-enable "delete_pet"
+    await syncConfigToolCuration(configPath, {
+      tenantId: "default",
+      contractName: "petstore",
+      toolName: "delete_pet",
+      enabled: true,
+    });
+
+    content = await readFile(configPath, "utf8");
+    parsed = parseYaml(content);
+    expect(parsed.contract?.tools?.exclude).toEqual(["add_pet"]);
+
+    // 4. Re-enable "add_pet" (exclude becomes empty, deleted cleanly)
+    await syncConfigToolCuration(configPath, {
+      tenantId: "default",
+      contractName: "petstore",
+      toolName: "add_pet",
+      enabled: true,
+    });
+
+    content = await readFile(configPath, "utf8");
+    parsed = parseYaml(content);
+    expect(parsed.contract?.tools).toBeUndefined();
+  });
+
+  it("syncs tool curation updates to gateway.config.yaml multi-contract configurations", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "chainmcp-studio-gw-sync-"));
+    tempDirs.push(dir);
+    const configPath = join(dir, "gateway.config.yaml");
+
+    const initialYaml = `
+version: 1
+contracts:
+  users:
+    tenantId: default
+    destination:
+      baseUrl: https://users.example.com
+      allowedHosts:
+        - users.example.com
+  orders:
+    tenantId: default
+    destination:
+      baseUrl: https://orders.example.com
+      allowedHosts:
+        - orders.example.com
+`;
+    await writeFile(configPath, initialYaml, "utf8");
+
+    // Prune an endpoint in orders
+    await syncConfigToolCuration(configPath, {
+      tenantId: "default",
+      contractName: "orders",
+      toolName: "cancel_order",
+      enabled: false,
+    });
+
+    const content = await readFile(configPath, "utf8");
+    const parsed = parseYaml(content);
+    expect(parsed.contracts.orders.tools.exclude).toEqual(["cancel_order"]);
+    expect(parsed.contracts.users.tools).toBeUndefined();
+  });
+
+  it("serves Web Studio with visual curation UI and syncs curation changes to config", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "chainmcp-studio-live-curate-"));
+    tempDirs.push(dir);
+    const configPath = join(dir, "gateway.config.yaml");
+    const specPath = join(dir, "spec.json");
+    await writeFile(
+      specPath,
+      JSON.stringify({
+        openapi: "3.0.0",
+        info: { title: "Test", version: "1.0.0" },
+        paths: {},
+      }),
+      "utf8",
+    );
+
+    const initialYaml = `
+version: 1
+name: chainmcp-gateway
+contracts:
+  - name: test_contract
+    tenantId: default
+    spec: ${specPath}
+    destination:
+      baseUrl: https://api.example.com
+      allowedHosts:
+        - api.example.com
+`;
+    await writeFile(configPath, initialYaml, "utf8");
+
+    const result = await studioCommand({
+      config: configPath,
+      port: 0,
+      host: "127.0.0.1",
+    });
+    if (!result.ok) {
+      throw new Error(`studioCommand failed: ${result.error}`);
+    }
+    activeStudios.push(result);
+    expect(result.ok).toBe(true);
+
+    // 1. Verify HTML console includes Tools & Curation section
+    const pageRes = await fetch(`${result.url}/`);
+    expect(pageRes.status).toBe(200);
+    const html = await pageRes.text();
+    expect(html).toContain("Tools &amp; Curation");
+    expect(html).toContain("Refresh tools");
+
+    // 2. Publish descriptors for test_contract
+    const desc1 = {
+      descriptorVersion: 1,
+      name: "query_items",
+      description: "Query available items",
+      request: { method: "GET", path: "/items" },
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    };
+    const desc2 = {
+      descriptorVersion: 1,
+      name: "delete_item",
+      description: "Delete an item",
+      request: { method: "DELETE", path: "/items" },
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    };
+
+    const pubRes = await fetch(
+      `${result.url}/api/v1/tenants/default/contracts/test_contract/publish`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${result.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ descriptors: [desc1, desc2] }),
+      },
+    );
+    expect(pubRes.status).toBe(201);
+
+    // 3. GET tools list
+    const toolsRes = await fetch(
+      `${result.url}/api/v1/tenants/default/contracts/test_contract/tools`,
+      {
+        headers: { authorization: `Bearer ${result.token}` },
+      },
+    );
+    expect(toolsRes.status).toBe(200);
+    const toolsJson = await toolsRes.json();
+    expect(toolsJson.tools).toHaveLength(2);
+    expect(toolsJson.tools.map((t: { name: string }) => t.name).sort()).toEqual(
+      ["delete_item", "query_items"],
+    );
+
+    // 4. PATCH disable tool "delete_item"
+    const patchRes = await fetch(
+      `${result.url}/api/v1/tenants/default/contracts/test_contract/tools/delete_item`,
+      {
+        method: "PATCH",
+        headers: {
+          authorization: `Bearer ${result.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ enabled: false }),
+      },
+    );
+    expect(patchRes.status).toBe(200);
+    const patchJson = await patchRes.json();
+    expect(patchJson.ok).toBe(true);
+    expect(patchJson.toolName).toBe("delete_item");
+    expect(patchJson.enabled).toBe(false);
+
+    // 5. Verify config file was updated on disk
+    const updatedYaml = await readFile(configPath, "utf8");
+    const parsedConfig = parseYaml(updatedYaml);
+    const updatedContract = parsedConfig.contracts.find(
+      (c: { name: string }) => c.name === "test_contract",
+    );
+    expect(updatedContract.tools.exclude).toEqual(["delete_item"]);
   });
 });

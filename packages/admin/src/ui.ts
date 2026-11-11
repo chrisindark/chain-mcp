@@ -58,6 +58,22 @@ export const ADMIN_INDEX_HTML = `<!doctype html>
         </p>
       </section>
 
+      <section class="card" id="tools-section">
+        <div class="card-heading">
+          <h2>Tools &amp; Curation</h2>
+          <button id="load-tools" type="button" class="secondary">
+            Refresh tools
+          </button>
+        </div>
+        <div id="tools-list" class="tools-list">
+          <p class="hint">Load a contract to inspect and curate its endpoints.</p>
+        </div>
+        <p class="hint">
+          Prune unused tools or endpoints to eliminate LLM context bloat. Toggling
+          active status updates active revisions and syncs with configuration.
+        </p>
+      </section>
+
       <section class="card">
         <div class="card-heading">
           <h2>Builder</h2>
@@ -286,6 +302,78 @@ button:disabled {
   color: var(--danger);
 }
 
+.tools-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.tool-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 0.75rem 1rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  gap: 1rem;
+}
+
+.tool-info {
+  flex: 1;
+}
+
+.tool-header-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.tool-name {
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+}
+
+.badge {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.badge.enabled {
+  background: rgba(15, 123, 63, 0.15);
+  color: var(--ok);
+}
+
+.badge.disabled {
+  background: rgba(180, 35, 24, 0.15);
+  color: var(--danger);
+}
+
+.tool-desc {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+
+.tool-schema {
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+  max-height: 10rem;
+}
+
+.tool-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
 .hint {
   margin: 0.75rem 0 0;
   font-size: 0.8rem;
@@ -361,9 +449,11 @@ export const ADMIN_APP_JS = `(function () {
   var textarea = document.getElementById("descriptors");
   var output = document.getElementById("output");
   var status = document.getElementById("status");
+  var toolsList = document.getElementById("tools-list");
   var buttons = [
     document.getElementById("load"),
     document.getElementById("revisions"),
+    document.getElementById("load-tools"),
     document.getElementById("validate"),
     document.getElementById("preview"),
     document.getElementById("publish"),
@@ -472,6 +562,116 @@ export const ADMIN_APP_JS = `(function () {
     }
     show("Contracts", result.payload);
     setStatus(contracts.length + " contract(s)", "ok");
+    await loadTools();
+  }
+
+  async function loadTools() {
+    if (!toolsList) return;
+    var picked;
+    try {
+      picked = selectedContract();
+    } catch {
+      toolsList.textContent = "";
+      var hint = document.createElement("p");
+      hint.className = "hint";
+      hint.textContent = "Load a contract to inspect and curate its endpoints.";
+      toolsList.appendChild(hint);
+      return;
+    }
+    var result = await request("GET", endpoint("tools"));
+    if (!result.ok) {
+      show("Tools", result);
+      setStatus("Failed to load tools: HTTP " + result.status, "error");
+      return;
+    }
+    var tools = (result.payload && result.payload.tools) || [];
+    toolsList.textContent = "";
+    if (tools.length === 0) {
+      var emptyMsg = document.createElement("p");
+      emptyMsg.className = "hint";
+      emptyMsg.textContent = "No tools defined in this contract.";
+      toolsList.appendChild(emptyMsg);
+      return;
+    }
+
+    for (var i = 0; i < tools.length; i += 1) {
+      (function (tool) {
+        var item = document.createElement("div");
+        item.className = "tool-item";
+
+        var info = document.createElement("div");
+        info.className = "tool-info";
+
+        var headerRow = document.createElement("div");
+        headerRow.className = "tool-header-row";
+
+        var nameSpan = document.createElement("span");
+        nameSpan.className = "tool-name";
+        nameSpan.textContent = tool.name;
+        headerRow.appendChild(nameSpan);
+
+        var badge = document.createElement("span");
+        badge.className = "badge " + (tool.enabled !== false ? "enabled" : "disabled");
+        badge.textContent = tool.enabled !== false ? "Active" : "Pruned";
+        headerRow.appendChild(badge);
+
+        info.appendChild(headerRow);
+
+        if (tool.description) {
+          var descP = document.createElement("div");
+          descP.className = "tool-desc";
+          descP.textContent = tool.description;
+          info.appendChild(descP);
+        }
+
+        if (tool.inputSchema) {
+          var schemaDetails = document.createElement("details");
+          var summary = document.createElement("summary");
+          summary.textContent = "Input Schema";
+          summary.className = "hint";
+          summary.style.cursor = "pointer";
+          schemaDetails.appendChild(summary);
+          var pre = document.createElement("pre");
+          pre.className = "tool-schema";
+          pre.textContent = JSON.stringify(tool.inputSchema, null, 2);
+          schemaDetails.appendChild(pre);
+          info.appendChild(schemaDetails);
+        }
+
+        item.appendChild(info);
+
+        var actions = document.createElement("div");
+        actions.className = "tool-actions";
+
+        var toggleBtn = document.createElement("button");
+        toggleBtn.type = "button";
+        toggleBtn.className = tool.enabled !== false ? "secondary" : "primary";
+        toggleBtn.textContent = tool.enabled !== false ? "Prune" : "Enable";
+        toggleBtn.addEventListener("click", action(async function () {
+          var targetEnabled = tool.enabled === false;
+          var patchRes = await request(
+            "PATCH",
+            endpoint("tools/" + encodeURIComponent(tool.name)),
+            { enabled: targetEnabled }
+          );
+          if (!patchRes.ok) {
+            show("Curate Tool", patchRes);
+            setStatus(
+              "Curate failed: HTTP " + patchRes.status + (patchRes.payload && patchRes.payload.error ? " · " + patchRes.payload.error.code : ""),
+              "error"
+            );
+            return;
+          }
+          setStatus("Tool '" + tool.name + "' " + (targetEnabled ? "enabled" : "pruned"), "ok");
+          await loadTools();
+        }));
+
+        actions.appendChild(toggleBtn);
+        item.appendChild(actions);
+
+        toolsList.appendChild(item);
+      })(tools[i]);
+    }
   }
 
   async function submit(action) {
@@ -515,6 +715,8 @@ export const ADMIN_APP_JS = `(function () {
 
   document.getElementById("load").addEventListener("click", action(loadContracts));
   document.getElementById("revisions").addEventListener("click", action(loadRevisions));
+  document.getElementById("load-tools").addEventListener("click", action(loadTools));
+  contractSelect.addEventListener("change", action(loadTools));
   document.getElementById("validate").addEventListener("click", action(function () {
     return submit("validate");
   }));
@@ -531,6 +733,7 @@ export const ADMIN_APP_JS = `(function () {
       return;
     }
     await submit("publish");
+    await loadTools();
   }));
   document.getElementById("rollback").addEventListener("click", action(async function () {
     var picked = selectedContract();
@@ -553,6 +756,7 @@ export const ADMIN_APP_JS = `(function () {
       return;
     }
     setStatus("Rolled back to " + revisionId.trim(), "ok");
+    await loadTools();
   }));
   document.getElementById("example").addEventListener("click", function () {
     textarea.value = JSON.stringify(EXAMPLE, null, 2);

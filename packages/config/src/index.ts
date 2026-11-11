@@ -390,11 +390,34 @@ export const BaseUrlSchema = z
 
 export type BaseUrl = z.infer<typeof BaseUrlSchema>;
 
+export const ToolsFilterConfigSchema = z
+  .object({
+    include: z.array(z.string().min(1)).optional(),
+    exclude: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+
+export type ToolsFilterConfig = z.infer<typeof ToolsFilterConfigSchema>;
+
+export function filterToolsByConfig<T extends { name: string }>(
+  tools: readonly T[],
+  toolsConfig?: ToolsFilterConfig | undefined,
+): T[] {
+  if (!toolsConfig) return [...tools];
+  const { include, exclude } = toolsConfig;
+  return tools.filter((tool) => {
+    if (exclude && exclude.includes(tool.name)) return false;
+    if (include && !include.includes(tool.name)) return false;
+    return true;
+  });
+}
+
 export const ContractConfigSchema = z
   .object({
     source: z.string().min(1),
     strict: z.boolean().default(true),
     baseUrl: BaseUrlSchema.optional(),
+    tools: ToolsFilterConfigSchema.optional(),
   })
   .strict();
 
@@ -781,6 +804,7 @@ export const GatewayContractConfigSchema = z
     limits: GatewayContractLimitsSchema.optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
     autoActivate: z.boolean().default(true),
+    tools: ToolsFilterConfigSchema.optional(),
   })
   .strict();
 
