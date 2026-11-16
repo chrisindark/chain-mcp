@@ -825,7 +825,7 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 
 ### M14-1 — "Stage in Gateway, Eject to Standalone" workflow (`chainmcp eject` / export integration)
 
-**Status: ready to start.** Hot-load and iterate on contracts dynamically in `@chainmcp/gateway` and Web Studio, then eject active curated toolsets and destination policies into standalone, self-contained Node/Docker packages via `chainmcp export` / `chainmcp eject`.
+**Status: done (2026-11-16).** Implemented `chainmcp eject` and `chainmcp export --from-gateway` commands to eject curated gateway contracts and active SQLite storage revisions (`StorageDescriptorRevisionStore`) into self-contained, standalone MCP server packages. Prunes disabled and excluded tools while retaining active output field projections, cache policies, and destination policies. Enforces SSRF invariants on destination URLs and generates verified manifests, compiled tools, and deterministic configs without gateway/admin runtime dependencies. Full offline build and execution test suite in `packages/cli/tests/eject.test.ts`.
 
 **Do**
 

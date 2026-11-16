@@ -5,6 +5,7 @@ import { buildCommand } from "./commands/build.js";
 import { configExplainCommand } from "./commands/config.js";
 import { devCommand } from "./commands/dev.js";
 import { diffCommand } from "./commands/diff.js";
+import { ejectCommand } from "./commands/eject.js";
 import { exportCommand } from "./commands/export.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { adminCommand } from "./commands/admin.js";
@@ -31,6 +32,7 @@ Commands:
   gateway   Manage dynamic multi-contract MCP gateway (gateway serve)
   dev       Run local developer authoring loop (stdio)
   export    Export a self-contained, portable generated server project
+  eject     Eject a staged gateway contract to a standalone, runnable MCP server package
   config    Inspect resolved configuration (config explain)
   studio    Launch local-first visual Web Studio and admin app
 
@@ -102,12 +104,28 @@ Command options:
   export:
     --config <path>      Path to chainmcp.config.yaml
     --spec <path>        Path to OpenAPI contract
+    --from-gateway       Eject contract from dynamic gateway / SQLite storage
+    --contract <name>    Contract name to export/eject
+    --tenant <id>        Tenant identifier for contract
+    --storage-path <dir> Path to storage database file
     --output <dir>       Output directory for generated server (default: ./generated-server)
     --local-deps <path>  Link @chainmcp/* from a cloned repository (file: deps)
     --workspace-deps     Use workspace:* dependencies (project inside the monorepo)
     --force              Overwrite non-empty target directory
     --check              Verify deterministic reproducibility
     --require-contract   Require an OpenAPI contract specification
+
+  eject:
+    --config <path>      Path to gateway.config.yaml or chainmcp.config.yaml
+    --contract <name>    Contract name to eject (required if multiple contracts exist)
+    --tenant <id>        Tenant identifier for contract (default: default)
+    --storage-path <dir> Path to storage database file
+    --output <dir>       Target project directory (default: ./<contract>-server)
+    --local-deps <path>  Link @chainmcp/* from a cloned repository (file: deps)
+    --workspace-deps     Use workspace:* dependencies (project inside the monorepo)
+    --force              Overwrite non-empty target directory
+    --check              Verify deterministic reproducibility
+    --transport <type>   stdio | http (default: stdio)
 
   config explain:
     --config <path>      Path to chainmcp.config.yaml
@@ -166,6 +184,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       "require-contract": { type: "boolean", default: false },
       "local-deps": { type: "string" },
       "workspace-deps": { type: "boolean", default: false },
+      "from-gateway": { type: "boolean", default: false },
+      contract: { type: "string" },
+      "storage-path": { type: "string" },
     },
     allowPositionals: true,
     strict: false,
@@ -668,6 +689,23 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
         ...(values["workspace-deps"] === true
           ? { workspaceDependencies: true }
           : {}),
+        ...(asBoolean(values["from-gateway"]) !== undefined
+          ? { fromGateway: asBoolean(values["from-gateway"]) }
+          : {}),
+        ...(asString(values.contract) !== undefined
+          ? { contract: asString(values.contract) }
+          : {}),
+        ...(asString(values.tenant) !== undefined
+          ? { tenant: asString(values.tenant) }
+          : {}),
+        ...(asString(values["storage-path"]) !== undefined
+          ? { storagePath: asString(values["storage-path"]) }
+          : {}),
+        ...(asString(values.transport) !== undefined
+          ? {
+              transport: asString(values.transport) as "stdio" | "http",
+            }
+          : {}),
       });
 
       if (!result.ok) {
@@ -682,6 +720,60 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
         log(`Contract revision: ${result.manifest.contractRevision}`);
       } else {
         log(`Project mode: code-first`);
+      }
+      log(`Tools compiled: ${result.manifest.toolCount}`);
+      if (result.verifiedReproducible) {
+        log(`Reproducibility: verified`);
+      }
+      return 0;
+    }
+
+    case "eject": {
+      const result = await ejectCommand({
+        ...(asString(values.config) !== undefined
+          ? { config: asString(values.config) }
+          : {}),
+        ...(asString(values.contract) !== undefined
+          ? { contract: asString(values.contract) }
+          : {}),
+        ...(asString(values.tenant) !== undefined
+          ? { tenant: asString(values.tenant) }
+          : {}),
+        ...(asString(values["storage-path"]) !== undefined
+          ? { storagePath: asString(values["storage-path"]) }
+          : {}),
+        ...(asString(values.output) !== undefined
+          ? { output: asString(values.output) }
+          : {}),
+        ...(asBoolean(values.force) !== undefined
+          ? { force: asBoolean(values.force) }
+          : {}),
+        ...(asBoolean(values.check) !== undefined
+          ? { check: asBoolean(values.check) }
+          : {}),
+        ...(asString(values["local-deps"]) !== undefined
+          ? { localDeps: asString(values["local-deps"]) }
+          : {}),
+        ...(values["workspace-deps"] === true
+          ? { workspaceDependencies: true }
+          : {}),
+        ...(asString(values.transport) !== undefined
+          ? {
+              transport: asString(values.transport) as "stdio" | "http",
+            }
+          : {}),
+      });
+
+      if (!result.ok) {
+        errLog(`Eject failed: ${result.error ?? "Unknown error"}`);
+        return 1;
+      }
+
+      log(`Eject succeeded:`);
+      log(`Ejected contract '${result.contractName}' to: ${result.outputDir}`);
+      log(`Files written: ${result.filesWritten.length}`);
+      if (result.manifest.contractRevision) {
+        log(`Contract revision: ${result.manifest.contractRevision}`);
       }
       log(`Tools compiled: ${result.manifest.toolCount}`);
       if (result.verifiedReproducible) {

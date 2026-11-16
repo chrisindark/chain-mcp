@@ -13,6 +13,11 @@ export interface CodeFirstManifestOptions extends ManifestOptions {
   sourceHash?: string | undefined;
 }
 
+export interface DeclarativeManifestOptions extends ManifestOptions {
+  contractRevision?: string | undefined;
+  sourceHash: string;
+}
+
 /**
  * Computes a SHA-256 hexadecimal hash of the given UTF-8 content.
  */
@@ -183,6 +188,51 @@ export function buildCodeFirstManifest(
     compilerVersion: COMPILER_VERSION,
     projectName,
     sourceHash: options?.sourceHash ?? sha256("code-first"),
+    toolsetHash,
+    toolCount: tools.length,
+    tools: toolEntries,
+    generatedAt: options?.generatedAt ?? "2026-01-01T00:00:00.000Z",
+  };
+}
+
+/**
+ * Builds a deterministic ProjectManifest for an ejected declarative/gateway project.
+ */
+export function buildDeclarativeManifest(
+  projectName: string,
+  tools: readonly unknown[],
+  options: DeclarativeManifestOptions,
+): ProjectManifest {
+  const toolEntries: ManifestToolEntry[] = [];
+  for (const tool of tools) {
+    if (
+      tool === null ||
+      typeof tool !== "object" ||
+      Array.isArray(tool) ||
+      typeof (tool as { name?: unknown }).name !== "string"
+    ) {
+      throw new TypeError(
+        "Compiled tool records must be objects with a string name",
+      );
+    }
+    toolEntries.push({
+      name: (tool as { name: string }).name,
+      hash: hashContent(canonicalJson(tool)),
+    });
+  }
+  toolEntries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const combinedHashes = toolEntries.map((t) => t.hash).join(":");
+  const toolsetHash = sha256(combinedHashes);
+
+  return {
+    manifestVersion: 1,
+    generatorVersion: options.generatorVersion,
+    compilerVersion: COMPILER_VERSION,
+    projectName,
+    ...(options.contractRevision !== undefined
+      ? { contractRevision: options.contractRevision }
+      : {}),
+    sourceHash: options.sourceHash,
     toolsetHash,
     toolCount: tools.length,
     tools: toolEntries,

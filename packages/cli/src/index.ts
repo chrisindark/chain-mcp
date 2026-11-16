@@ -16,6 +16,8 @@ export type {
   DevResult,
   DiffOptions,
   DiffResult,
+  EjectOptions,
+  EjectResult,
   ExportOptions,
   ExportResult,
   GatewayServeOptions,
@@ -66,10 +68,12 @@ export { devCommand } from "./commands/dev.js";
 export { serveCommand } from "./commands/serve.js";
 export { gatewayServeCommand } from "./commands/gateway-serve.js";
 export { exportCommand } from "./commands/export.js";
+export { ejectCommand } from "./commands/eject.js";
 
 export {
   attachCompiledToolsArtifact,
   buildCodeFirstManifest,
+  buildDeclarativeManifest,
   buildProjectManifest,
   canonicalJson,
   hashContent,
@@ -78,6 +82,7 @@ export {
   verifyProjectManifest,
   type CodeFirstManifestOptions,
   type CompiledToolsArtifact,
+  type DeclarativeManifestOptions,
   type ManifestOptions,
   type ManifestToolEntry,
   type ManifestVerificationResult,

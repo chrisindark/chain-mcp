@@ -28,6 +28,7 @@ import {
   renderTsconfigJson,
 } from "../templates.js";
 import type { ExportOptions, ExportResult, ProjectManifest } from "../types.js";
+import { ejectCommand } from "./eject.js";
 import { validateCommand } from "./validate.js";
 
 async function fileExists(path: string): Promise<boolean> {
@@ -51,6 +52,32 @@ async function isDirectoryEmpty(path: string): Promise<boolean> {
 export async function exportCommand(
   options: ExportOptions,
 ): Promise<ExportResult> {
+  if (options.fromGateway) {
+    const ejectResult = await ejectCommand({
+      config: options.config,
+      contract: options.contract,
+      tenant: options.tenant,
+      storagePath: options.storagePath,
+      output: options.output,
+      force: options.force,
+      check: options.check,
+      version: options.version,
+      workspaceDependencies: options.workspaceDependencies,
+      localDeps: options.localDeps,
+      dependencyOverrides: options.dependencyOverrides,
+      transport: options.transport,
+      cwd: options.cwd,
+    });
+    return {
+      ok: ejectResult.ok,
+      outputDir: ejectResult.outputDir,
+      manifest: ejectResult.manifest,
+      filesWritten: ejectResult.filesWritten,
+      verifiedReproducible: ejectResult.verifiedReproducible,
+      error: ejectResult.error,
+    };
+  }
+
   const cwd =
     options.cwd ??
     (options.config

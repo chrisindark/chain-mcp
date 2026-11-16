@@ -280,10 +280,44 @@ export interface ExportOptions {
   localDeps?: string | undefined;
   dependencyOverrides?: Record<string, string> | undefined;
   cwd?: string | undefined;
+  /** Eject contract from dynamic gateway / SQLite storage. */
+  fromGateway?: boolean | undefined;
+  /** Contract name to export/eject when working with gateway configurations. */
+  contract?: string | undefined;
+  /** Tenant identifier for contract. */
+  tenant?: string | undefined;
+  /** Path to storage database file. */
+  storagePath?: string | undefined;
 }
 
 export interface ExportResult {
   ok: boolean;
+  outputDir: string;
+  manifest: ProjectManifest;
+  filesWritten: readonly string[];
+  verifiedReproducible?: boolean | undefined;
+  error?: string | undefined;
+}
+
+export interface EjectOptions {
+  config?: string | undefined;
+  contract?: string | undefined;
+  tenant?: string | undefined;
+  storagePath?: string | undefined;
+  output?: string | undefined;
+  force?: boolean | undefined;
+  check?: boolean | undefined;
+  version?: string | undefined;
+  workspaceDependencies?: boolean | undefined;
+  localDeps?: string | undefined;
+  dependencyOverrides?: Record<string, string> | undefined;
+  transport?: "stdio" | "http" | undefined;
+  cwd?: string | undefined;
+}
+
+export interface EjectResult {
+  ok: boolean;
+  contractName: string;
   outputDir: string;
   manifest: ProjectManifest;
   filesWritten: readonly string[];

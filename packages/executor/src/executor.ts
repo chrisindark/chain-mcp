@@ -5,6 +5,7 @@ import {
   type ToolCachePolicy,
   type ToolContext,
   type ToolDefinition,
+  type ToolOutputPolicy,
   validateJsonSchema,
 } from "@chainmcp/core";
 import type {
@@ -165,6 +166,12 @@ export function createUpstreamExecutor(
         ? { ttlSeconds: settings.defaultReadCacheTtlSeconds }
         : undefined);
 
+    const output: ToolOutputPolicy | undefined =
+      (operation as { output?: ToolOutputPolicy }).output ??
+      (operation as { outputPolicy?: ToolOutputPolicy }).outputPolicy;
+    const timeoutMs: number | undefined = (operation as { timeoutMs?: number })
+      .timeoutMs;
+
     const tool: ToolDefinition = {
       name: operation.name,
       description: operation.description,
@@ -173,6 +180,8 @@ export function createUpstreamExecutor(
       execute: (input: unknown, context: ToolContext) =>
         executeOperation(operation, input, context, settings),
       ...(cache !== undefined ? { cache } : {}),
+      ...(output !== undefined ? { output } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       ...(settings.contractRevision !== undefined || cache !== undefined
         ? { contractRevision: settings.contractRevision ?? "contract-rev-1" }
         : {}),
@@ -200,7 +209,9 @@ async function executeOperation(
       cause: context.signal.reason,
     });
   }
-  const stop = createStopSignal(context.signal, settings.timeoutMs);
+  const effectiveTimeoutMs =
+    (operation as { timeoutMs?: number }).timeoutMs ?? settings.timeoutMs;
+  const stop = createStopSignal(context.signal, effectiveTimeoutMs);
   try {
     const credentials = await abortable(
       resolveUpstreamCredentials(operation, context, settings, stop.signal),

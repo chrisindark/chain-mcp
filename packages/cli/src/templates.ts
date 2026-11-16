@@ -9,6 +9,7 @@ export const CHAINMCP_PACKAGE_DEPENDENCIES = [
   "@chainmcp/compiler",
   "@chainmcp/config",
   "@chainmcp/core",
+  "@chainmcp/declarative",
   "@chainmcp/executor",
   "@chainmcp/json-navigation",
   "@chainmcp/rate-limit",
@@ -610,23 +611,43 @@ export async function runServer(options?: RunServerOptions) {
       console.warn(
         "[WARN] Build artifacts unavailable; recompiling the pinned contract in development mode.",
       );
-      const { compileOpenApi } = await import("@chainmcp/compiler");
-      const contractSource = await readFile(effectiveContractPath, "utf8");
-      const compiled = compileOpenApi(contractSource, {
-        strict: config.contract?.strict ?? true,
-      });
-      if (!compiled.ok) {
-        const diagnostics = compiled.diagnostics
-          .filter((diagnostic) => diagnostic.severity === "error")
-          .map(
-            (diagnostic) =>
-              "[" + diagnostic.code + "] " + diagnostic.message,
-          )
-          .join("; ");
-        throw new Error("Contract compilation failed: " + diagnostics);
+      if (effectiveContractPath.endsWith(".json")) {
+        const { parseDeclarativeToolDescriptor, declarativeToolPolicy } = await import("@chainmcp/declarative");
+        const rawJson = await readFile(effectiveContractPath, "utf8");
+        const parsedDescriptors = JSON.parse(rawJson);
+        const toolsList = [];
+        for (const desc of parsedDescriptors) {
+          if (desc.enabled === false) continue;
+          const parsed = parseDeclarativeToolDescriptor(desc);
+          const policy = declarativeToolPolicy(desc);
+          toolsList.push({
+            ...parsed.operation,
+            ...(policy.cache !== undefined ? { cache: policy.cache } : {}),
+            ...(policy.output !== undefined ? { output: policy.output } : {}),
+            ...(policy.timeoutMs !== undefined ? { timeoutMs: policy.timeoutMs } : {}),
+          });
+        }
+        compiledTools = toolsList;
+        contractRevision = verification.contractRevision ?? "ejected-rev-1";
+      } else {
+        const { compileOpenApi } = await import("@chainmcp/compiler");
+        const contractSource = await readFile(effectiveContractPath, "utf8");
+        const compiled = compileOpenApi(contractSource, {
+          strict: config.contract?.strict ?? true,
+        });
+        if (!compiled.ok) {
+          const diagnostics = compiled.diagnostics
+            .filter((diagnostic) => diagnostic.severity === "error")
+            .map(
+              (diagnostic) =>
+                "[" + diagnostic.code + "] " + diagnostic.message,
+            )
+            .join("; ");
+          throw new Error("Contract compilation failed: " + diagnostics);
+        }
+        compiledTools = compiled.tools;
+        contractRevision = compiled.contractRevision;
       }
-      compiledTools = compiled.tools;
-      contractRevision = compiled.contractRevision;
     }
 
     const baseUrl =

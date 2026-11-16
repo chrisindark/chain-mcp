@@ -40,6 +40,7 @@
     "@chainmcp/compiler": "workspace:*",
     "@chainmcp/config": "workspace:*",
     "@chainmcp/core": "workspace:*",
+    "@chainmcp/declarative": "workspace:*",
     "@chainmcp/executor": "workspace:*",
     "@chainmcp/gateway": "workspace:*",
     "@chainmcp/json-navigation": "workspace:*",
