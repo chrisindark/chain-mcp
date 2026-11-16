@@ -821,6 +821,74 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 
 ---
 
+## Milestone 14 — Hybrid Lifecycle, Marketplace Meta-MCP & Agent Self-Improvement (`v0.8.0`)
+
+### M14-1 — "Stage in Gateway, Eject to Standalone" workflow (`chainmcp eject` / export integration)
+
+**Status: ready to start.** Hot-load and iterate on contracts dynamically in `@chainmcp/gateway` and Web Studio, then eject active curated toolsets and destination policies into standalone, self-contained Node/Docker packages via `chainmcp export` / `chainmcp eject`.
+
+**Do**
+
+- Add `--from-gateway` or `eject` capability to `chainmcp export` reading active contract descriptors from dynamic gateway / SQLite storage.
+- Generate complete standalone server packages with verified manifest, curated tool subset, and destination policy.
+- Validate generated projects build and pass offline tests without gateway runtime dependencies.
+
+**Acceptance**
+
+- A curated contract in Web Studio / Dynamic Gateway can be ejected to a standalone runnable MCP server with a single command.
+- Ejected server matches the active revision's tools, policies, and projections.
+
+---
+
+### M14-2 — Agent-callable Meta-MCP server (`chainmcp agent-server`)
+
+**Status: ready to start.** Expose compiler, declarative editing, curation, and admin actions as MCP tools so coding agents (Claude, Gemini, Cursor) can manage ChainMcp servers directly.
+
+**Do**
+
+- Create CLI server mode / tool surface exposing schema inspection, tool curation, projection configuration, and test-firing tools.
+- Provide strict tool schemas and error classification for agent invocations.
+- Positive and negative tests asserting agent tool safety bounds.
+
+**Acceptance**
+
+- An MCP client can connect to ChainMcp's Meta-MCP server to inspect, test, and curate tools programmatically.
+
+---
+
+### M14-3 — Telemetry-driven diagnostics & automated optimization hints
+
+**Status: ready to start.** Analyze latency, error rates, token waste, and oversized payloads from `@chainmcp/storage` / `@chainmcp/analytics` to surface actionable optimization recommendations.
+
+**Do**
+
+- Implement diagnostic analyzers scanning telemetry events for high token consumption, frequent uncached calls, and slow upstreams.
+- Generate concrete projection recommendations (suggested field inclusions/exclusions) based on actual payload sizes.
+- Expose diagnostics via API, CLI, and Web Studio.
+
+**Acceptance**
+
+- Studio and Meta-MCP surface clear, data-driven optimization proposals for bloated tool outputs.
+
+---
+
+### M14-4 — Human-in-the-Loop (HITL) approval gates for agent proposals
+
+**Status: ready to start.** Provide approval workflows where agent-proposed projections, descriptions, or policy tweaks require explicit operator confirmation before atomic revision publishing.
+
+**Do**
+
+- Support draft/proposal state in `DescriptorRevisionStore` alongside active revisions.
+- Provide review UI in Web Studio displaying diffs, estimated token savings, and one-click "Approve & Publish" or "Reject".
+- Audit all proposal reviews with caller identity.
+
+**Acceptance**
+
+- Agent proposals cannot mutate active gateway runtime state without explicit human approval.
+- Approved proposals publish atomically with reversible rollback.
+
+---
+
 ## Deferred — explicitly not part of this 1.0
 
 Do not start these without a new decision and an ADR.

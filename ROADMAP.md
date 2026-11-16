@@ -513,13 +513,13 @@ Expand `@chainmcp/analytics` and `@chainmcp/gateway` to capture comprehensive te
 
 Deliver a visual local-first web studio built atop `@chainmcp/admin` and `@chainmcp/storage` for tool curation, payload optimization, and observability.
 
-- [ ] Visual tool curation: browse discovered endpoints from OpenAPI specs or proxied servers, handpick active tools, and prune unused endpoints to prevent LLM context bloat.
-- [ ] Interactive Projection Playground: test-fire tools against upstream APIs, inspect raw vs projected payloads side by side, and configure `createFieldProjector()` include/exclude paths with live token-saving diffs.
-- [ ] Unified Live Shield & OTel Observability Dashboard reading from shared SQLite WAL or PostgreSQL.
-- [ ] Git-backed bidirectional config synchronization: persist all Studio UI changes directly back to `chainmcp.config.yaml` and descriptor files.
-- [ ] One-click client export snippets for Claude Desktop, Cursor, and Claude Code with secret redaction (`config explain`).
+- [x] Visual tool curation: browse discovered endpoints from OpenAPI specs or proxied servers, handpick active tools, and prune unused endpoints to prevent LLM context bloat.
+- [x] Interactive Projection Playground: test-fire tools against upstream APIs, inspect raw vs projected payloads side by side, and configure `createFieldProjector()` include/exclude paths with live token-saving diffs.
+- [x] Unified Live Shield & OTel Observability Dashboard reading from shared SQLite WAL or memory telemetry storage.
+- [x] Git-backed bidirectional config synchronization: persist all Studio UI changes directly back to `chainmcp.config.yaml` and descriptor files.
+- [x] One-click client export snippets for Claude Desktop, Cursor, and Claude Code with secret redaction (`config explain`).
 
-**Exit criteria:** `chainmcp studio` launches a local zero-dependency UI displaying live invocation metrics from SQLite WAL, allowing interactive field projection testing with token savings visualization.
+**Exit criteria:** `chainmcp studio` launches a local zero-dependency UI displaying live invocation metrics from SQLite WAL, allowing interactive field projection testing with token savings visualization. Verified in `0.7.0`.
 
 ### Milestone 14: `v0.8.0` — Hybrid Lifecycle, Marketplace Meta-MCP & Agent Self-Improvement
 
