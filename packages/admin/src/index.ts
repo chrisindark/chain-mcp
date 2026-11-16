@@ -1,3 +1,4 @@
+export { createMetaMcpTools, type MetaMcpToolsOptions } from "./agent-tools.js";
 export {
   DeclarativeAdmin,
   createDeclarativeAdmin,

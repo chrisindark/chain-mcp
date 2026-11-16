@@ -1,10 +1,18 @@
+import { createFieldProjector, type Tokenizer } from "@chainmcp/core";
 import type { DeclarativeAuthSchemeMap } from "@chainmcp/declarative";
 import type {
   UpstreamTransport,
   UpstreamTransportRequest,
   UpstreamTransportResponse,
 } from "@chainmcp/executor";
-import { DynamicGateway } from "@chainmcp/gateway";
+import { DynamicGateway, type DynamicGatewayOptions } from "@chainmcp/gateway";
+
+export const defaultTestTokenizer: Tokenizer = {
+  id: "test-tokenizer",
+  measurement: "estimate",
+  count: (text: string) =>
+    !text ? 0 : Math.max(1, Math.ceil(text.length / 4)),
+};
 
 import {
   DeclarativeAdmin,
@@ -82,8 +90,15 @@ export interface AdminFixture {
 
 export function makeAdmin(
   overrides: Partial<DeclarativeAdminOptions> = {},
+  gatewayOptions: DynamicGatewayOptions = {},
 ): AdminFixture {
-  const gateway = new DynamicGateway();
+  const gateway =
+    overrides.gateway ??
+    new DynamicGateway({
+      projector: createFieldProjector(),
+      tokenizer: defaultTestTokenizer,
+      ...gatewayOptions,
+    });
   const audit: DeclarativeAdminAuditEvent[] = [];
   const admin = new DeclarativeAdmin({
     gateway,

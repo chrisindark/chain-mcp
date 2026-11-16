@@ -842,7 +842,7 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 
 ### M14-2 — Agent-callable Meta-MCP server (`chainmcp agent-server`)
 
-**Status: ready to start.** Expose compiler, declarative editing, curation, and admin actions as MCP tools so coding agents (Claude, Gemini, Cursor) can manage ChainMcp servers directly.
+**Status: done (2026-11-16).** Implemented agent-callable Meta-MCP tools suite via `createMetaMcpTools` in `@chainmcp/admin` and `chainmcp agent-server` CLI command in `@chainmcp/cli`. Exposes 11 agent-callable meta tools (`chainmcp_list_contracts`, `chainmcp_inspect_contract`, `chainmcp_inspect_tools`, `chainmcp_curate_tool`, `chainmcp_configure_projection`, `chainmcp_configure_cache`, `chainmcp_test_tool`, `chainmcp_compile_spec`, `chainmcp_publish_revision`, `chainmcp_list_revisions`, `chainmcp_rollback_revision`) with strict input schemas (`additionalProperties: false`) and tenant boundary isolation. Enforces security invariants preventing cache configuration on mutation methods (POST/PUT/PATCH/DELETE) and preventing disabling all tools. Supports stdio and HTTP transports. Verified via unit and integration tests in `packages/admin/tests/agent-tools.test.ts` and `packages/cli/tests/agent-server.test.ts`.
 
 **Do**
 

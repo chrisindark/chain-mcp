@@ -325,6 +325,29 @@ export interface EjectResult {
   error?: string | undefined;
 }
 
+export interface AgentServerOptions {
+  config?: string | undefined;
+  transport?: "stdio" | "http" | undefined;
+  port?: number | undefined;
+  host?: string | undefined;
+  tenant?: string | undefined;
+  token?: string | undefined;
+  cwd?: string | undefined;
+  stdin?: Readable | undefined;
+  stdout?: Writable | undefined;
+  signal?: AbortSignal | undefined;
+}
+
+export interface AgentServerResult {
+  ok: boolean;
+  serverName: string;
+  toolCount: number;
+  url?: URL | undefined;
+  close: () => Promise<void>;
+  closed: Promise<void>;
+  error?: string | undefined;
+}
+
 export interface CliIo {
   stdout?: ((msg: string) => void) | undefined;
   stderr?: ((msg: string) => void) | undefined;

@@ -57,6 +57,7 @@ import {
 } from "./types.js";
 import { generateClientExportSnippets } from "./snippets.js";
 import { ADMIN_APP_CSS, ADMIN_APP_JS, ADMIN_INDEX_HTML } from "./ui.js";
+import { createMetaMcpTools, type MetaMcpToolsOptions } from "./agent-tools.js";
 
 const CONTRACT_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_BODY_LIMIT = 10 * 1_048_576;
@@ -401,6 +402,64 @@ export class DeclarativeAdmin {
   /** The configured configuration file path, if any. */
   get configPath(): string | undefined {
     return this.#configPath;
+  }
+
+  get gateway(): DynamicGateway {
+    return this.#gateway;
+  }
+
+  get store(): DescriptorRevisionStore {
+    return this.#store;
+  }
+
+  get bindings(): ReadonlyMap<string, DeclarativeAdminContractBinding> {
+    return this.#bindings;
+  }
+
+  get tokenizer(): Tokenizer {
+    return this.#tokenizer;
+  }
+
+  get onConfigSync(): DeclarativeAdminOptions["onConfigSync"] {
+    return this.#onConfigSync;
+  }
+
+  get transport(): DeclarativeAdminOptions["transport"] {
+    return this.#transport;
+  }
+
+  get resolveHost(): DeclarativeAdminOptions["resolveHost"] {
+    return this.#resolveHost;
+  }
+
+  get now(): () => number {
+    return this.#now;
+  }
+
+  get tokens(): DeclarativeAdminOptions["tokens"] {
+    return this.#tokens;
+  }
+
+  async emitAuditRecord(event: DeclarativeAdminAuditEvent): Promise<void> {
+    await this.emitAudit(event);
+  }
+
+  async publishDescriptors(
+    binding: DeclarativeAdminContractBinding,
+    parsed: readonly ParsedDeclarativeTool[],
+    publisherId: string,
+    rollbackOf?: string,
+  ): Promise<DeclarativeAdminPublishedRevision> {
+    return await this.publishParsedDescriptors(
+      binding,
+      parsed,
+      publisherId,
+      rollbackOf,
+    );
+  }
+
+  createMetaTools(options?: MetaMcpToolsOptions): ToolDefinition[] {
+    return createMetaMcpTools(this, options);
   }
 
   /** HTTP entry point. Never throws; failures become JSON error responses. */

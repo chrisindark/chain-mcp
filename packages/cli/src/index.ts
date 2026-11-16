@@ -7,6 +7,8 @@ export {
   type LocalDependencyResult,
 } from "./local-deps.js";
 export type {
+  AgentServerOptions,
+  AgentServerResult,
   BuildOptions,
   BuildResult,
   CliIo,
@@ -69,6 +71,7 @@ export { serveCommand } from "./commands/serve.js";
 export { gatewayServeCommand } from "./commands/gateway-serve.js";
 export { exportCommand } from "./commands/export.js";
 export { ejectCommand } from "./commands/eject.js";
+export { agentServerCommand } from "./commands/agent-server.js";
 
 export {
   attachCompiledToolsArtifact,

@@ -10,6 +10,7 @@ import { exportCommand } from "./commands/export.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { adminCommand } from "./commands/admin.js";
 import { studioCommand } from "./commands/studio.js";
+import { agentServerCommand } from "./commands/agent-server.js";
 import { gatewayServeCommand } from "./commands/gateway-serve.js";
 import { initCommand } from "./commands/init.js";
 import { serveCommand } from "./commands/serve.js";
@@ -35,6 +36,7 @@ Commands:
   eject     Eject a staged gateway contract to a standalone, runnable MCP server package
   config    Inspect resolved configuration (config explain)
   studio    Launch local-first visual Web Studio and admin app
+  agent-server Run agent-callable Meta-MCP server (stdio or http) for coding agents
 
 Options:
   --version, -v   Show CLI version
@@ -139,6 +141,14 @@ Command options:
     --token <token>      Admin bearer token (or CHAINMCP_ADMIN_TOKEN)
     --allow-remote       Permit non-loopback HTTP bind
     --json               Emit startup information as JSON
+
+  agent-server:
+    --config <path>      Path to gateway.config.yaml or server config
+    --transport <type>   stdio | http (default: stdio)
+    --port <number>      HTTP port for agent server (default: 3333)
+    --host <string>      HTTP host for agent server (default: 127.0.0.1)
+    --tenant <id>        Tenant identifier filter
+    --token <token>      Admin bearer token
 `;
 
 function asString(val: unknown): string | undefined {
@@ -868,6 +878,49 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       if (result.closed) {
         await result.closed;
       }
+      return 0;
+    }
+
+    case "agent-server": {
+      const transport =
+        asString(values.transport) === "http" ||
+        asString(values.transport) === "stdio"
+          ? (asString(values.transport) as "stdio" | "http")
+          : undefined;
+
+      const result = await agentServerCommand({
+        ...(asString(values.config) !== undefined
+          ? { config: asString(values.config) }
+          : {}),
+        ...(transport !== undefined ? { transport } : {}),
+        ...(asString(values.host) !== undefined
+          ? { host: asString(values.host) }
+          : {}),
+        ...(values.port !== undefined ? { port: Number(values.port) } : {}),
+        ...(asString(values.tenant) !== undefined
+          ? { tenant: asString(values.tenant) }
+          : {}),
+        ...(asString(values.token) !== undefined
+          ? { token: asString(values.token) }
+          : {}),
+      });
+
+      if (!result.ok) {
+        errLog(
+          `Agent server error: ${result.error ?? "Failed to start agent server"}`,
+        );
+        return 1;
+      }
+
+      if (result.url) {
+        log(`Agent server listening at: ${result.url}`);
+      } else {
+        log(
+          `Agent server running on stdio (${result.toolCount} meta tools registered)`,
+        );
+      }
+
+      await result.closed;
       return 0;
     }
 
