@@ -77,7 +77,10 @@ export type DeclarativeAdminAuditEventType =
   | "admin_rollback"
   | "admin_restore"
   | "admin_auth_failed"
-  | "admin_request_rejected";
+  | "admin_request_rejected"
+  | "admin_proposal_created"
+  | "admin_proposal_approved"
+  | "admin_proposal_rejected";
 
 /**
  * Structured admin audit record. It never contains bearer tokens, descriptor
@@ -281,7 +284,13 @@ export const MAX_STORED_DESCRIPTOR_REVISIONS = 100;
 export const MAX_DESCRIPTOR_STORE_BYTES = 10 * 1_048_576;
 
 export type StoredDescriptorRevisionStatus =
-  "candidate" | "active" | "superseded" | "failed";
+  | "candidate"
+  | "active"
+  | "superseded"
+  | "failed"
+  | "draft"
+  | "proposal"
+  | "rejected";
 
 /**
  * One persisted descriptor revision. Records are immutable once written by the
@@ -305,6 +314,18 @@ export interface StoredDescriptorRevision {
   readonly publishedBy?: string | undefined;
   /** Admin revision this record restores, for rollback history. */
   readonly rollbackOf?: string | undefined;
+  /** Agent or user identity that proposed this revision. */
+  readonly proposedBy?: string | undefined;
+  /** Summary or rationale for the proposed changes. */
+  readonly proposalReason?: string | undefined;
+  /** Estimated context token savings per tool invocation. */
+  readonly estimatedTokenSavings?: number | undefined;
+  /** Operator identity that reviewed (approved or rejected) this proposal. */
+  readonly reviewedBy?: string | undefined;
+  /** Timestamp when the review took place. */
+  readonly reviewedAt?: number | undefined;
+  /** Operator comment or rejection reason. */
+  readonly reviewComment?: string | undefined;
 }
 
 /**
@@ -329,7 +350,7 @@ export interface DescriptorRevisionStore {
     tenantId: string,
     contractName: string,
   ): Promise<StoredDescriptorRevision | undefined>;
-  /** Appends a `candidate` record. Rejects duplicate ids and store limits. */
+  /** Appends a `candidate` or `proposal` record. Rejects duplicate ids and store limits. */
   createRevision(record: StoredDescriptorRevision): Promise<void>;
   /** Marks a candidate active and supersedes the previous active record. */
   activateRevision(
@@ -351,6 +372,28 @@ export interface DescriptorRevisionStore {
     contractName: string,
     revisionId: string,
   ): Promise<void>;
+  /** Lists pending proposals (draft or proposal status) for a tenant/contract. */
+  listProposals(
+    tenantId: string,
+    contractName?: string,
+  ): Promise<readonly StoredDescriptorRevision[]>;
+  /** Atomically activates a pending proposal and supersedes the previous active revision. */
+  approveProposal(
+    tenantId: string,
+    contractName: string,
+    revisionId: string,
+    gatewayRevisionId: string,
+    reviewedBy: string,
+    comment?: string,
+  ): Promise<StoredDescriptorRevision>;
+  /** Rejects a pending proposal without modifying active runtime gateway state. */
+  rejectProposal(
+    tenantId: string,
+    contractName: string,
+    revisionId: string,
+    reviewedBy: string,
+    reason?: string,
+  ): Promise<StoredDescriptorRevision>;
 }
 
 export type DescriptorStoreErrorCode =
@@ -388,6 +431,47 @@ export interface DeclarativeAdminStoredRevisionSummary {
   readonly gatewayRevisionId?: string | undefined;
   readonly publishedBy?: string | undefined;
   readonly rollbackOf?: string | undefined;
+  readonly proposedBy?: string | undefined;
+  readonly proposalReason?: string | undefined;
+  readonly estimatedTokenSavings?: number | undefined;
+  readonly reviewedBy?: string | undefined;
+  readonly reviewedAt?: number | undefined;
+  readonly reviewComment?: string | undefined;
+}
+
+export interface ProposalToolChanges {
+  enabled?: { before: boolean; after: boolean } | undefined;
+  description?: { before?: string; after?: string } | undefined;
+  projection?:
+    | {
+        before?: FieldSelection | undefined;
+        after?: FieldSelection | undefined;
+      }
+    | undefined;
+  cache?:
+    | {
+        before?: { ttlSeconds?: number } | undefined;
+        after?: { ttlSeconds?: number } | undefined;
+      }
+    | undefined;
+}
+
+export interface ProposalToolDiff {
+  readonly toolName: string;
+  readonly changeType: "added" | "removed" | "modified" | "unchanged";
+  readonly changes: ProposalToolChanges;
+  readonly estimatedTokensSavedPerCall?: number | undefined;
+}
+
+export interface ProposalDiffReport {
+  readonly proposalRevisionId: string;
+  readonly activeRevisionId?: string | undefined;
+  readonly tenantId: string;
+  readonly contractName: string;
+  readonly totalTools: number;
+  readonly changedToolsCount: number;
+  readonly estimatedTotalTokensSavedPerCall: number;
+  readonly toolDiffs: readonly ProposalToolDiff[];
 }
 
 export interface DeclarativeAdminRestoreEntry {

@@ -12,6 +12,7 @@ import { adminCommand } from "./commands/admin.js";
 import { studioCommand } from "./commands/studio.js";
 import { agentServerCommand } from "./commands/agent-server.js";
 import { diagnosticsCommand } from "./commands/diagnostics.js";
+import { proposalsCommand } from "./commands/proposals.js";
 import { gatewayServeCommand } from "./commands/gateway-serve.js";
 import { initCommand } from "./commands/init.js";
 import { serveCommand } from "./commands/serve.js";
@@ -39,6 +40,7 @@ Commands:
   studio    Launch local-first visual Web Studio and admin app
   agent-server Run agent-callable Meta-MCP server (stdio or http) for coding agents
   diagnostics  Analyze telemetry events and surface actionable optimization hints
+  proposals Manage Human-in-the-Loop (HITL) agent proposals (list, diff, approve, reject)
 
 Options:
   --version, -v   Show CLI version
@@ -151,6 +153,8 @@ Command options:
     --host <string>      HTTP host for agent server (default: 127.0.0.1)
     --tenant <id>        Tenant identifier filter
     --token <token>      Admin bearer token
+    --require-approval   Require human approval for all agent proposals (default: true)
+    --no-require-approval Direct publication mode (bypass approval gate)
 
   diagnostics:
     --config <path>      Path to configuration file
@@ -160,6 +164,18 @@ Command options:
     --window <duration>  Time window (e.g. 1h, 24h, 30m, default: 1h)
     --json               Emit diagnostic report as JSON
     --token-bloat-threshold <n>  Minimum tokens/call to flag token bloat
+
+  proposals:
+    list                 List pending agent proposals awaiting review
+    diff <revisionId>    Inspect diff and estimated token savings for a proposal
+    approve <revisionId> Approve and activate a proposal atomically
+    reject <revisionId>  Reject a proposal
+    --config <path>      Path to configuration file
+    --tenant <id>        Tenant identifier filter
+    --contract <name>    Contract name filter
+    --comment <text>     Operator approval comment
+    --reason <text>      Operator rejection reason
+    --json               Emit output as JSON
 `;
 
 function asString(val: unknown): string | undefined {
@@ -211,6 +227,10 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       window: { type: "string" },
       tool: { type: "string" },
       "token-bloat-threshold": { type: "string" },
+      "require-approval": { type: "boolean" },
+      "no-require-approval": { type: "boolean" },
+      comment: { type: "string" },
+      reason: { type: "string" },
     },
     allowPositionals: true,
     strict: false,
@@ -902,6 +922,13 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
           ? (asString(values.transport) as "stdio" | "http")
           : undefined;
 
+      const requireApproval =
+        values["no-require-approval"] === true
+          ? false
+          : values["require-approval"] !== undefined
+            ? asBoolean(values["require-approval"])
+            : true;
+
       const result = await agentServerCommand({
         ...(asString(values.config) !== undefined
           ? { config: asString(values.config) }
@@ -917,6 +944,7 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
         ...(asString(values.token) !== undefined
           ? { token: asString(values.token) }
           : {}),
+        requireApproval,
       });
 
       if (!result.ok) {
@@ -930,12 +958,58 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
         log(`Agent server listening at: ${result.url}`);
       } else {
         log(
-          `Agent server running on stdio (${result.toolCount} meta tools registered)`,
+          `Agent server running on stdio (${result.toolCount} meta tools registered, requireApproval=${requireApproval})`,
         );
       }
 
       await result.closed;
       return 0;
+    }
+
+    case "proposals": {
+      const subAction = positionals[1];
+      let action: "list" | "diff" | "approve" | "reject" = "list";
+      let revisionId: string | undefined;
+
+      if (
+        subAction === "diff" ||
+        subAction === "approve" ||
+        subAction === "reject" ||
+        subAction === "list"
+      ) {
+        action = subAction;
+        revisionId = positionals[2];
+      } else if (subAction) {
+        if (subAction.startsWith("dset_")) {
+          action = "diff";
+          revisionId = subAction;
+        }
+      }
+
+      const result = await proposalsCommand({
+        action,
+        revisionId,
+        ...(asString(values.config) !== undefined
+          ? { config: asString(values.config) }
+          : {}),
+        ...(asString(values.tenant) !== undefined
+          ? { tenant: asString(values.tenant) }
+          : {}),
+        ...(asString(values.contract) !== undefined
+          ? { contract: asString(values.contract) }
+          : {}),
+        ...(asString(values.comment) !== undefined
+          ? { comment: asString(values.comment) }
+          : {}),
+        ...(asString(values.reason) !== undefined
+          ? { reason: asString(values.reason) }
+          : {}),
+        ...(asBoolean(values.json) !== undefined
+          ? { json: asBoolean(values.json) }
+          : {}),
+        io,
+      });
+      return result.ok ? 0 : 1;
     }
 
     case "diagnostics": {

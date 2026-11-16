@@ -99,7 +99,7 @@ describe("agent-server command and Meta-MCP server (M14-2)", () => {
 
     expect(serverHandle.ok).toBe(true);
     expect(serverHandle.serverName).toBe("chainmcp-agent-server");
-    expect(serverHandle.toolCount).toBe(12);
+    expect(serverHandle.toolCount).toBe(14);
 
     await serverHandle.close();
     await serverHandle.closed;
@@ -120,7 +120,7 @@ describe("agent-server command and Meta-MCP server (M14-2)", () => {
     expect(serverHandle.ok).toBe(true);
     expect(serverHandle.url).toBeDefined();
     expect(serverHandle.url?.protocol).toBe("http:");
-    expect(serverHandle.toolCount).toBe(12);
+    expect(serverHandle.toolCount).toBe(14);
 
     await serverHandle.close();
     await serverHandle.closed;
@@ -187,7 +187,7 @@ describe("agent-server command and Meta-MCP server (M14-2)", () => {
 
       // 1. tools/list verification
       const listResponse = await client.listTools();
-      expect(listResponse.tools).toHaveLength(12);
+      expect(listResponse.tools).toHaveLength(14);
 
       const toolNames = listResponse.tools.map((t) => t.name);
       expect(toolNames).toContain("chainmcp_list_contracts");
@@ -202,6 +202,8 @@ describe("agent-server command and Meta-MCP server (M14-2)", () => {
       expect(toolNames).toContain("chainmcp_list_revisions");
       expect(toolNames).toContain("chainmcp_rollback_revision");
       expect(toolNames).toContain("chainmcp_get_diagnostics");
+      expect(toolNames).toContain("chainmcp_submit_proposal");
+      expect(toolNames).toContain("chainmcp_list_proposals");
 
       // Verify every tool schema has type: object and additionalProperties: false
       for (const t of listResponse.tools) {

@@ -109,10 +109,14 @@ export class InMemoryDescriptorRevisionStore implements DescriptorRevisionStore 
   async createRevision(record: StoredDescriptorRevision): Promise<void> {
     await this.#mutate(async () => {
       validateStoredRevision(record);
-      if (record.status !== "candidate") {
+      if (
+        record.status !== "candidate" &&
+        record.status !== "proposal" &&
+        record.status !== "draft"
+      ) {
         throw new DescriptorStoreError(
           "STORE_STATE_INVALID",
-          "New descriptor revisions must start in the candidate state",
+          "New descriptor revisions must start in candidate, proposal, or draft state",
         );
       }
       const key = recordKey(
@@ -248,6 +252,155 @@ export class InMemoryDescriptorRevisionStore implements DescriptorRevisionStore 
     });
   }
 
+  async listProposals(
+    tenantId: string,
+    contractName?: string,
+  ): Promise<readonly StoredDescriptorRevision[]> {
+    if (
+      typeof tenantId !== "string" ||
+      tenantId.trim().length === 0 ||
+      hasControlCharacters(tenantId)
+    ) {
+      throw new DescriptorStoreError(
+        "STORE_CORRUPT",
+        "Descriptor revision tenant id is invalid",
+      );
+    }
+    if (
+      contractName !== undefined &&
+      (typeof contractName !== "string" || !CONTRACT_NAME.test(contractName))
+    ) {
+      throw new DescriptorStoreError(
+        "STORE_CORRUPT",
+        "Descriptor revision contract name is invalid",
+      );
+    }
+    const results: StoredDescriptorRevision[] = [];
+    for (const record of this.#records.values()) {
+      if (
+        record.tenantId === tenantId &&
+        (contractName === undefined || record.contractName === contractName) &&
+        (record.status === "proposal" || record.status === "draft")
+      ) {
+        results.push(cloneRevision(record));
+      }
+    }
+    return results;
+  }
+
+  async approveProposal(
+    tenantId: string,
+    contractName: string,
+    revisionId: string,
+    gatewayRevisionId: string,
+    reviewedBy: string,
+    comment?: string,
+  ): Promise<StoredDescriptorRevision> {
+    assertPair(tenantId, contractName);
+    assertGatewayRevisionId(gatewayRevisionId);
+    if (
+      typeof reviewedBy !== "string" ||
+      reviewedBy.trim().length === 0 ||
+      hasControlCharacters(reviewedBy)
+    ) {
+      throw new DescriptorStoreError(
+        "STORE_STATE_INVALID",
+        "reviewedBy must be a non-empty string without control characters",
+      );
+    }
+
+    return await this.#mutate(async () => {
+      const key = recordKey(tenantId, contractName, revisionId);
+      const target = this.#records.get(key);
+      if (target === undefined) {
+        throw new DescriptorStoreError(
+          "STORE_NOT_FOUND",
+          `Descriptor revision '${revisionId}' was not found`,
+        );
+      }
+      if (target.status !== "proposal" && target.status !== "draft") {
+        throw new DescriptorStoreError(
+          "STORE_STATE_INVALID",
+          `Descriptor revision '${revisionId}' is ${target.status}, not a pending proposal`,
+        );
+      }
+
+      const next = new Map(this.#records);
+      const active = this.#findActiveIn(next, tenantId, contractName);
+      if (active !== undefined) {
+        next.set(
+          recordKey(tenantId, contractName, active.revisionId),
+          freezeRevision({ ...active, status: "superseded" }),
+        );
+      }
+
+      const updatedRecord: StoredDescriptorRevision = freezeRevision({
+        ...target,
+        status: "active",
+        gatewayRevisionId,
+        reviewedBy,
+        reviewedAt: Date.now(),
+        ...(comment !== undefined ? { reviewComment: comment } : {}),
+      });
+
+      next.set(key, updatedRecord);
+      await this.commit(next);
+      this.#replace(next);
+      return cloneRevision(updatedRecord);
+    });
+  }
+
+  async rejectProposal(
+    tenantId: string,
+    contractName: string,
+    revisionId: string,
+    reviewedBy: string,
+    reason?: string,
+  ): Promise<StoredDescriptorRevision> {
+    assertPair(tenantId, contractName);
+    if (
+      typeof reviewedBy !== "string" ||
+      reviewedBy.trim().length === 0 ||
+      hasControlCharacters(reviewedBy)
+    ) {
+      throw new DescriptorStoreError(
+        "STORE_STATE_INVALID",
+        "reviewedBy must be a non-empty string without control characters",
+      );
+    }
+
+    return await this.#mutate(async () => {
+      const key = recordKey(tenantId, contractName, revisionId);
+      const target = this.#records.get(key);
+      if (target === undefined) {
+        throw new DescriptorStoreError(
+          "STORE_NOT_FOUND",
+          `Descriptor revision '${revisionId}' was not found`,
+        );
+      }
+      if (target.status !== "proposal" && target.status !== "draft") {
+        throw new DescriptorStoreError(
+          "STORE_STATE_INVALID",
+          `Descriptor revision '${revisionId}' is ${target.status}, not a pending proposal`,
+        );
+      }
+
+      const next = new Map(this.#records);
+      const updatedRecord: StoredDescriptorRevision = freezeRevision({
+        ...target,
+        status: "rejected",
+        reviewedBy,
+        reviewedAt: Date.now(),
+        ...(reason !== undefined ? { reviewComment: reason } : {}),
+      });
+
+      next.set(key, updatedRecord);
+      await this.commit(next);
+      this.#replace(next);
+      return cloneRevision(updatedRecord);
+    });
+  }
+
   /** Persists the exact next snapshot. Subclasses must be atomic. */
   protected async commit(
     next: ReadonlyMap<string, StoredDescriptorRevision>,
@@ -346,6 +499,24 @@ export function toStoredRevisionSummary(
     ...(record.rollbackOf === undefined
       ? {}
       : { rollbackOf: record.rollbackOf }),
+    ...(record.proposedBy === undefined
+      ? {}
+      : { proposedBy: record.proposedBy }),
+    ...(record.proposalReason === undefined
+      ? {}
+      : { proposalReason: record.proposalReason }),
+    ...(record.estimatedTokenSavings === undefined
+      ? {}
+      : { estimatedTokenSavings: record.estimatedTokenSavings }),
+    ...(record.reviewedBy === undefined
+      ? {}
+      : { reviewedBy: record.reviewedBy }),
+    ...(record.reviewedAt === undefined
+      ? {}
+      : { reviewedAt: record.reviewedAt }),
+    ...(record.reviewComment === undefined
+      ? {}
+      : { reviewComment: record.reviewComment }),
   };
 }
 
@@ -474,6 +645,63 @@ export function validateStoredRevision(record: StoredDescriptorRevision): void {
       `Descriptor revision '${record.revisionId}' has an invalid rollback target`,
     );
   }
+  if (
+    record.proposedBy !== undefined &&
+    (typeof record.proposedBy !== "string" ||
+      record.proposedBy.trim().length === 0)
+  ) {
+    throw new DescriptorStoreError(
+      "STORE_CORRUPT",
+      `Descriptor revision '${record.revisionId}' has an invalid proposer`,
+    );
+  }
+  if (
+    record.proposalReason !== undefined &&
+    typeof record.proposalReason !== "string"
+  ) {
+    throw new DescriptorStoreError(
+      "STORE_CORRUPT",
+      `Descriptor revision '${record.revisionId}' has an invalid proposal reason`,
+    );
+  }
+  if (
+    record.estimatedTokenSavings !== undefined &&
+    (!Number.isFinite(record.estimatedTokenSavings) ||
+      record.estimatedTokenSavings < 0)
+  ) {
+    throw new DescriptorStoreError(
+      "STORE_CORRUPT",
+      `Descriptor revision '${record.revisionId}' has an invalid estimated token savings`,
+    );
+  }
+  if (
+    record.reviewedBy !== undefined &&
+    (typeof record.reviewedBy !== "string" ||
+      record.reviewedBy.trim().length === 0)
+  ) {
+    throw new DescriptorStoreError(
+      "STORE_CORRUPT",
+      `Descriptor revision '${record.revisionId}' has an invalid reviewer`,
+    );
+  }
+  if (
+    record.reviewedAt !== undefined &&
+    (!Number.isSafeInteger(record.reviewedAt) || record.reviewedAt < 0)
+  ) {
+    throw new DescriptorStoreError(
+      "STORE_CORRUPT",
+      `Descriptor revision '${record.revisionId}' has an invalid review timestamp`,
+    );
+  }
+  if (
+    record.reviewComment !== undefined &&
+    typeof record.reviewComment !== "string"
+  ) {
+    throw new DescriptorStoreError(
+      "STORE_CORRUPT",
+      `Descriptor revision '${record.revisionId}' has an invalid review comment`,
+    );
+  }
 }
 
 /** Builds the toolset hash the admin surface records for a descriptor set. */
@@ -550,7 +778,10 @@ function isStatus(value: unknown): value is StoredDescriptorRevisionStatus {
     value === "candidate" ||
     value === "active" ||
     value === "superseded" ||
-    value === "failed"
+    value === "failed" ||
+    value === "draft" ||
+    value === "proposal" ||
+    value === "rejected"
   );
 }
 

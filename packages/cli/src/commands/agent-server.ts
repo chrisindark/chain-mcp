@@ -230,6 +230,7 @@ export async function agentServerCommand(
     const metaTools = createMetaMcpTools(admin, {
       tokenId: "agent-server",
       tenants: options.tenant ? [options.tenant] : "*",
+      requireApproval: options.requireApproval ?? true,
     });
 
     const runtimeTenant = options.tenant ?? "default";

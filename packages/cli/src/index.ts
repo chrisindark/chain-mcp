@@ -31,6 +31,8 @@ export type {
   LoadSpecOptions,
   LoadedSpec,
   ProjectManifest,
+  ProposalsCommandOptions,
+  ProposalsCommandResult,
   ServeOptions,
   ServeResult,
   ValidateOptions,
@@ -75,6 +77,7 @@ export { exportCommand } from "./commands/export.js";
 export { ejectCommand } from "./commands/eject.js";
 export { agentServerCommand } from "./commands/agent-server.js";
 export { diagnosticsCommand } from "./commands/diagnostics.js";
+export { proposalsCommand } from "./commands/proposals.js";
 
 export {
   attachCompiledToolsArtifact,

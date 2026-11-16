@@ -53,14 +53,17 @@ import {
   type DeclarativeAdminOptions,
   type DeclarativeAdminPublishedRevision,
   type DeclarativeAdminRestoreResult,
+  type DeclarativeAdminStoredRevisionSummary,
   type DeclarativeAdminToolSummary,
   type DescriptorRevisionStore,
+  type ProposalDiffReport,
   type StoredDescriptorRevision,
   type TelemetryEventResponse,
   type TelemetryMetricsResponse,
   type TelemetryMetricsSummary,
   type TelemetryToolMetrics,
 } from "./types.js";
+import { computeProposalDiffAndSavings } from "./proposals.js";
 import { generateClientExportSnippets } from "./snippets.js";
 import { ADMIN_APP_CSS, ADMIN_APP_JS, ADMIN_INDEX_HTML } from "./ui.js";
 import { createMetaMcpTools, type MetaMcpToolsOptions } from "./agent-tools.js";
@@ -542,6 +545,387 @@ export class DeclarativeAdmin {
     });
   }
 
+  /**
+   * Submits a new draft proposal for a contract containing proposed tool descriptors.
+   * Does NOT mutate active runtime gateway state.
+   */
+  async createProposal(options: {
+    tenantId: string;
+    contractName: string;
+    descriptors: readonly unknown[];
+    proposedBy: string;
+    proposalReason?: string | undefined;
+    estimatedTokenSavings?: number | undefined;
+    tokenId?: string | undefined;
+  }): Promise<{
+    summary: DeclarativeAdminStoredRevisionSummary;
+    diff: ProposalDiffReport;
+  }> {
+    const binding = this.#bindings.get(
+      bindingKey(options.tenantId, options.contractName),
+    );
+    if (binding === undefined) {
+      throw new DeclarativeAdminError(
+        "ADMIN_CONTRACT_UNKNOWN",
+        404,
+        `No admin binding is configured for tenant '${options.tenantId}' and contract '${options.contractName}'`,
+      );
+    }
+
+    const { evaluation, parsed } = evaluateDescriptorSet({
+      descriptors: options.descriptors,
+      authSchemes: binding.authSchemes,
+    });
+    if (!evaluation.valid) {
+      throw new DeclarativeAdminError(
+        "ADMIN_DESCRIPTOR_INVALID",
+        400,
+        "Proposed descriptors failed validation",
+        evaluation.diagnostics.flatMap((d) => d.issues),
+      );
+    }
+
+    const validatedDescriptors: readonly DeclarativeToolDescriptor[] =
+      parsed.map((tool) => tool.descriptor);
+
+    const activeRecord = await this.readStore(() =>
+      this.#store.getActive(binding.tenantId, binding.contractName),
+    ).catch(() => undefined);
+    const activeGateway = this.#gateway
+      .getRegistry()
+      .getActiveRevision(binding.tenantId, binding.contractName);
+    const activeDescriptors =
+      activeRecord?.descriptors ??
+      (activeGateway?.metadata?.descriptorSet as
+        readonly DeclarativeToolDescriptor[] | undefined) ??
+      [];
+
+    const toolRevisions = parsed.map((tool) => ({
+      name: tool.descriptor.name,
+      revision: tool.revision,
+    }));
+    const toolsetHash = descriptorToolsetHash(toolRevisions);
+    const createdAt = this.#now();
+    const revisionId = createDescriptorRevisionId(
+      binding.tenantId,
+      binding.contractName,
+      toolsetHash,
+      createdAt,
+    );
+
+    const diff = computeProposalDiffAndSavings(
+      activeDescriptors,
+      validatedDescriptors,
+      {
+        proposalRevisionId: revisionId,
+        activeRevisionId: activeRecord?.revisionId ?? activeGateway?.revisionId,
+        tenantId: binding.tenantId,
+        contractName: binding.contractName,
+      },
+    );
+
+    const estimatedSavings =
+      options.estimatedTokenSavings ?? diff.estimatedTotalTokensSavedPerCall;
+
+    const record: StoredDescriptorRevision = {
+      revisionId,
+      tenantId: binding.tenantId,
+      contractName: binding.contractName,
+      createdAt,
+      status: "proposal",
+      toolsetHash,
+      descriptors: validatedDescriptors,
+      toolRevisions,
+      proposedBy: options.proposedBy,
+      ...(options.proposalReason !== undefined
+        ? { proposalReason: options.proposalReason }
+        : {}),
+      estimatedTokenSavings: estimatedSavings,
+    };
+
+    try {
+      await this.#store.createRevision(record);
+    } catch (error) {
+      throw mapStoreFailure(error);
+    }
+
+    await this.emitAudit({
+      type: "admin_proposal_created",
+      timestamp: createdAt,
+      route: `proposals/${binding.contractName}`,
+      tokenId: options.tokenId ?? options.proposedBy,
+      tenantId: binding.tenantId,
+      contractName: binding.contractName,
+      revisionId,
+      toolCount: record.descriptors.length,
+      reason: options.proposalReason ?? `proposal_by:${options.proposedBy}`,
+    });
+
+    return {
+      summary: toStoredRevisionSummary(record),
+      diff,
+    };
+  }
+
+  /**
+   * Fetches a proposal and its diff against the active contract descriptors.
+   */
+  async getProposalDiff(
+    tenantId: string,
+    contractName: string,
+    revisionId: string,
+  ): Promise<{
+    proposal: DeclarativeAdminStoredRevisionSummary;
+    diff: ProposalDiffReport;
+  }> {
+    const binding = this.#bindings.get(bindingKey(tenantId, contractName));
+    if (binding === undefined) {
+      throw new DeclarativeAdminError(
+        "ADMIN_CONTRACT_UNKNOWN",
+        404,
+        `No admin binding is configured for tenant '${tenantId}' and contract '${contractName}'`,
+      );
+    }
+
+    const record = await this.readStore(() =>
+      this.#store.getRevision(tenantId, contractName, revisionId),
+    );
+    if (record === undefined) {
+      throw new DeclarativeAdminError(
+        "ADMIN_REVISION_UNKNOWN",
+        404,
+        `Proposal '${revisionId}' was not found for this contract`,
+      );
+    }
+
+    const activeRecord = await this.readStore(() =>
+      this.#store.getActive(binding.tenantId, binding.contractName),
+    ).catch(() => undefined);
+    const activeGateway = this.#gateway
+      .getRegistry()
+      .getActiveRevision(binding.tenantId, binding.contractName);
+    const activeDescriptors =
+      activeRecord?.descriptors ??
+      (activeGateway?.metadata?.descriptorSet as
+        readonly DeclarativeToolDescriptor[] | undefined) ??
+      [];
+
+    const diff = computeProposalDiffAndSavings(
+      activeDescriptors,
+      record.descriptors,
+      {
+        proposalRevisionId: record.revisionId,
+        activeRevisionId: activeRecord?.revisionId ?? activeGateway?.revisionId,
+        tenantId,
+        contractName,
+      },
+    );
+
+    return {
+      proposal: toStoredRevisionSummary(record),
+      diff,
+    };
+  }
+
+  /**
+   * Approves a pending proposal and atomically activates it on the DynamicGateway.
+   */
+  async approveProposal(options: {
+    tenantId: string;
+    contractName: string;
+    revisionId: string;
+    reviewedBy: string;
+    comment?: string | undefined;
+    tokenId?: string | undefined;
+  }): Promise<{
+    ok: boolean;
+    revisionId: string;
+    gatewayRevisionId: string;
+    toolCount: number;
+    status: "active";
+  }> {
+    const binding = this.#bindings.get(
+      bindingKey(options.tenantId, options.contractName),
+    );
+    if (binding === undefined) {
+      throw new DeclarativeAdminError(
+        "ADMIN_CONTRACT_UNKNOWN",
+        404,
+        `No admin binding is configured for tenant '${options.tenantId}' and contract '${options.contractName}'`,
+      );
+    }
+
+    const target = await this.readStore(() =>
+      this.#store.getRevision(
+        options.tenantId,
+        options.contractName,
+        options.revisionId,
+      ),
+    );
+    if (target === undefined) {
+      throw new DeclarativeAdminError(
+        "ADMIN_REVISION_UNKNOWN",
+        404,
+        `Proposal '${options.revisionId}' was not found for this contract`,
+      );
+    }
+    if (target.status !== "proposal" && target.status !== "draft") {
+      throw new DeclarativeAdminError(
+        "ADMIN_REVISION_CONFLICT",
+        409,
+        `Revision '${options.revisionId}' is ${target.status}, not a pending proposal`,
+      );
+    }
+
+    const { evaluation, parsed } = evaluateDescriptorSet({
+      descriptors: target.descriptors,
+      authSchemes: binding.authSchemes,
+    });
+    if (!evaluation.valid) {
+      throw new DeclarativeAdminError(
+        "ADMIN_DESCRIPTOR_INVALID",
+        400,
+        "Proposed descriptors failed validation",
+        evaluation.diagnostics.flatMap((d) => d.issues),
+      );
+    }
+
+    const tools = this.buildTools(binding, parsed);
+
+    let gatewayRevision: ContractRevision;
+    try {
+      gatewayRevision = await this.#gateway.publishContract({
+        tenantId: binding.tenantId,
+        contractName: binding.contractName,
+        tools,
+        destinationPolicy: binding.destinationPolicy,
+        ...(binding.limits === undefined ? {} : { limits: binding.limits }),
+        metadata: {
+          source: "declarative",
+          descriptorVersion: 1,
+          descriptorSet: target.descriptors,
+          approvedProposal: options.revisionId,
+          reviewedBy: options.reviewedBy,
+        },
+      });
+    } catch (error) {
+      throw mapGatewayFailure(error);
+    }
+
+    try {
+      await this.#store.approveProposal(
+        binding.tenantId,
+        binding.contractName,
+        options.revisionId,
+        gatewayRevision.revisionId,
+        options.reviewedBy,
+        options.comment,
+      );
+    } catch (error) {
+      throw mapStoreFailure(error);
+    }
+
+    await this.emitAudit({
+      type: "admin_proposal_approved",
+      timestamp: this.#now(),
+      route: `proposals/${binding.contractName}/${options.revisionId}/approve`,
+      tokenId: options.tokenId ?? options.reviewedBy,
+      tenantId: binding.tenantId,
+      contractName: binding.contractName,
+      revisionId: options.revisionId,
+      gatewayRevisionId: gatewayRevision.revisionId,
+      toolCount: target.descriptors.length,
+      reason: options.comment ?? `approved_by:${options.reviewedBy}`,
+    });
+
+    return {
+      ok: true,
+      revisionId: options.revisionId,
+      gatewayRevisionId: gatewayRevision.revisionId,
+      toolCount: target.descriptors.length,
+      status: "active",
+    };
+  }
+
+  /**
+   * Rejects a pending proposal. Active runtime gateway state is untouched.
+   */
+  async rejectProposal(options: {
+    tenantId: string;
+    contractName: string;
+    revisionId: string;
+    reviewedBy: string;
+    reason?: string | undefined;
+    tokenId?: string | undefined;
+  }): Promise<{
+    ok: boolean;
+    revisionId: string;
+    status: "rejected";
+  }> {
+    const binding = this.#bindings.get(
+      bindingKey(options.tenantId, options.contractName),
+    );
+    if (binding === undefined) {
+      throw new DeclarativeAdminError(
+        "ADMIN_CONTRACT_UNKNOWN",
+        404,
+        `No admin binding is configured for tenant '${options.tenantId}' and contract '${options.contractName}'`,
+      );
+    }
+
+    const target = await this.readStore(() =>
+      this.#store.getRevision(
+        options.tenantId,
+        options.contractName,
+        options.revisionId,
+      ),
+    );
+    if (target === undefined) {
+      throw new DeclarativeAdminError(
+        "ADMIN_REVISION_UNKNOWN",
+        404,
+        `Proposal '${options.revisionId}' was not found for this contract`,
+      );
+    }
+    if (target.status !== "proposal" && target.status !== "draft") {
+      throw new DeclarativeAdminError(
+        "ADMIN_REVISION_CONFLICT",
+        409,
+        `Revision '${options.revisionId}' is ${target.status}, not a pending proposal`,
+      );
+    }
+
+    try {
+      await this.#store.rejectProposal(
+        binding.tenantId,
+        binding.contractName,
+        options.revisionId,
+        options.reviewedBy,
+        options.reason,
+      );
+    } catch (error) {
+      throw mapStoreFailure(error);
+    }
+
+    await this.emitAudit({
+      type: "admin_proposal_rejected",
+      timestamp: this.#now(),
+      route: `proposals/${binding.contractName}/${options.revisionId}/reject`,
+      tokenId: options.tokenId ?? options.reviewedBy,
+      tenantId: binding.tenantId,
+      contractName: binding.contractName,
+      revisionId: options.revisionId,
+      toolCount: target.descriptors.length,
+      reason: options.reason ?? `rejected_by:${options.reviewedBy}`,
+    });
+
+    return {
+      ok: true,
+      revisionId: options.revisionId,
+      status: "rejected",
+    };
+  }
+
   /** HTTP entry point. Never throws; failures become JSON error responses. */
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -650,6 +1034,30 @@ export class DeclarativeAdmin {
             allowedHosts: [...binding.destinationPolicy.allowedHosts],
           })),
       });
+    }
+
+    if (segments.length === 1 && segments[0] === "proposals") {
+      assertMethod(request, ["GET"]);
+      const proposals: DeclarativeAdminStoredRevisionSummary[] = [];
+      const contractFilter = url.searchParams.get("contract") ?? undefined;
+      for (const binding of this.#bindings.values()) {
+        if (
+          principal.tenants === "*" ||
+          principal.tenants.includes(binding.tenantId)
+        ) {
+          if (
+            contractFilter !== undefined &&
+            binding.contractName !== contractFilter
+          ) {
+            continue;
+          }
+          const list = await this.readStore(() =>
+            this.#store.listProposals(binding.tenantId, binding.contractName),
+          );
+          proposals.push(...list.map(toStoredRevisionSummary));
+        }
+      }
+      return jsonResponse(200, { proposals, count: proposals.length });
     }
 
     if (
@@ -840,6 +1248,25 @@ export class DeclarativeAdmin {
     }
 
     if (
+      segments.length === 3 &&
+      segments[0] === "tenants" &&
+      segments[2] === "proposals"
+    ) {
+      assertMethod(request, ["GET"]);
+      const tenant = segments[1]!;
+      assertTenantAllowed(principal, tenant);
+      const contract = url.searchParams.get("contract") ?? undefined;
+      const list = await this.readStore(() =>
+        this.#store.listProposals(tenant, contract),
+      );
+      return jsonResponse(200, {
+        tenantId: tenant,
+        proposals: list.map(toStoredRevisionSummary),
+        count: list.length,
+      });
+    }
+
+    if (
       segments.length === 4 &&
       segments[0] === "tenants" &&
       segments[2] === "telemetry" &&
@@ -1020,6 +1447,42 @@ export class DeclarativeAdmin {
           ).map((record) => toStoredRevisionSummary(record));
           return jsonResponse(200, { tenantId, contractName, revisions });
         }
+        case "proposals": {
+          if (request.method === "GET") {
+            const list = await this.readStore(() =>
+              this.#store.listProposals(tenantId, contractName),
+            );
+            return jsonResponse(200, {
+              tenantId,
+              contractName,
+              proposals: list.map(toStoredRevisionSummary),
+              count: list.length,
+            });
+          }
+          assertMethod(request, ["POST"]);
+          const body = (await readJsonBody(request, this.#maxRequestBytes)) as {
+            descriptors: unknown;
+            proposedBy?: string;
+            proposalReason?: string;
+            estimatedTokenSavings?: number;
+          };
+          const descriptors = readDescriptors(body);
+          const proposedBy =
+            typeof body.proposedBy === "string" &&
+            body.proposedBy.trim().length > 0
+              ? body.proposedBy
+              : principal.tokenId;
+          const result = await this.createProposal({
+            tenantId,
+            contractName,
+            descriptors,
+            proposedBy,
+            proposalReason: body.proposalReason,
+            estimatedTokenSavings: body.estimatedTokenSavings,
+            tokenId: principal.tokenId,
+          });
+          return jsonResponse(201, result);
+        }
         case "validate": {
           assertMethod(request, ["POST"]);
           return await this.handleValidate(request, binding, route, principal);
@@ -1085,6 +1548,56 @@ export class DeclarativeAdmin {
         ...toStoredRevisionSummary(record),
         descriptorSet: record.descriptors,
       });
+    }
+
+    if (rest.length === 2 && rest[0] === "proposals") {
+      assertMethod(request, ["GET"]);
+      const revisionId = rest[1]!;
+      const diffData = await this.getProposalDiff(
+        tenantId,
+        contractName,
+        revisionId,
+      );
+      return jsonResponse(200, diffData);
+    }
+
+    if (rest.length === 3 && rest[0] === "proposals") {
+      assertMethod(request, ["POST"]);
+      const revisionId = rest[1]!;
+      const action = rest[2]!;
+      if (action === "approve") {
+        const body = (await readJsonBody(request, this.#maxRequestBytes).catch(
+          () => ({}),
+        )) as {
+          comment?: string;
+        };
+        const approved = await this.approveProposal({
+          tenantId,
+          contractName,
+          revisionId,
+          reviewedBy: principal.tokenId,
+          comment: body.comment,
+          tokenId: principal.tokenId,
+        });
+        return jsonResponse(200, approved);
+      }
+      if (action === "reject") {
+        const body = (await readJsonBody(request, this.#maxRequestBytes).catch(
+          () => ({}),
+        )) as {
+          reason?: string;
+        };
+        const rejected = await this.rejectProposal({
+          tenantId,
+          contractName,
+          revisionId,
+          reviewedBy: principal.tokenId,
+          reason: body.reason,
+          tokenId: principal.tokenId,
+        });
+        return jsonResponse(200, rejected);
+      }
+      throw routeNotFound(request);
     }
 
     throw routeNotFound(request);

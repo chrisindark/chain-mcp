@@ -50,6 +50,10 @@ export {
   type SnippetEnvInstruction,
 } from "./snippets.js";
 export {
+  computeProposalDiffAndSavings,
+  type ComputeProposalDiffOptions,
+} from "./proposals.js";
+export {
   DECLARATIVE_ADMIN_API_PREFIX,
   DEFAULT_DECLARATIVE_ADMIN_PORT,
   DEFAULT_STUDIO_PORT,
@@ -84,6 +88,9 @@ export {
   type DeclarativeAdminToken,
   type DescriptorRevisionStore,
   type DescriptorStoreErrorCode,
+  type ProposalDiffReport,
+  type ProposalToolChanges,
+  type ProposalToolDiff,
   type StoredDescriptorRevision,
   type StoredDescriptorRevisionStatus,
   type DeclarativeAdminToolPreview,

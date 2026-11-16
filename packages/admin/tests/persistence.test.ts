@@ -330,6 +330,38 @@ describe("descriptor revision history and rollback", () => {
         ),
       failRevision: (tenantId, contractName, revisionId) =>
         memory.failRevision(tenantId, contractName, revisionId),
+      listProposals: (tenantId, contractName) =>
+        memory.listProposals(tenantId, contractName),
+      approveProposal: (
+        tenantId,
+        contractName,
+        revisionId,
+        gatewayRevisionId,
+        reviewedBy,
+        comment,
+      ) =>
+        memory.approveProposal(
+          tenantId,
+          contractName,
+          revisionId,
+          gatewayRevisionId,
+          reviewedBy,
+          comment,
+        ),
+      rejectProposal: (
+        tenantId,
+        contractName,
+        revisionId,
+        reviewedBy,
+        reason,
+      ) =>
+        memory.rejectProposal(
+          tenantId,
+          contractName,
+          revisionId,
+          reviewedBy,
+          reason,
+        ),
     };
 
     const { admin, gateway } = makeAdmin({ repository: failing });

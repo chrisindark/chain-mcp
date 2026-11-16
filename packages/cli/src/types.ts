@@ -337,6 +337,7 @@ export interface AgentServerOptions {
   stdin?: Readable | undefined;
   stdout?: Writable | undefined;
   signal?: AbortSignal | undefined;
+  requireApproval?: boolean | undefined;
 }
 
 export interface AgentServerResult {
@@ -358,11 +359,35 @@ export interface DiagnosticsCommandOptions {
   readonly json?: boolean | undefined;
   readonly tokenBloatThreshold?: number | undefined;
   readonly cwd?: string | undefined;
+  readonly io?: CliIo | undefined;
 }
 
 export interface DiagnosticsCommandResult {
   readonly ok: boolean;
   readonly report?: DiagnosticReport | undefined;
+  readonly error?: string | undefined;
+}
+
+export interface ProposalsCommandOptions {
+  readonly action?: "list" | "diff" | "approve" | "reject" | undefined;
+  readonly revisionId?: string | undefined;
+  readonly config?: string | undefined;
+  readonly tenant?: string | undefined;
+  readonly contract?: string | undefined;
+  readonly comment?: string | undefined;
+  readonly reason?: string | undefined;
+  readonly json?: boolean | undefined;
+  readonly cwd?: string | undefined;
+  readonly io?: CliIo | undefined;
+}
+
+export interface ProposalsCommandResult {
+  readonly ok: boolean;
+  readonly action: string;
+  readonly proposals?: unknown[] | undefined;
+  readonly proposal?: unknown | undefined;
+  readonly diff?: unknown | undefined;
+  readonly result?: unknown | undefined;
   readonly error?: string | undefined;
 }
 

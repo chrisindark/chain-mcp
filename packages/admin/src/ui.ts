@@ -310,6 +310,36 @@ export const ADMIN_INDEX_HTML = `<!doctype html>
         </div>
       </section>
 
+      <section class="card" id="proposals-section">
+        <div class="card-heading">
+          <h2>Agent Proposals &amp; HITL Approval Gates</h2>
+          <div class="actions">
+            <span id="proposal-badge-count" style="font-size: 0.75rem; padding: 0.2rem 0.5rem; background: #fef3c7; color: #92400e; border-radius: 9999px; font-weight: 600;">0 pending</span>
+            <button id="load-proposals" type="button" class="secondary">
+              Refresh proposals
+            </button>
+          </div>
+        </div>
+        <p class="hint">
+          Human-in-the-Loop review for agent-proposed tool curations, projection filters, descriptions, and cache policies.
+          Review diffs and estimated context token savings before publishing atomically to the active gateway runtime.
+        </p>
+
+        <div id="proposals-list" class="tools-list">
+          <p class="hint">Load a contract to inspect pending proposals.</p>
+        </div>
+
+        <div id="proposal-diff-modal" class="modal-backdrop hidden">
+          <div class="modal-card">
+            <div class="modal-heading">
+              <h3 id="proposal-modal-title">Proposal Review &amp; Diff</h3>
+              <button id="proposal-modal-close" type="button" class="close-btn">&times;</button>
+            </div>
+            <pre id="proposal-modal-content" style="overflow-y: auto; max-height: 60vh; font-size: 0.85rem; padding: 0.75rem; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">Loading...</pre>
+          </div>
+        </div>
+      </section>
+
       <section class="card">
         <div class="card-heading">
           <h2>Builder</h2>
@@ -1226,6 +1256,7 @@ export const ADMIN_APP_JS = `(function () {
     }
     loadObservabilityMetrics().catch(function () {});
     loadClientSnippets().catch(function () {});
+    loadProposals().catch(function () {});
   }
 
   async function testFireTool() {
@@ -1845,6 +1876,195 @@ export const ADMIN_APP_JS = `(function () {
         }).catch(function () {});
       }
     });
+  }
+
+  // ---- HITL Proposals Review & Approval ----
+  var proposalsList = document.getElementById("proposals-list");
+  var proposalBadge = document.getElementById("proposal-badge-count");
+  var proposalDiffModal = document.getElementById("proposal-diff-modal");
+  var proposalModalContent = document.getElementById("proposal-modal-content");
+  var proposalModalTitle = document.getElementById("proposal-modal-title");
+  var proposalModalClose = document.getElementById("proposal-modal-close");
+  var loadProposalsBtn = document.getElementById("load-proposals");
+
+  if (proposalModalClose && proposalDiffModal) {
+    proposalModalClose.addEventListener("click", function () {
+      proposalDiffModal.classList.add("hidden");
+    });
+  }
+
+  async function loadProposals() {
+    if (!proposalsList) return;
+    var picked;
+    try {
+      picked = selectedContract();
+    } catch {
+      proposalsList.textContent = "";
+      var hint = document.createElement("p");
+      hint.className = "hint";
+      hint.textContent = "Load a contract to inspect pending proposals.";
+      proposalsList.appendChild(hint);
+      if (proposalBadge) proposalBadge.textContent = "0 pending";
+      return;
+    }
+    var result = await request("GET", endpoint("proposals"));
+    if (!result.ok) {
+      if (proposalBadge) proposalBadge.textContent = "0 pending";
+      return;
+    }
+    var proposals = (result.payload && result.payload.proposals) || [];
+    if (proposalBadge) {
+      proposalBadge.textContent = proposals.length + " pending";
+      proposalBadge.style.background = proposals.length > 0 ? "#fef3c7" : "#e0e7ff";
+      proposalBadge.style.color = proposals.length > 0 ? "#92400e" : "#3730a3";
+    }
+    proposalsList.textContent = "";
+    if (proposals.length === 0) {
+      var emptyMsg = document.createElement("p");
+      emptyMsg.className = "hint";
+      emptyMsg.textContent = "No pending agent proposals for this contract. All changes are currently up to date.";
+      proposalsList.appendChild(emptyMsg);
+      return;
+    }
+
+    for (var i = 0; i < proposals.length; i += 1) {
+      (function (prop) {
+        var card = document.createElement("div");
+        card.className = "tool-item";
+        card.style.display = "flex";
+        card.style.flexDirection = "column";
+        card.style.gap = "0.5rem";
+        card.style.padding = "0.75rem";
+        card.style.border = "1px solid var(--border)";
+        card.style.borderRadius = "8px";
+        card.style.marginBottom = "0.75rem";
+        card.style.background = "var(--card)";
+
+        var headerRow = document.createElement("div");
+        headerRow.style.display = "flex";
+        headerRow.style.justifyContent = "space-between";
+        headerRow.style.alignItems = "center";
+
+        var titleSpan = document.createElement("span");
+        titleSpan.style.fontWeight = "600";
+        titleSpan.textContent = "Proposal " + prop.revisionId;
+        headerRow.appendChild(titleSpan);
+
+        var badgeContainer = document.createElement("div");
+        badgeContainer.style.display = "flex";
+        badgeContainer.style.gap = "0.5rem";
+
+        if (prop.estimatedTokenSavings) {
+          var savBadge = document.createElement("span");
+          savBadge.style.fontSize = "0.75rem";
+          savBadge.style.padding = "0.15rem 0.4rem";
+          savBadge.style.borderRadius = "4px";
+          savBadge.style.background = "#dcfce7";
+          savBadge.style.color = "#166534";
+          savBadge.style.fontWeight = "600";
+          savBadge.textContent = "~" + prop.estimatedTokenSavings + " tokens/call saved";
+          badgeContainer.appendChild(savBadge);
+        }
+
+        var propBadge = document.createElement("span");
+        propBadge.style.fontSize = "0.75rem";
+        propBadge.style.padding = "0.15rem 0.4rem";
+        propBadge.style.borderRadius = "4px";
+        propBadge.style.background = "#fef3c7";
+        propBadge.style.color = "#92400e";
+        propBadge.textContent = prop.status;
+        badgeContainer.appendChild(propBadge);
+        headerRow.appendChild(badgeContainer);
+        card.appendChild(headerRow);
+
+        var metaRow = document.createElement("div");
+        metaRow.style.fontSize = "0.8rem";
+        metaRow.style.color = "var(--muted)";
+        metaRow.textContent = "Proposed by: " + (prop.proposedBy || "agent") + " · " + new Date(prop.createdAt).toLocaleString() + " · " + prop.toolCount + " tool(s)";
+        card.appendChild(metaRow);
+
+        if (prop.proposalReason) {
+          var reasonRow = document.createElement("div");
+          reasonRow.style.fontSize = "0.85rem";
+          reasonRow.textContent = "Reason: " + prop.proposalReason;
+          card.appendChild(reasonRow);
+        }
+
+        var actionsRow = document.createElement("div");
+        actionsRow.style.display = "flex";
+        actionsRow.style.gap = "0.5rem";
+        actionsRow.style.marginTop = "0.25rem";
+
+        var diffBtn = document.createElement("button");
+        diffBtn.type = "button";
+        diffBtn.className = "secondary";
+        diffBtn.textContent = "Review Diff";
+        diffBtn.addEventListener("click", async function () {
+          var diffRes = await request("GET", endpoint("proposals/" + encodeURIComponent(prop.revisionId)));
+          if (!diffRes.ok) {
+            alert("Failed to load diff: HTTP " + diffRes.status);
+            return;
+          }
+          if (proposalModalTitle) {
+            proposalModalTitle.textContent = "Proposal Review: " + prop.revisionId;
+          }
+          if (proposalModalContent) {
+            proposalModalContent.textContent = JSON.stringify(diffRes.payload, null, 2);
+          }
+          if (proposalDiffModal) {
+            proposalDiffModal.classList.remove("hidden");
+          }
+        });
+        actionsRow.appendChild(diffBtn);
+
+        var approveBtn = document.createElement("button");
+        approveBtn.type = "button";
+        approveBtn.className = "primary";
+        approveBtn.textContent = "Approve & Publish";
+        approveBtn.addEventListener("click", async function () {
+          var confirmed = window.confirm(
+            "Approve proposal " + prop.revisionId + " and publish atomically to active gateway runtime?"
+          );
+          if (!confirmed) return;
+          var res = await request("POST", endpoint("proposals/" + encodeURIComponent(prop.revisionId) + "/approve"), {});
+          if (!res.ok) {
+            alert("Approval failed: HTTP " + res.status + " · " + JSON.stringify(res.payload));
+            return;
+          }
+          setStatus("Proposal " + prop.revisionId + " approved & published!", "ok");
+          await loadTools();
+          await loadProposals();
+        });
+        actionsRow.appendChild(approveBtn);
+
+        var rejectBtn = document.createElement("button");
+        rejectBtn.type = "button";
+        rejectBtn.className = "danger";
+        rejectBtn.style.color = "var(--danger)";
+        rejectBtn.textContent = "Reject";
+        rejectBtn.addEventListener("click", async function () {
+          var reason = window.prompt("Optional rejection reason for proposal " + prop.revisionId + ":");
+          if (reason === null) return;
+          var res = await request("POST", endpoint("proposals/" + encodeURIComponent(prop.revisionId) + "/reject"), {
+            reason: reason || "Rejected by operator in Web Studio"
+          });
+          if (!res.ok) {
+            alert("Rejection failed: HTTP " + res.status);
+            return;
+          }
+          setStatus("Proposal " + prop.revisionId + " rejected.", "ok");
+          await loadProposals();
+        });
+        actionsRow.appendChild(rejectBtn);
+
+        card.appendChild(actionsRow);
+        proposalsList.appendChild(card);
+      })(proposals[i]);
+    }
+  }
+
+  if (loadProposalsBtn) {
+    loadProposalsBtn.addEventListener("click", action(loadProposals));
   }
 
   async function checkStudioStatus() {

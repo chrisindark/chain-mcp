@@ -30,6 +30,12 @@ export interface MetaMcpToolsOptions {
   tokenizer?: Tokenizer | undefined;
   /** Optional file reader for reading OpenAPI specs from disk. */
   readSpecFile?: ((path: string) => Promise<string>) | undefined;
+  /**
+   * When true, agent mutations (curate, projection, cache, publish, rollback) are
+   * created as draft proposals requiring explicit human approval in Web Studio
+   * rather than immediately mutating the active gateway runtime.
+   */
+  requireApproval?: boolean | undefined;
 }
 
 function resolveBinding(
@@ -427,6 +433,33 @@ export function createMetaMcpTools(
         };
       }
 
+      if (options.requireApproval) {
+        const reason = updates
+          .map((u) => `${u.toolName}:${u.enabled ? "enabled" : "disabled"}`)
+          .join(",");
+        const proposal = await admin.createProposal({
+          tenantId: binding.tenantId,
+          contractName: binding.contractName,
+          descriptors: updatedDescriptors,
+          proposedBy: callerTokenId,
+          proposalReason: `Agent curation proposal: ${reason}`,
+          tokenId: callerTokenId,
+        });
+        return {
+          ok: true,
+          status: "proposal",
+          requiresApproval: true,
+          contractName: binding.contractName,
+          tenantId: binding.tenantId,
+          revisionId: proposal.summary.revisionId,
+          toolCount: proposal.summary.toolCount,
+          message:
+            "Proposal submitted for human operator approval in Web Studio. Gateway active runtime state was not modified.",
+          estimatedTokenSavings: proposal.summary.estimatedTokenSavings,
+          diff: proposal.diff,
+        };
+      }
+
       const published = await admin.publishDescriptors(
         binding,
         parsed,
@@ -511,6 +544,10 @@ export function createMetaMcpTools(
           minimum: 1,
           description: "Optional maximum output token budget.",
         },
+        proposalReason: {
+          type: "string",
+          description: "Optional rationale or summary for this proposal.",
+        },
         tenantId: {
           type: "string",
           description: "Optional tenant ID.",
@@ -526,6 +563,7 @@ export function createMetaMcpTools(
         toolName: string;
         outputFields?: FieldSelection;
         maxOutputTokens?: number;
+        proposalReason?: string;
         tenantId?: string;
       };
 
@@ -598,6 +636,38 @@ export function createMetaMcpTools(
         };
       }
 
+      if (options.requireApproval) {
+        const proposal = await admin.createProposal({
+          tenantId: binding.tenantId,
+          contractName: binding.contractName,
+          descriptors: updatedDescriptors,
+          proposedBy: callerTokenId,
+          proposalReason:
+            input.proposalReason ??
+            `Agent projection proposal for '${input.toolName}'`,
+          tokenId: callerTokenId,
+        });
+        return {
+          ok: true,
+          status: "proposal",
+          requiresApproval: true,
+          contractName: binding.contractName,
+          tenantId: binding.tenantId,
+          toolName: input.toolName,
+          revisionId: proposal.summary.revisionId,
+          toolCount: proposal.summary.toolCount,
+          message:
+            "Proposal submitted for human operator approval in Web Studio. Gateway active runtime state was not modified.",
+          policy: {
+            outputFields: input.outputFields ?? targetDesc.policy?.outputFields,
+            maxOutputTokens:
+              input.maxOutputTokens ?? targetDesc.policy?.maxOutputTokens,
+          },
+          estimatedTokenSavings: proposal.summary.estimatedTokenSavings,
+          diff: proposal.diff,
+        };
+      }
+
       const published = await admin.publishDescriptors(
         binding,
         parsed,
@@ -653,6 +723,10 @@ export function createMetaMcpTools(
           minimum: 0,
           description: "Cache time-to-live in seconds (0 removes caching).",
         },
+        proposalReason: {
+          type: "string",
+          description: "Optional rationale or summary for this proposal.",
+        },
         tenantId: {
           type: "string",
           description: "Optional tenant ID.",
@@ -667,6 +741,7 @@ export function createMetaMcpTools(
         contractName: string;
         toolName: string;
         ttlSeconds: number;
+        proposalReason?: string;
         tenantId?: string;
       };
 
@@ -723,6 +798,34 @@ export function createMetaMcpTools(
           ok: false,
           error: "Descriptor validation failed",
           diagnostics: evaluation.diagnostics,
+        };
+      }
+
+      if (options.requireApproval) {
+        const proposal = await admin.createProposal({
+          tenantId: binding.tenantId,
+          contractName: binding.contractName,
+          descriptors: updatedDescriptors,
+          proposedBy: callerTokenId,
+          proposalReason:
+            input.proposalReason ??
+            `Agent cache proposal for '${input.toolName}': ${input.ttlSeconds}s TTL`,
+          tokenId: callerTokenId,
+        });
+        return {
+          ok: true,
+          status: "proposal",
+          requiresApproval: true,
+          contractName: binding.contractName,
+          tenantId: binding.tenantId,
+          toolName: input.toolName,
+          revisionId: proposal.summary.revisionId,
+          toolCount: proposal.summary.toolCount,
+          message:
+            "Proposal submitted for human operator approval in Web Studio. Gateway active runtime state was not modified.",
+          cacheTtlSeconds: input.ttlSeconds > 0 ? input.ttlSeconds : undefined,
+          estimatedTokenSavings: proposal.summary.estimatedTokenSavings,
+          diff: proposal.diff,
         };
       }
 
@@ -1088,6 +1191,10 @@ export function createMetaMcpTools(
           items: { type: "object" },
           description: "Full array of declarative tool descriptors.",
         },
+        proposalReason: {
+          type: "string",
+          description: "Optional rationale or summary for this proposal.",
+        },
         tenantId: {
           type: "string",
           description: "Optional tenant ID.",
@@ -1101,6 +1208,7 @@ export function createMetaMcpTools(
       const input = inputRaw as {
         contractName: string;
         descriptors: unknown[];
+        proposalReason?: string;
         tenantId?: string;
       };
 
@@ -1128,6 +1236,31 @@ export function createMetaMcpTools(
           ok: false,
           error: "Descriptor validation failed",
           diagnostics: evaluation.diagnostics,
+        };
+      }
+
+      if (options.requireApproval) {
+        const proposal = await admin.createProposal({
+          tenantId: binding.tenantId,
+          contractName: binding.contractName,
+          descriptors: input.descriptors,
+          proposedBy: callerTokenId,
+          proposalReason:
+            input.proposalReason ?? "Agent publish revision proposal",
+          tokenId: callerTokenId,
+        });
+        return {
+          ok: true,
+          status: "proposal",
+          requiresApproval: true,
+          contractName: binding.contractName,
+          tenantId: binding.tenantId,
+          revisionId: proposal.summary.revisionId,
+          toolCount: proposal.summary.toolCount,
+          message:
+            "Proposal submitted for human operator approval in Web Studio. Gateway active runtime state was not modified.",
+          estimatedTokenSavings: proposal.summary.estimatedTokenSavings,
+          diff: proposal.diff,
         };
       }
 
@@ -1292,6 +1425,30 @@ export function createMetaMcpTools(
         );
       }
 
+      if (options.requireApproval) {
+        const proposal = await admin.createProposal({
+          tenantId: binding.tenantId,
+          contractName: binding.contractName,
+          descriptors: target.descriptors,
+          proposedBy: callerTokenId,
+          proposalReason: `Agent rollback proposal: restore '${input.targetRevisionId}'`,
+          tokenId: callerTokenId,
+        });
+        return {
+          ok: true,
+          status: "proposal",
+          requiresApproval: true,
+          contractName: binding.contractName,
+          tenantId: binding.tenantId,
+          revisionId: proposal.summary.revisionId,
+          restoredRevisionId: input.targetRevisionId,
+          toolCount: proposal.summary.toolCount,
+          message:
+            "Rollback submitted as proposal for human operator approval in Web Studio. Gateway active runtime state was not modified.",
+          diff: proposal.diff,
+        };
+      }
+
       const published = await admin.publishDescriptors(
         binding,
         parsed,
@@ -1395,6 +1552,154 @@ export function createMetaMcpTools(
     },
   };
 
+  // 13. chainmcp_submit_proposal
+  const submitProposalTool: ToolDefinition = {
+    name: "chainmcp_submit_proposal",
+    description:
+      "Submit a proposed descriptor revision for operator review and approval in Web Studio without mutating active runtime gateway state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        contractName: {
+          type: "string",
+          description: "Name of the contract.",
+        },
+        descriptors: {
+          type: "array",
+          items: { type: "object" },
+          description: "Full array of proposed declarative tool descriptors.",
+        },
+        proposalReason: {
+          type: "string",
+          description: "Rationale or summary of the proposed changes.",
+        },
+        tenantId: {
+          type: "string",
+          description: "Optional tenant ID.",
+        },
+      },
+      required: ["contractName", "descriptors"],
+      additionalProperties: false,
+    },
+    operation: {},
+    async execute(inputRaw: unknown) {
+      const input = inputRaw as {
+        contractName: string;
+        descriptors: unknown[];
+        proposalReason?: string;
+        tenantId?: string;
+      };
+
+      if (!Array.isArray(input.descriptors) || input.descriptors.length === 0) {
+        throw new RuntimeError(
+          "INPUT_INVALID",
+          "descriptors must be a non-empty array of declarative tool descriptors",
+        );
+      }
+
+      const binding = resolveBinding(
+        admin,
+        input.contractName,
+        input.tenantId,
+        options,
+      );
+
+      const result = await admin.createProposal({
+        tenantId: binding.tenantId,
+        contractName: binding.contractName,
+        descriptors: input.descriptors,
+        proposedBy: callerTokenId,
+        proposalReason: input.proposalReason,
+        tokenId: callerTokenId,
+      });
+
+      return {
+        ok: true,
+        status: "proposal",
+        requiresApproval: true,
+        contractName: binding.contractName,
+        tenantId: binding.tenantId,
+        revisionId: result.summary.revisionId,
+        toolCount: result.summary.toolCount,
+        message:
+          "Proposal submitted for human operator approval in Web Studio. Gateway active runtime state was not modified.",
+        estimatedTokenSavings: result.summary.estimatedTokenSavings,
+        diff: result.diff,
+      };
+    },
+  };
+
+  // 14. chainmcp_list_proposals
+  const listProposalsTool: ToolDefinition = {
+    name: "chainmcp_list_proposals",
+    description:
+      "List pending agent proposals awaiting human operator approval in Web Studio.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        contractName: {
+          type: "string",
+          description: "Optional contract name filter.",
+        },
+        tenantId: {
+          type: "string",
+          description: "Optional tenant ID filter.",
+        },
+      },
+      additionalProperties: false,
+    },
+    operation: {},
+    async execute(inputRaw: unknown) {
+      const input =
+        (inputRaw as {
+          contractName?: string;
+          tenantId?: string;
+        }) ?? {};
+
+      const allowedBindings = [...admin.bindings.values()].filter((b) => {
+        if (options.tenants && options.tenants !== "*") {
+          if (!options.tenants.includes(b.tenantId)) return false;
+        }
+        if (input.tenantId !== undefined && b.tenantId !== input.tenantId) {
+          return false;
+        }
+        if (
+          input.contractName !== undefined &&
+          b.contractName !== input.contractName
+        ) {
+          return false;
+        }
+        return true;
+      });
+
+      const proposals: unknown[] = [];
+      for (const binding of allowedBindings) {
+        const list = await admin.store
+          .listProposals(binding.tenantId, binding.contractName)
+          .catch(() => []);
+        proposals.push(
+          ...list.map((r) => ({
+            revisionId: r.revisionId,
+            tenantId: r.tenantId,
+            contractName: r.contractName,
+            status: r.status,
+            createdAt: r.createdAt,
+            proposedBy: r.proposedBy,
+            proposalReason: r.proposalReason,
+            estimatedTokenSavings: r.estimatedTokenSavings,
+            toolCount: r.descriptors.length,
+          })),
+        );
+      }
+
+      return {
+        ok: true,
+        proposals,
+        count: proposals.length,
+      };
+    },
+  };
+
   return [
     listContractsTool,
     inspectContractTool,
@@ -1408,5 +1713,7 @@ export function createMetaMcpTools(
     listRevisionsTool,
     rollbackRevisionTool,
     getDiagnosticsTool,
+    submitProposalTool,
+    listProposalsTool,
   ];
 }

@@ -107,11 +107,11 @@ interface RollbackResult {
 }
 
 describe("Agent-callable Meta-MCP Tools (createMetaMcpTools)", () => {
-  it("exposes all 11 meta tools with object inputSchema and additionalProperties: false", () => {
+  it("exposes all 14 meta tools with object inputSchema and additionalProperties: false", () => {
     const { admin } = makeAdmin();
     const tools = createMetaMcpTools(admin);
 
-    expect(tools).toHaveLength(12);
+    expect(tools).toHaveLength(14);
     const expectedNames = [
       "chainmcp_list_contracts",
       "chainmcp_inspect_contract",
@@ -125,6 +125,8 @@ describe("Agent-callable Meta-MCP Tools (createMetaMcpTools)", () => {
       "chainmcp_list_revisions",
       "chainmcp_rollback_revision",
       "chainmcp_get_diagnostics",
+      "chainmcp_submit_proposal",
+      "chainmcp_list_proposals",
     ];
 
     for (const expected of expectedNames) {
@@ -784,5 +786,181 @@ paths:
     expect(bloatHint.recommendation.suggestedOutputFields).toEqual({
       exclude: ["debug"],
     });
+  });
+
+  it("when requireApproval is enabled, mutations generate proposals without touching live gateway", async () => {
+    const { admin, gateway } = makeAdmin();
+    // Use unrestricted tools to publish initial baseline
+    const initialTools = createMetaMcpTools(admin, { requireApproval: false });
+    const baselinePublish = initialTools.find(
+      (t) => t.name === "chainmcp_publish_revision",
+    )!;
+    const baselineRes = (await baselinePublish.execute(
+      {
+        contractName: "users",
+        descriptors: [
+          makeDescriptor({
+            name: "list_users",
+            request: {
+              method: "GET",
+              path: "/users/{userId}",
+              parameters: standardParams,
+            },
+          }),
+        ],
+      },
+      dummyContext,
+    )) as unknown as { ok: boolean };
+    expect(baselineRes.ok).toBe(true);
+
+    const initialRevision = gateway
+      .getRegistry()
+      .getActiveRevision("tenant-a", "users");
+    expect(initialRevision).toBeDefined();
+
+    // Use tools with requireApproval: true
+    const tools = createMetaMcpTools(admin, { requireApproval: true });
+
+    // Now call chainmcp_configure_projection via agent tools
+    const projTool = tools.find(
+      (t) => t.name === "chainmcp_configure_projection",
+    )!;
+    const result = (await projTool.execute(
+      {
+        contractName: "users",
+        toolName: "list_users",
+        outputFields: { exclude: ["debug", "internal"] },
+        proposalReason: "Exclude debug logs to save tokens",
+      },
+      dummyContext,
+    )) as unknown as {
+      ok: boolean;
+      status: string;
+      requiresApproval: boolean;
+      revisionId: string;
+      diff: {
+        toolDiffs: Array<{
+          toolName: string;
+          changeType: string;
+          changes: { projection?: unknown };
+        }>;
+      };
+      estimatedTokenSavings: number;
+    };
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("proposal");
+    expect(result.requiresApproval).toBe(true);
+    expect(result.revisionId).toBeDefined();
+    expect(result.diff.toolDiffs[0]?.toolName).toBe("list_users");
+    expect(result.diff.toolDiffs[0]?.changeType).toBe("modified");
+    expect(result.diff.toolDiffs[0]?.changes.projection).toBeDefined();
+    expect(result.estimatedTokenSavings).toBeGreaterThan(0);
+
+    // CRITICAL: Live gateway active revision must NOT have changed!
+    const currentActive = gateway
+      .getRegistry()
+      .getActiveRevision("tenant-a", "users");
+    expect(currentActive?.revisionId).toBe(initialRevision?.revisionId);
+
+    // Call chainmcp_list_proposals to see our proposal
+    const listPropTool = tools.find(
+      (t) => t.name === "chainmcp_list_proposals",
+    )!;
+    const propList = (await listPropTool.execute(
+      { contractName: "users" },
+      dummyContext,
+    )) as unknown as {
+      proposals: Array<{
+        revisionId: string;
+        contractName: string;
+        status: string;
+        proposalReason?: string;
+      }>;
+    };
+
+    expect(propList.proposals).toHaveLength(1);
+    expect(propList.proposals[0]?.revisionId).toBe(result.revisionId);
+    expect(propList.proposals[0]?.proposalReason).toBe(
+      "Exclude debug logs to save tokens",
+    );
+  });
+
+  it("chainmcp_submit_proposal creates a proposal directly with savings diff", async () => {
+    const { admin, gateway } = makeAdmin();
+    const initialTools = createMetaMcpTools(admin, { requireApproval: false });
+    const baselinePublish = initialTools.find(
+      (t) => t.name === "chainmcp_publish_revision",
+    )!;
+
+    // Establish baseline
+    const pubRes = (await baselinePublish.execute(
+      {
+        contractName: "users",
+        descriptors: [
+          makeDescriptor({
+            name: "get_user",
+            request: {
+              method: "GET",
+              path: "/users/{userId}",
+              parameters: standardParams,
+            },
+          }),
+        ],
+      },
+      dummyContext,
+    )) as unknown as { ok: boolean };
+    expect(pubRes.ok).toBe(true);
+
+    const tools = createMetaMcpTools(admin, { requireApproval: true });
+    const submitTool = tools.find(
+      (t) => t.name === "chainmcp_submit_proposal",
+    )!;
+    const res = (await submitTool.execute(
+      {
+        contractName: "users",
+        proposalReason: "Disable get_user for deprecation",
+        descriptors: [
+          makeDescriptor({
+            name: "get_user",
+            enabled: false,
+            request: {
+              method: "GET",
+              path: "/users/{userId}",
+              parameters: standardParams,
+            },
+          }),
+        ],
+      },
+      dummyContext,
+    )) as unknown as {
+      ok: boolean;
+      status: string;
+      revisionId: string;
+      diff: {
+        toolDiffs: Array<{
+          toolName: string;
+          changeType: string;
+          changes: { enabled?: { before: boolean; after: boolean } };
+        }>;
+      };
+    };
+
+    expect(res.ok).toBe(true);
+    expect(res.status).toBe("proposal");
+    expect(res.revisionId).toBeDefined();
+    expect(res.diff.toolDiffs[0]?.toolName).toBe("get_user");
+    expect(res.diff.toolDiffs[0]?.changeType).toBe("modified");
+    expect(res.diff.toolDiffs[0]?.changes.enabled).toEqual({
+      before: true,
+      after: false,
+    });
+
+    // Gateway still has enabled tool and active store revision is untouched
+    const active = gateway.getRegistry().getActiveRevision("tenant-a", "users");
+    expect(active?.tools).toHaveLength(1);
+    expect(active?.tools[0]?.name).toBe("get_user");
+    const activeRecord = await admin.store.getActive("tenant-a", "users");
+    expect(activeRecord?.descriptors[0]?.enabled).not.toBe(false);
   });
 });
