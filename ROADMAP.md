@@ -488,15 +488,15 @@ Following the stabilization of the core compiler, policy shield, and dynamic gat
 
 Introduce a dedicated `@chainmcp/storage` workspace package graduating ChainMcp from ephemeral in-memory state and single-writer flat JSON snapshots to durable local and cloud persistence without compromising the zero-dependency developer experience.
 
-- [ ] Define portable `StorageDriver`, `KeyValueStore`, `BlobPayloadStore`, and `TelemetryRingBuffer` interfaces.
-- [ ] Implement `MemoryStorageDriver` for ephemeral testing, CI runs, and stateless CLI validation.
-- [ ] Implement `SqliteStorageDriver` using Node 22 built-in `node:sqlite` in WAL (`PRAGMA journal_mode = WAL;`) mode at `~/.chainmcp/studio.db` to allow concurrent readers and single-writer safety across stdio servers and studio UIs.
-- [ ] Implement `PostgresStorageDriver` interface for multi-replica cloud gateway deployments.
-- [ ] Persist versioned control-plane contracts, revisions, and encrypted credentials (`chainmcp_contracts`, `chainmcp_revisions`, `chainmcp_credentials`).
-- [ ] Back server-side JSON payload handles (`json_create_handle`) with storage TTL expiration and byte caps (`chainmcp_json_handles`).
-- [ ] Implement non-blocking, batched telemetry event persistence with automatic row-cap or TTL pruning (`chainmcp_telemetry_events`).
+- [x] Define portable `StorageDriver`, `KeyValueStore`, `BlobPayloadStore`, and `TelemetryRingBuffer` interfaces.
+- [x] Implement `MemoryStorageDriver` for ephemeral testing, CI runs, and stateless CLI validation.
+- [x] Implement `SqliteStorageDriver` using Node 22 built-in `node:sqlite` in WAL (`PRAGMA journal_mode = WAL;`) mode at `~/.chainmcp/studio.db` to allow concurrent readers and single-writer safety across stdio servers and studio UIs.
+- [ ] Implement `PostgresStorageDriver` interface for multi-replica cloud gateway deployments (deferred per limitations.md).
+- [x] Persist versioned control-plane contracts, revisions, and encrypted credentials (`chainmcp_contracts`, `chainmcp_revisions`, `chainmcp_credentials`).
+- [x] Back server-side JSON payload handles (`json_create_handle`) with storage TTL expiration and byte caps (`chainmcp_json_handles`).
+- [x] Implement non-blocking, batched telemetry event persistence with automatic row-cap or TTL pruning (`chainmcp_telemetry_events`).
 
-**Exit criteria:** `@chainmcp/storage` supports memory and zero-native-addon SQLite WAL drivers, persists and verifies result handles across process restarts, and passes all unit and tenant-isolation tests.
+**Exit criteria:** `@chainmcp/storage` supports memory and zero-native-addon SQLite WAL drivers, persists and verifies result handles across process restarts, and passes all unit and tenant-isolation tests. Verified in `0.4.0`.
 
 ### Milestone 12: `v0.6.0` — Universal MCP Telemetry & Active Proxy Engine
 
@@ -525,12 +525,12 @@ Deliver a visual local-first web studio built atop `@chainmcp/admin` and `@chain
 
 Unify dynamic gateway iteration with standalone server exports while enabling agent-assisted tool optimization with human-in-the-loop review.
 
-- [ ] "Stage in Gateway, Eject to Standalone" workflow: hot-load and test contracts dynamically in `@chainmcp/gateway`, then export to standalone Docker/Node projects with `chainmcp export`.
-- [ ] Agent-callable Meta-MCP server: expose compiler, declarative, and admin lifecycle actions as tools for coding agents (Claude, Gemini, Cursor).
-- [ ] Telemetry-driven diagnostics: provide diagnostic tools allowing agents to analyze latency, timeouts, and oversized responses.
-- [ ] Human-in-the-Loop (HITL) approval gates: agents propose field projections or description refinements; modifications require explicit operator approval before atomic revision activation.
+- [x] "Stage in Gateway, Eject to Standalone" workflow: hot-load and test contracts dynamically in `@chainmcp/gateway`, then export to standalone Docker/Node projects with `chainmcp export`.
+- [x] Agent-callable Meta-MCP server: expose compiler, declarative, and admin lifecycle actions as tools for coding agents (Claude, Gemini, Cursor).
+- [x] Telemetry-driven diagnostics: provide diagnostic tools allowing agents to analyze latency, timeouts, and oversized responses.
+- [x] Human-in-the-Loop (HITL) approval gates: agents propose field projections or description refinements; modifications require explicit operator approval before atomic revision activation.
 
-**Exit criteria:** an external agent can analyze tool telemetry, propose a response projection, and have the operator approve the change as a reversible gateway revision.
+**Exit criteria:** an external agent can analyze tool telemetry, propose a response projection, and have the operator approve the change as a reversible gateway revision. Verified in `0.8.0`.
 
 ### Milestone 15: `v1.0.0` — Enterprise Release Gates & Production Hardening
 
