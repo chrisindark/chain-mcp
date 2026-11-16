@@ -1,5 +1,22 @@
 # @chainmcp/executor
 
+## 0.8.0
+
+### Minor Changes
+
+- 4bf76a6: Stage in Gateway, Eject to Standalone workflow:
+
+  - Add `chainmcp eject` and `chainmcp export --from-gateway` commands to eject curated gateway contracts and active SQLite storage revisions into self-contained standalone server packages.
+  - Prune disabled and excluded tools while preserving output projections, cache policies, and destination policies.
+  - Wire `ToolOutputPolicy` and per-tool timeouts in `UpstreamExecutor` tool creation and execution.
+  - Validate that ejected servers build and pass offline tests with zero gateway or admin runtime dependencies.
+
+### Patch Changes
+
+- @chainmcp/auth@0.8.0
+  - @chainmcp/compiler@0.8.0
+  - @chainmcp/core@0.8.0
+
 ## 0.7.0
 
 ### Patch Changes

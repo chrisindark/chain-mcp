@@ -1,5 +1,20 @@
 # @chainmcp/config
 
+## 0.8.0
+
+### Patch Changes
+
+- Updated dependencies [4bf76a6]
+- Updated dependencies [8d363c1]
+  - @chainmcp/executor@0.8.0
+  - @chainmcp/analytics@0.8.0
+  - @chainmcp/auth@0.8.0
+  - @chainmcp/cache-redis@0.8.0
+  - @chainmcp/core@0.8.0
+  - @chainmcp/json-navigation@0.8.0
+  - @chainmcp/rate-limit@0.8.0
+  - @chainmcp/storage@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes

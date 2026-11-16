@@ -1,5 +1,16 @@
 # @chainmcp/gateway
 
+## 0.8.0
+
+### Patch Changes
+
+- Updated dependencies [4bf76a6]
+  - @chainmcp/executor@0.8.0
+  - @chainmcp/auth@0.8.0
+  - @chainmcp/compiler@0.8.0
+  - @chainmcp/core@0.8.0
+  - @chainmcp/server@0.8.0
+
 ## 0.7.0
 
 ### Patch Changes

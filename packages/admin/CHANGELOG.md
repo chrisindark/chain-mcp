@@ -1,5 +1,47 @@
 # @chainmcp/admin
 
+## 0.8.0
+
+### Minor Changes
+
+- c178d6d: Agent-callable Meta-MCP server (`chainmcp agent-server`):
+
+  - Add `createMetaMcpTools` to `@chainmcp/admin` exposing 11 agent-callable meta tools (`chainmcp_list_contracts`, `chainmcp_inspect_contract`, `chainmcp_inspect_tools`, `chainmcp_curate_tool`, `chainmcp_configure_projection`, `chainmcp_configure_cache`, `chainmcp_test_tool`, `chainmcp_compile_spec`, `chainmcp_publish_revision`, `chainmcp_list_revisions`, `chainmcp_rollback_revision`) with strict input schemas and tenant boundary isolation.
+  - Enforce security invariants preventing caching on mutation methods (POST/PUT/PATCH/DELETE) and preventing disabling all tools.
+  - Add `chainmcp agent-server` CLI command with stdio and HTTP transports for Claude, Cursor, and Gemini coding agents to inspect, curate, test, and tune running ChainMcp deployments.
+
+- a8ebc4c: Human-in-the-Loop (HITL) approval gates for agent proposals:
+
+  - Add proposal lifecycle (`draft` | `proposal` | `rejected` | `active` | `superseded`) to `@chainmcp/admin` with durable storage across Memory, File, and SQLite WAL drivers.
+  - Implement `computeProposalDiffAndSavings` to calculate deep tool-level diffs (enabled/disabled status, description, field projection, cache TTL) and estimate LLM context token savings per tool call.
+  - Support `requireApproval` option in `createMetaMcpTools`: when enabled (default in `chainmcp agent-server`), agent self-improvement mutations produce proposals rather than mutating active gateway runtime state.
+  - Expose `chainmcp_submit_proposal` and `chainmcp_list_proposals` meta-tools for explicit proposal submission and inspection.
+  - Add REST endpoints `/api/v1/proposals`, `/api/v1/tenants/:tenant/contracts/:contract/proposals`, `/approve`, and `/reject` with full audit trail logging (`admin_proposal_created`, `admin_proposal_approved`, `admin_proposal_rejected`).
+  - Add "Agent Proposals & HITL Approval Gates" section to Web Studio with live diff review, token savings estimation, and one-click "Approve & Publish" or "Reject" buttons.
+  - Add `chainmcp proposals` CLI command with `list`, `diff <revisionId>`, `approve <revisionId>`, and `reject <revisionId>` subcommands, terminal diff rendering, and `--json` support.
+
+- 8d363c1: Telemetry-driven diagnostics & automated optimization hints:
+
+  - Add `analyzeTelemetryDiagnostics` engine in `@chainmcp/analytics` to analyze MCP tool invocations, token payloads, latency percentiles, and cache performance.
+  - Automated optimization hints detect token bloat (>2,000 tokens default) and propose specific projection filters (excluding verbose fields or including essential keys), detect cache candidates on high-frequency idempotent GET requests, flag slow upstream endpoints (>1,500ms p95 latency), and alert on elevated error rates (>5%).
+  - Enforce security invariants refusing to recommend caching on mutation operations (POST/PUT/PATCH/DELETE) and maintaining tenant boundary isolation.
+  - Add `chainmcp_get_diagnostics` meta-tool to `@chainmcp/admin` agent tools, plus `/api/v1/diagnostics` API endpoints and Web Studio visualization panel.
+  - Add `chainmcp diagnostics` CLI command supporting text and JSON output modes, custom token bloat thresholds, time windows, and tenant/contract/tool filters.
+
+### Patch Changes
+
+- Updated dependencies [4bf76a6]
+- Updated dependencies [8d363c1]
+  - @chainmcp/executor@0.8.0
+  - @chainmcp/analytics@0.8.0
+  - @chainmcp/config@0.8.0
+  - @chainmcp/declarative@0.8.0
+  - @chainmcp/gateway@0.8.0
+  - @chainmcp/auth@0.8.0
+  - @chainmcp/compiler@0.8.0
+  - @chainmcp/core@0.8.0
+  - @chainmcp/storage@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes

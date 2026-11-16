@@ -1,5 +1,12 @@
 # @chainmcp/json-navigation
 
+## 0.8.0
+
+### Patch Changes
+
+- @chainmcp/core@0.8.0
+  - @chainmcp/storage@0.8.0
+
 ## 0.7.0
 
 ### Patch Changes
