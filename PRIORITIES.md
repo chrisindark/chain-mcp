@@ -858,7 +858,7 @@ No `chainmcp doctor`, no `chainmcp config explain` (also P0-4), and `serve`/`exp
 
 ### M14-3 — Telemetry-driven diagnostics & automated optimization hints
 
-**Status: ready to start.** Analyze latency, error rates, token waste, and oversized payloads from `@chainmcp/storage` / `@chainmcp/analytics` to surface actionable optimization recommendations.
+**Status: done (2026-11-16).** Implemented diagnostic analyzer engine (`analyzeTelemetryDiagnostics`) in `@chainmcp/analytics` scanning universal MCP telemetry and ring buffers for token bloat, high-frequency uncached read operations, slow upstreams (p95 latency), and elevated error rates. Automatically generates actionable optimization hints with field projection suggestions (excluding verbose fields or selecting key fields) and cache TTL suggestions. Enforces strict security invariants: refuses to recommend caching on mutation operations (POST/PUT/PATCH/DELETE) and maintains tenant boundary isolation. Exposes diagnostics via `chainmcp diagnostics` CLI command (with terminal formatting and JSON export), Web Studio diagnostics panel with KPI summary, DeclarativeAdmin `/api/v1/diagnostics` and `/api/v1/tenants/:tenantId/diagnostics` REST endpoints, and `chainmcp_get_diagnostics` Meta-MCP tool. Full test coverage in `packages/analytics/tests/diagnostics.test.ts`, `packages/admin/tests/agent-tools.test.ts`, `packages/admin/tests/api.test.ts`, and `packages/cli/tests/diagnostics.test.ts`.
 
 **Do**
 

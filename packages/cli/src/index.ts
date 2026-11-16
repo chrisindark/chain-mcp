@@ -18,6 +18,8 @@ export type {
   DevResult,
   DiffOptions,
   DiffResult,
+  DiagnosticsCommandOptions,
+  DiagnosticsCommandResult,
   EjectOptions,
   EjectResult,
   ExportOptions,
@@ -72,6 +74,7 @@ export { gatewayServeCommand } from "./commands/gateway-serve.js";
 export { exportCommand } from "./commands/export.js";
 export { ejectCommand } from "./commands/eject.js";
 export { agentServerCommand } from "./commands/agent-server.js";
+export { diagnosticsCommand } from "./commands/diagnostics.js";
 
 export {
   attachCompiledToolsArtifact,

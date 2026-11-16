@@ -11,6 +11,7 @@ import { doctorCommand } from "./commands/doctor.js";
 import { adminCommand } from "./commands/admin.js";
 import { studioCommand } from "./commands/studio.js";
 import { agentServerCommand } from "./commands/agent-server.js";
+import { diagnosticsCommand } from "./commands/diagnostics.js";
 import { gatewayServeCommand } from "./commands/gateway-serve.js";
 import { initCommand } from "./commands/init.js";
 import { serveCommand } from "./commands/serve.js";
@@ -37,6 +38,7 @@ Commands:
   config    Inspect resolved configuration (config explain)
   studio    Launch local-first visual Web Studio and admin app
   agent-server Run agent-callable Meta-MCP server (stdio or http) for coding agents
+  diagnostics  Analyze telemetry events and surface actionable optimization hints
 
 Options:
   --version, -v   Show CLI version
@@ -149,6 +151,15 @@ Command options:
     --host <string>      HTTP host for agent server (default: 127.0.0.1)
     --tenant <id>        Tenant identifier filter
     --token <token>      Admin bearer token
+
+  diagnostics:
+    --config <path>      Path to configuration file
+    --tenant <id>        Tenant identifier filter
+    --contract <name>    Contract name filter
+    --tool <name>        Tool name filter
+    --window <duration>  Time window (e.g. 1h, 24h, 30m, default: 1h)
+    --json               Emit diagnostic report as JSON
+    --token-bloat-threshold <n>  Minimum tokens/call to flag token bloat
 `;
 
 function asString(val: unknown): string | undefined {
@@ -197,6 +208,9 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
       "from-gateway": { type: "boolean", default: false },
       contract: { type: "string" },
       "storage-path": { type: "string" },
+      window: { type: "string" },
+      tool: { type: "string" },
+      "token-bloat-threshold": { type: "string" },
     },
     allowPositionals: true,
     strict: false,
@@ -922,6 +936,36 @@ export async function runCli(args: string[], io?: CliIo): Promise<number> {
 
       await result.closed;
       return 0;
+    }
+
+    case "diagnostics": {
+      const result = await diagnosticsCommand({
+        ...(asString(values.config) !== undefined
+          ? { config: asString(values.config) }
+          : {}),
+        ...(asString(values.tenant) !== undefined
+          ? { tenant: asString(values.tenant) }
+          : {}),
+        ...(asString(values.contract) !== undefined
+          ? { contract: asString(values.contract) }
+          : {}),
+        ...(asString(values.tool) !== undefined
+          ? { tool: asString(values.tool) }
+          : {}),
+        ...(asString(values.window) !== undefined
+          ? { window: asString(values.window) }
+          : {}),
+        ...(asBoolean(values.json) !== undefined
+          ? { json: asBoolean(values.json) }
+          : {}),
+        ...(values["token-bloat-threshold"] !== undefined
+          ? {
+              tokenBloatThreshold: Number(values["token-bloat-threshold"]),
+            }
+          : {}),
+        io,
+      });
+      return result.ok ? 0 : 1;
     }
 
     case "doctor": {

@@ -1,4 +1,5 @@
 import type { Readable, Writable } from "node:stream";
+import type { DiagnosticReport } from "@chainmcp/analytics";
 import type {
   CompileDiagnostic,
   CompileManifest,
@@ -346,6 +347,23 @@ export interface AgentServerResult {
   close: () => Promise<void>;
   closed: Promise<void>;
   error?: string | undefined;
+}
+
+export interface DiagnosticsCommandOptions {
+  readonly config?: string | undefined;
+  readonly tenant?: string | undefined;
+  readonly contract?: string | undefined;
+  readonly tool?: string | undefined;
+  readonly window?: number | string | undefined;
+  readonly json?: boolean | undefined;
+  readonly tokenBloatThreshold?: number | undefined;
+  readonly cwd?: string | undefined;
+}
+
+export interface DiagnosticsCommandResult {
+  readonly ok: boolean;
+  readonly report?: DiagnosticReport | undefined;
+  readonly error?: string | undefined;
 }
 
 export interface CliIo {

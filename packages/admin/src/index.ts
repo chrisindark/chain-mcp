@@ -1,3 +1,9 @@
+export {
+  analyzeTelemetryDiagnostics,
+  type DiagnosticReport,
+  type OptimizationHint,
+  type ToolDiagnosticDescriptor,
+} from "@chainmcp/analytics";
 export { createMetaMcpTools, type MetaMcpToolsOptions } from "./agent-tools.js";
 export {
   DeclarativeAdmin,

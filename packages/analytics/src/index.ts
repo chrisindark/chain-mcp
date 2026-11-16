@@ -69,3 +69,15 @@ export {
   type OtlpAuthContext,
   DEFAULT_MAX_OTLP_REQUEST_BYTES,
 } from "./otlp-sink.js";
+
+export {
+  analyzeTelemetryDiagnostics,
+  type OptimizationHintCategory,
+  type OptimizationHintSeverity,
+  type OptimizationHintAction,
+  type ToolDiagnosticDescriptor,
+  type OptimizationHint,
+  type DiagnosticReportSummary,
+  type DiagnosticReport,
+  type DiagnosticAnalyzerOptions,
+} from "./diagnostics.js";

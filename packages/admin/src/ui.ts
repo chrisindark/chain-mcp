@@ -229,6 +229,29 @@ export const ADMIN_INDEX_HTML = `<!doctype html>
           </table>
         </div>
 
+        <div class="telemetry-table-container" style="margin-top: 1.5rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <h3>Automated Optimization Hints &amp; Diagnostics</h3>
+            <span id="diag-badge-count" style="font-size: 0.75rem; padding: 0.2rem 0.5rem; background: #e0e7ff; color: #3730a3; border-radius: 9999px; font-weight: 600;">0 hints</span>
+          </div>
+          <table class="telemetry-table" id="obs-diagnostics-table">
+            <thead>
+              <tr>
+                <th>Severity</th>
+                <th>Category</th>
+                <th>Tool</th>
+                <th>Finding</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody id="obs-diagnostics-body">
+              <tr>
+                <td colspan="5" class="empty-state">No optimization hints detected. All tools operating within nominal parameters.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
         <div id="obs-detail-modal" class="modal-backdrop hidden">
           <div class="modal-card">
             <div class="modal-heading">
@@ -1442,6 +1465,8 @@ export const ADMIN_APP_JS = `(function () {
   var mValP95 = document.getElementById("m-val-p95");
   var mSubLatency = document.getElementById("m-sub-latency");
   var obsTelemetryBody = document.getElementById("obs-telemetry-body");
+  var obsDiagnosticsBody = document.getElementById("obs-diagnostics-body");
+  var diagBadgeCount = document.getElementById("diag-badge-count");
   var obsDetailModal = document.getElementById("obs-detail-modal");
   var obsModalContent = document.getElementById("obs-modal-content");
   var obsModalClose = document.getElementById("obs-modal-close");
@@ -1477,9 +1502,14 @@ export const ADMIN_APP_JS = `(function () {
     }
     telemPath += "&limit=50&order=desc";
 
-    var [metricsRes, telemRes] = await Promise.all([
+    var diagPath = picked
+      ? "/api/v1/tenants/" + encodeURIComponent(picked.tenantId) + "/diagnostics?" + qs
+      : "/api/v1/diagnostics?" + qs;
+
+    var [metricsRes, telemRes, diagRes] = await Promise.all([
       request("GET", metricsPath),
-      request("GET", telemPath)
+      request("GET", telemPath),
+      request("GET", diagPath)
     ]);
 
     if (metricsRes.ok && metricsRes.payload && metricsRes.payload.summary) {
@@ -1569,6 +1599,62 @@ export const ADMIN_APP_JS = `(function () {
           tr.appendChild(tdActions);
 
           obsTelemetryBody.appendChild(tr);
+        });
+      }
+    }
+
+    if (diagRes && diagRes.ok && diagRes.payload && obsDiagnosticsBody) {
+      var dReport = diagRes.payload;
+      var dSummary = dReport.summary || {};
+      if (diagBadgeCount) {
+        diagBadgeCount.textContent = (dSummary.totalHints || 0) + " hints";
+        diagBadgeCount.style.background = (dSummary.totalHints || 0) > 0 ? "#fef3c7" : "#e0e7ff";
+        diagBadgeCount.style.color = (dSummary.totalHints || 0) > 0 ? "#92400e" : "#3730a3";
+      }
+
+      obsDiagnosticsBody.textContent = "";
+      var hints = dReport.hints || [];
+      if (hints.length === 0) {
+        var emptyD = document.createElement("tr");
+        var emptyDCell = document.createElement("td");
+        emptyDCell.colSpan = 5;
+        emptyDCell.className = "empty-state";
+        emptyDCell.textContent = "No optimization hints detected. All tools operating within nominal parameters.";
+        emptyD.appendChild(emptyDCell);
+        obsDiagnosticsBody.appendChild(emptyD);
+      } else {
+        hints.forEach(function (h) {
+          var tr = document.createElement("tr");
+
+          var tdSev = document.createElement("td");
+          var sBadge = document.createElement("span");
+          var sColor = h.severity === "critical" ? "#dc2626" : h.severity === "warning" ? "#d97706" : "#2563eb";
+          sBadge.className = "badge";
+          sBadge.style.background = sColor + "20";
+          sBadge.style.color = sColor;
+          sBadge.style.fontWeight = "600";
+          sBadge.textContent = h.severity ? h.severity.toUpperCase() : "INFO";
+          tdSev.appendChild(sBadge);
+          tr.appendChild(tdSev);
+
+          var tdCat = document.createElement("td");
+          tdCat.textContent = h.category ? h.category.replace(/_/g, " ") : "-";
+          tr.appendChild(tdCat);
+
+          var tdTool = document.createElement("td");
+          tdTool.className = "tool-name";
+          tdTool.textContent = h.toolName || "-";
+          tr.appendChild(tdTool);
+
+          var tdFinding = document.createElement("td");
+          tdFinding.textContent = h.title || "-";
+          tr.appendChild(tdFinding);
+
+          var tdRec = document.createElement("td");
+          tdRec.textContent = h.message || "-";
+          tr.appendChild(tdRec);
+
+          obsDiagnosticsBody.appendChild(tr);
         });
       }
     }

@@ -1,5 +1,11 @@
 import { randomBytes } from "node:crypto";
-import { redactValue } from "@chainmcp/analytics";
+import {
+  analyzeTelemetryDiagnostics,
+  redactValue,
+  type DiagnosticAnalyzerOptions,
+  type DiagnosticReport,
+  type ToolDiagnosticDescriptor,
+} from "@chainmcp/analytics";
 import {
   assertFieldSelection,
   createFieldProjector,
@@ -462,6 +468,80 @@ export class DeclarativeAdmin {
     return createMetaMcpTools(this, options);
   }
 
+  /**
+   * Generates a telemetry-driven diagnostic report containing performance analysis,
+   * token bloat identification, cache opportunities, and concrete optimization hints.
+   */
+  async getDiagnostics(
+    options: {
+      tenantId?: string | undefined;
+      contractName?: string | undefined;
+      toolName?: string | undefined;
+      windowMs?: number | undefined;
+      analyzerOptions?: DiagnosticAnalyzerOptions | undefined;
+    } = {},
+  ): Promise<DiagnosticReport> {
+    const targetBindings = [...this.#bindings.values()].filter((b) => {
+      if (options.tenantId && b.tenantId !== options.tenantId) return false;
+      if (options.contractName && b.contractName !== options.contractName)
+        return false;
+      return true;
+    });
+
+    const diagnosticDescriptors: ToolDiagnosticDescriptor[] = [];
+    for (const b of targetBindings) {
+      const active = await this.#store
+        .getActive(b.tenantId, b.contractName)
+        .catch(() => undefined);
+      const activeGw = this.#gateway
+        .getRegistry()
+        .getActiveRevision(b.tenantId, b.contractName);
+      const descriptors =
+        active?.descriptors ??
+        (activeGw?.metadata?.descriptorSet as
+          readonly DeclarativeToolDescriptor[] | undefined) ??
+        [];
+      for (const d of descriptors) {
+        if (options.toolName && d.name !== options.toolName) continue;
+        diagnosticDescriptors.push({
+          contractName: b.contractName,
+          name: d.name,
+          method: d.request.method,
+          requestMethod: d.request.method,
+          policy: {
+            cacheTtlSeconds: d.policy?.cacheTtlSeconds,
+            maxOutputTokens: d.policy?.maxOutputTokens,
+            outputFields: d.policy?.outputFields,
+            timeoutMs: d.policy?.timeoutMs,
+          },
+          inputSchema: d.inputSchema as Record<string, unknown> | undefined,
+        });
+      }
+    }
+
+    const now = this.#now();
+    const windowMs = options.windowMs ?? 3_600_000;
+    let events: TelemetryEvent[] = [];
+    if (this.#storageDriver) {
+      const ring = this.#storageDriver.getTelemetryRingBuffer();
+      events = await ring.query({
+        ...(options.tenantId ? { tenantId: options.tenantId } : {}),
+        ...(options.toolName ? { toolName: options.toolName } : {}),
+        since: now - windowMs,
+        until: now,
+        limit: 10_000,
+      });
+    }
+
+    return analyzeTelemetryDiagnostics(events, {
+      now,
+      windowMs,
+      tenantId: options.tenantId,
+      descriptors: diagnosticDescriptors,
+      ...options.analyzerOptions,
+    });
+  }
+
   /** HTTP entry point. Never throws; failures become JSON error responses. */
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -693,6 +773,70 @@ export class DeclarativeAdmin {
       });
       const events = rawEvents.map(formatTelemetryEvent);
       return jsonResponse(200, { ok: true, events, count: events.length });
+    }
+
+    if (segments.length === 1 && segments[0] === "diagnostics") {
+      assertMethod(request, ["GET"]);
+      const tenantParam = url.searchParams.get("tenant") ?? undefined;
+      if (
+        tenantParam &&
+        principal.tenants !== "*" &&
+        !principal.tenants.includes(tenantParam)
+      ) {
+        throw new DeclarativeAdminError(
+          "ADMIN_TENANT_FORBIDDEN",
+          403,
+          `Token is not authorized for tenant '${tenantParam}'`,
+        );
+      }
+      const contractName = url.searchParams.get("contract") ?? undefined;
+      const toolName = url.searchParams.get("tool") ?? undefined;
+      const windowMs = url.searchParams.has("windowMs")
+        ? Number(url.searchParams.get("windowMs"))
+        : undefined;
+      const tokenBloatThreshold = url.searchParams.has("tokenBloatThreshold")
+        ? Number(url.searchParams.get("tokenBloatThreshold"))
+        : undefined;
+
+      const report = await this.getDiagnostics({
+        tenantId: tenantParam,
+        contractName,
+        toolName,
+        windowMs,
+        analyzerOptions: {
+          ...(tokenBloatThreshold !== undefined ? { tokenBloatThreshold } : {}),
+        },
+      });
+      return jsonResponse(200, report);
+    }
+
+    if (
+      segments.length === 3 &&
+      segments[0] === "tenants" &&
+      segments[2] === "diagnostics"
+    ) {
+      assertMethod(request, ["GET"]);
+      const tenant = segments[1]!;
+      assertTenantAllowed(principal, tenant);
+      const contractName = url.searchParams.get("contract") ?? undefined;
+      const toolName = url.searchParams.get("tool") ?? undefined;
+      const windowMs = url.searchParams.has("windowMs")
+        ? Number(url.searchParams.get("windowMs"))
+        : undefined;
+      const tokenBloatThreshold = url.searchParams.has("tokenBloatThreshold")
+        ? Number(url.searchParams.get("tokenBloatThreshold"))
+        : undefined;
+
+      const report = await this.getDiagnostics({
+        tenantId: tenant,
+        contractName,
+        toolName,
+        windowMs,
+        analyzerOptions: {
+          ...(tokenBloatThreshold !== undefined ? { tokenBloatThreshold } : {}),
+        },
+      });
+      return jsonResponse(200, report);
     }
 
     if (

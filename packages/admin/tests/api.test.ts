@@ -1279,5 +1279,56 @@ describe("tool curation and endpoint filtering", () => {
         error: { code: "ADMIN_TENANT_FORBIDDEN" },
       });
     });
+
+    it("returns telemetry-driven diagnostics and optimization hints via /api/v1/diagnostics", async () => {
+      const storageDriver = new MemoryStorageDriver();
+      await storageDriver.init();
+      const ring = storageDriver.getTelemetryRingBuffer();
+
+      // Push telemetry indicating bloated tokens for get_user
+      for (let i = 0; i < 5; i++) {
+        await ring.push({
+          id: `diag-evt-${i}`,
+          timestamp: Date.now() - 1000 * i,
+          tenantId: "tenant-a",
+          toolName: "get_user",
+          tokenCount: 1800,
+          durationMs: 75,
+          cached: false,
+          metadata: {
+            observedKeys: ["id", "name", "debug", "rawLogs"],
+          },
+        });
+      }
+
+      const { admin } = makeAdmin({ storageDriver });
+
+      const res = await admin.handle(
+        adminRequest("/api/v1/diagnostics?tenant=tenant-a", "GET"),
+      );
+      expect(res.status).toBe(200);
+      const report = (await res.json()) as {
+        totalEventsAnalyzed: number;
+        summary: { tokenBloatHints: number };
+        hints: Array<{
+          toolName: string;
+          recommendation: { action: string };
+        }>;
+      };
+      expect(report.totalEventsAnalyzed).toBe(5);
+      expect(report.summary.tokenBloatHints).toBe(1);
+      expect(report.hints[0]!.toolName).toBe("get_user");
+      expect(report.hints[0]!.recommendation.action).toBe(
+        "configure_projection",
+      );
+
+      // Tenant forbidden test: SCOPED_TOKEN is scoped to tenant-b only, so tenant-a is rejected
+      const forbiddenRes = await admin.handle(
+        adminRequest("/api/v1/tenants/tenant-a/diagnostics", "GET", {
+          token: SCOPED_TOKEN,
+        }),
+      );
+      expect(forbiddenRes.status).toBe(403);
+    });
   });
 });

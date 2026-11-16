@@ -1322,6 +1322,79 @@ export function createMetaMcpTools(
     },
   };
 
+  // 12. chainmcp_get_diagnostics
+  const getDiagnosticsTool: ToolDefinition = {
+    name: "chainmcp_get_diagnostics",
+    description:
+      "Analyze telemetry events, latency, error rates, and payload sizes across active contracts to discover bottlenecks, token bloat, and cache opportunities, returning actionable optimization proposals.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        contractName: {
+          type: "string",
+          description: "Optional contract name to filter diagnostics.",
+        },
+        toolName: {
+          type: "string",
+          description: "Optional tool name to filter diagnostics.",
+        },
+        tenantId: {
+          type: "string",
+          description: "Optional tenant ID filter.",
+        },
+        windowMs: {
+          type: "number",
+          description:
+            "Analysis window in milliseconds (default: 3600000 = 1 hour).",
+        },
+        tokenBloatThreshold: {
+          type: "number",
+          description:
+            "Minimum tokens/call to trigger a token bloat hint (default: 800).",
+        },
+      },
+      additionalProperties: false,
+    },
+    operation: {},
+    async execute(inputRaw: unknown) {
+      const input =
+        (inputRaw as {
+          contractName?: string;
+          toolName?: string;
+          tenantId?: string;
+          windowMs?: number;
+          tokenBloatThreshold?: number;
+        }) ?? {};
+
+      if (options.tenants && options.tenants !== "*") {
+        if (input.tenantId && !options.tenants.includes(input.tenantId)) {
+          throw new RuntimeError(
+            "AUTH_FORBIDDEN",
+            `Access to tenant '${input.tenantId}' is forbidden`,
+          );
+        }
+      }
+
+      return await admin.getDiagnostics({
+        contractName: input.contractName,
+        toolName: input.toolName,
+        tenantId:
+          input.tenantId ??
+          (options.tenants &&
+          options.tenants !== "*" &&
+          options.tenants.length === 1
+            ? options.tenants[0]
+            : undefined),
+        windowMs: input.windowMs,
+        analyzerOptions: {
+          ...(input.tokenBloatThreshold !== undefined
+            ? { tokenBloatThreshold: input.tokenBloatThreshold }
+            : {}),
+        },
+      });
+    },
+  };
+
   return [
     listContractsTool,
     inspectContractTool,
@@ -1334,5 +1407,6 @@ export function createMetaMcpTools(
     publishRevisionTool,
     listRevisionsTool,
     rollbackRevisionTool,
+    getDiagnosticsTool,
   ];
 }

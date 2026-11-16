@@ -99,7 +99,7 @@ describe("agent-server command and Meta-MCP server (M14-2)", () => {
 
     expect(serverHandle.ok).toBe(true);
     expect(serverHandle.serverName).toBe("chainmcp-agent-server");
-    expect(serverHandle.toolCount).toBe(11);
+    expect(serverHandle.toolCount).toBe(12);
 
     await serverHandle.close();
     await serverHandle.closed;
@@ -120,7 +120,7 @@ describe("agent-server command and Meta-MCP server (M14-2)", () => {
     expect(serverHandle.ok).toBe(true);
     expect(serverHandle.url).toBeDefined();
     expect(serverHandle.url?.protocol).toBe("http:");
-    expect(serverHandle.toolCount).toBe(11);
+    expect(serverHandle.toolCount).toBe(12);
 
     await serverHandle.close();
     await serverHandle.closed;
@@ -187,7 +187,7 @@ describe("agent-server command and Meta-MCP server (M14-2)", () => {
 
       // 1. tools/list verification
       const listResponse = await client.listTools();
-      expect(listResponse.tools).toHaveLength(11);
+      expect(listResponse.tools).toHaveLength(12);
 
       const toolNames = listResponse.tools.map((t) => t.name);
       expect(toolNames).toContain("chainmcp_list_contracts");
@@ -201,6 +201,7 @@ describe("agent-server command and Meta-MCP server (M14-2)", () => {
       expect(toolNames).toContain("chainmcp_publish_revision");
       expect(toolNames).toContain("chainmcp_list_revisions");
       expect(toolNames).toContain("chainmcp_rollback_revision");
+      expect(toolNames).toContain("chainmcp_get_diagnostics");
 
       // Verify every tool schema has type: object and additionalProperties: false
       for (const t of listResponse.tools) {
@@ -366,6 +367,20 @@ paths:
         },
       });
       expect(disableAllCall.isError).toBe(true);
+
+      // 9. Call chainmcp_get_diagnostics via MCP client
+      const diagCall = await client.callTool({
+        name: "chainmcp_get_diagnostics",
+        arguments: {
+          contractName: "pet-api",
+        },
+      });
+      expect(diagCall.isError).toBeFalsy();
+      const diagResult = JSON.parse(
+        (diagCall.content[0] as { text: string }).text,
+      );
+      expect(diagResult.summary).toBeDefined();
+      expect(Array.isArray(diagResult.hints)).toBe(true);
     } finally {
       await client.close();
       await connectedServer.close();

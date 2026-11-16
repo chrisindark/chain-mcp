@@ -1,4 +1,5 @@
 import type { ToolContext } from "@chainmcp/core";
+import { MemoryStorageDriver } from "@chainmcp/storage";
 import { describe, expect, it } from "vitest";
 
 import { createMetaMcpTools } from "../src/index.js";
@@ -110,7 +111,7 @@ describe("Agent-callable Meta-MCP Tools (createMetaMcpTools)", () => {
     const { admin } = makeAdmin();
     const tools = createMetaMcpTools(admin);
 
-    expect(tools).toHaveLength(11);
+    expect(tools).toHaveLength(12);
     const expectedNames = [
       "chainmcp_list_contracts",
       "chainmcp_inspect_contract",
@@ -123,6 +124,7 @@ describe("Agent-callable Meta-MCP Tools (createMetaMcpTools)", () => {
       "chainmcp_publish_revision",
       "chainmcp_list_revisions",
       "chainmcp_rollback_revision",
+      "chainmcp_get_diagnostics",
     ];
 
     for (const expected of expectedNames) {
@@ -710,5 +712,77 @@ paths:
     ).rejects.toThrow(
       "Contract 'payments' for tenant 'tenant-b' was not found or is not accessible",
     );
+  });
+
+  it("chainmcp_get_diagnostics analyzes telemetry events and returns optimization hints", async () => {
+    const storageDriver = new MemoryStorageDriver();
+    await storageDriver.init();
+    const { admin } = makeAdmin({ storageDriver });
+    const tools = createMetaMcpTools(admin);
+
+    const publishTool = tools.find(
+      (t) => t.name === "chainmcp_publish_revision",
+    )!;
+    await publishTool.execute(
+      {
+        contractName: "users",
+        descriptors: [
+          makeDescriptor({
+            name: "list_users",
+            request: {
+              method: "GET",
+              path: "/users",
+              parameters: standardParams,
+            },
+          }),
+        ],
+      },
+      dummyContext,
+    );
+
+    // Push telemetry events into ring buffer indicating high token consumption
+    const ring = storageDriver.getTelemetryRingBuffer();
+    for (let i = 0; i < 8; i++) {
+      await ring.push({
+        id: `tel-diag-${i}`,
+        timestamp: Date.now() - 1000 * i,
+        tenantId: "tenant-a",
+        toolName: "list_users",
+        tokenCount: 1600,
+        durationMs: 90,
+        cached: false,
+        metadata: {
+          observedKeys: ["id", "name", "email", "debug", "rawLogs"],
+        },
+      });
+    }
+
+    const diagTool = tools.find((t) => t.name === "chainmcp_get_diagnostics")!;
+    const report = (await diagTool.execute(
+      { contractName: "users" },
+      dummyContext,
+    )) as unknown as {
+      totalEventsAnalyzed: number;
+      summary: { totalHints: number; tokenBloatHints: number };
+      hints: Array<{
+        category: string;
+        toolName: string;
+        recommendation: {
+          action: string;
+          suggestedOutputFields?: { exclude?: string[] };
+        };
+      }>;
+    };
+
+    expect(report.totalEventsAnalyzed).toBe(8);
+    expect(report.summary.totalHints).toBeGreaterThanOrEqual(1);
+    expect(report.summary.tokenBloatHints).toBe(1);
+
+    const bloatHint = report.hints.find((h) => h.category === "token_bloat")!;
+    expect(bloatHint.toolName).toBe("list_users");
+    expect(bloatHint.recommendation.action).toBe("configure_projection");
+    expect(bloatHint.recommendation.suggestedOutputFields).toEqual({
+      exclude: ["debug"],
+    });
   });
 });
